@@ -1,0 +1,32 @@
+{
+  "name": "comfyui-node",
+  "version": "0.3.0",
+  "description": "ComfyUI Node.js Client",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "build:watch": "tsc --project tsconfig.json --watch",
+    "test": "bun test",
+    "test:local": "bun test ./test"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.21",
+    "@types/jest": "^30.0.0",
+    "@types/node": "24.3.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "5.9.2"
+  }
+}
