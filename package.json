@@ -50,7 +50,7 @@
     "typecov": "type-coverage --detail --ignore-catch --at-least 0",
     "typecov:strict": "type-coverage --detail --ignore-catch --at-least 95",
     "dist:fresh": "bun run build && bun run dist:fresh:check",
-    "dist:fresh:check": "bun node scripts/dist-fresh-check.mjs",
+    "dist:fresh:check": "bun scripts/dist-fresh-check.mjs",
     "check:all": "bun run build && bun run test && bun run typecov:strict && bun run dist:fresh",
     "prepublishOnly": "bun run check:all"
   },
