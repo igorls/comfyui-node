@@ -14,7 +14,11 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 
 - [Features](#features)
 - [Installation](#installation)
-- [Quick Start](#quick-start)
+- [Cheat Sheet](#cheat-sheet)
+- [Recent Enhancements (Ergonomics & Typing)](#recent-enhancements-ergonomics--typing)
+- [High‑Level Workflow API (Experimental) – Quick Intro](#highlevel-workflow-api-experimental--quick-intro)
+- [Choosing: Workflow vs PromptBuilder](#choosing-workflow-vs-promptbuilder)
+- [Result Object Anatomy](#result-object-anatomy)
 - [Multi-Instance Pool](#multi-instance-pool)
 - [Authentication](#authentication)
 - [Custom WebSocket](#custom-websocket)
@@ -24,6 +28,7 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 - [Reference Overview](#reference-overview)
 - [Examples](#examples)
 - [Errors & Diagnostics](#errors--diagnostics)
+- [Troubleshooting](#troubleshooting)
 - [Published Smoke Test](#published-smoke-test)
 - [Contributing](#contributing)
 - [License](#license)
@@ -83,6 +88,103 @@ async function main() {
 main();
 ```text
 
+## Cheat Sheet
+
+Fast reference for common operations. See deeper sections for narrative explanations.
+
+### Workflow (High-Level)
+
+```ts
+import { ComfyApi, Workflow } from 'comfyui-node';
+const api = await new ComfyApi('http://127.0.0.1:8188').ready();
+const wf = Workflow.from(json)
+  .set('3.inputs.steps', 20)          // dotted path set
+  .input('SAMPLER','cfg', 4)          // input helper
+  .batchInputs('SAMPLER', { steps: 15, cfg: 3 })
+  .output('images:9');                // alias:nodeId
+const job = await api.run(wf);        // acceptance barrier
+job.on('progress_pct', p => console.log(p,'%'));
+const result = await job.done();
+for (const img of (result.images?.images||[])) console.log(api.ext.file.getPathImage(img));
+```
+
+### PromptBuilder (Lower-Level)
+
+```ts
+import { PromptBuilder } from 'comfyui-node';
+const builder = new PromptBuilder(base,[ 'positive','seed' ],[ 'images' ])
+  .setInputNode('positive','6.inputs.text')
+  .setInputNode('seed','3.inputs.seed')
+  .setOutputNode('images','9')
+  .input('positive','A misty forest')
+  .input('seed', 1234)
+  .validateOutputMappings();
+```
+
+### Running (Alternate APIs)
+
+```ts
+await api.run(wf);            // high-level (Workflow)
+await api.runWorkflow(wf);    // alias
+new CallWrapper(api, builder)
+  .onFinished(o => console.log(o.images?.images?.length))
+  .run();                     // builder execution
+```
+
+### Declaring Outputs
+
+```ts
+wf.output('alias:NodeId');
+wf.output('alias','NodeId');
+wf.output('NodeId');          // key = id
+// none declared -> auto collect SaveImage nodes
+```
+
+### Events (WorkflowJob)
+
+```txt
+pending -> start -> progress / progress_pct / preview -> output* -> finished (or failed)
+```
+
+| Event | Notes |
+| ----- | ----- |
+| pending | accepted into queue |
+| start | first execution step began |
+| progress_pct | integer 0-100 (deduped) |
+| preview | live frame (Blob) |
+| output | a declared / auto-detected node produced data |
+| finished | all requested nodes resolved |
+| failed | execution error / interruption |
+
+### Seed Handling
+
+```ts
+// -1 sentinel => randomized & reported under _autoSeeds
+wf.batchInputs('SAMPLER', { seed: -1 });
+```
+
+### Type Extraction
+
+```ts
+type Result = ReturnType<typeof wf.typedResult>;
+```
+
+### Pool Quick Start
+
+```ts
+const pool = new ComfyPool([
+  new ComfyApi('http://localhost:8188'),
+  new ComfyApi('http://localhost:8189')
+]);
+const job2 = await pool.clients[0].run(wf, { pool });
+await job2.done();
+```
+
+### Selecting Workflow vs PromptBuilder
+
+Use Workflow for 90% of: tweak existing JSON, few parameter edits, rapid prototyping. Use PromptBuilder when you must programmatically assemble / rewire node graphs or need validation utilities pre-submit.
+
+
 
 ### High‑Level Workflow API (Experimental) – Quick Intro
 
@@ -101,16 +203,18 @@ See the dedicated tutorial section for a narrated example and option details.
 
 The `Workflow` surface has gained several quality‑of‑life helpers and **progressive typing** features. All are additive (no breaking changes) and optional—fall back to raw `set()` / `output()` styles whenever you prefer.
 
-| Feature | Purpose | Example |
-| ------- | ------- | ------- |
-| `wf.input(nodeId, inputName, value)` | Direct, concise single input mutation (vs. dotted path) | `wf.input('SAMPLER','steps',30)` |
-| `wf.batchInputs(nodeId, { ... })` | Set multiple inputs on one node | `wf.batchInputs('SAMPLER',{ steps:30, cfg:5 })` |
-| `wf.batchInputs({ NODEA:{...}, NODEB:{...} })` | Multi‑node batch mutation | `wf.batchInputs({ SAMPLER:{ cfg:6 }, CLIP:{ text:'hello' } })` |
-| `Workflow.fromAugmented(json)` | Adds soft autocomplete to certain inputs (e.g. sampler & scheduler) while allowing arbitrary strings | `Workflow.fromAugmented(base)` |
-| Typed output inference | Each `.output(...)` refines the eventual `job.done()` result type with keys you declare | `wf.output('images:SAVE_IMAGE')` |
-| Per‑node output shape hints | Common node classes mapped to rough output structures (currently `SaveImage*` & `KSampler`) | `result.images.images` autocompletes |
-| Multiple output syntaxes | Flexibility / readability | `'alias:NodeId'`, `('alias','NodeId')`, or `'NodeId'` |
-| `wf.typedResult()` | IDE‑only helper returning an empty object typed as the final output (aliases + metadata) | `type R = ReturnType<typeof wf.typedResult>` |
+| Feature | Purpose | Example | Type Effect |
+| ------- | ------- | ------- | ----------- |
+| `wf.input(nodeId, inputName, value)` | Concise single input mutation (vs dotted path) | `wf.input('SAMPLER','steps',30)` | none (runtime sugar) |
+| `wf.batchInputs(nodeId, { ... })` | Set multiple inputs on one node | `wf.batchInputs('SAMPLER',{ steps:30, cfg:5 })` | none |
+| `wf.batchInputs({ NODEA:{...} })` | Multi‑node batch mutation | `wf.batchInputs({ SAMPLER:{ cfg:6 } })` | none |
+| `Workflow.fromAugmented(json)` | Soft autocomplete on sampler / scheduler but still accepts future values | `Workflow.fromAugmented(base)` | narrows fields to union \| (string & {}) |
+| Typed output inference | `.output('alias:ID')` accumulates object keys | `wf.output('images:SAVE_IMAGE')` | widens result shape with `images` key |
+| Per‑node output shape hints | Heuristic shapes for `SaveImage*`, `KSampler` | `result.images.images` | structural hints for nested fields |
+| Multiple output syntaxes | Choose preferred style | `'alias:NodeId'` / `('alias','NodeId')` / `'NodeId'` | identical effect |
+| `wf.typedResult()` | Get IDE type of final result | `type R = ReturnType<typeof wf.typedResult>` | captures accumulated generic |
+| Auto seed substitution | `seed: -1` randomized before submit | `wf.input('SAMPLER','seed',-1)` | adds `_autoSeeds` map key |
+| Acceptance barrier run | `await api.run(wf)` returns job handle pre-completion | `const job=await api.run(wf)` | result type unchanged |
 
 > All typing is structural—no runtime validation. Unknown / future sampler names or new node classes continue to work.
 
@@ -208,6 +312,24 @@ This stays accurate as long as all `output()` calls run before the type is captu
 
 ---
 
+## Choosing: Workflow vs PromptBuilder
+
+| Criterion | Prefer Workflow | Prefer PromptBuilder |
+| --------- | --------------- | -------------------- |
+| Starting point | You already have a working JSON graph | You need to assemble nodes programmatically |
+| Change pattern | Tweak a handful of numeric/text inputs | Add/remove/re‑wire nodes dynamically |
+| Output declaration | Simple image node aliases | Complex multi‑node mapping / conditional outputs |
+| Validation needs | Light (auto collect `SaveImage`) | Strong: explicit mapping + cycle checks |
+| Type ergonomics | Progressive result typing via `.output()` + heuristics | Fully explicit generic parameters on construction |
+| Autocomplete | Sampler / scheduler (augmented mode) | Input & output alias keys / builder fluency |
+| Serialization | Not needed / reuse same base JSON | Need to persist & replay builder state |
+| Scheduling | Direct `api.run(wf)` | Usually wrapped in `CallWrapper` (or converted later) |
+| Learning curve | Minimal (few fluent methods) | Slightly higher (need to map inputs / outputs) |
+| Migration path | Can drop down later to builder if requirements grow | Can export to JSON & wrap with `Workflow.from(...)` for simpler tweaking |
+
+Rule of thumb: start with `Workflow`. Move to `PromptBuilder` when you feel friction needing structural graph edits or stronger pre‑submit validation.
+
+
 Pool variant (experimental):
 
 ```ts
@@ -270,6 +392,60 @@ function safeBuild(wf: any) {
     .validateNoImmediateCycles();
 }
 ```
+
+## Result Object Anatomy
+
+All high‑level executions (`api.run(wf)` / `runWorkflow` / `runAndWait`) ultimately resolve to an object merging:
+
+1. Declared / inferred output aliases (each key value is the raw node output JSON for that node)
+2. Heuristic shape hints (currently only augmenting `SaveImage*` & `KSampler` nodes with friendly nested fields)
+3. Metadata fields: `_promptId`, `_nodes`, `_aliases`, `_autoSeeds`
+
+Conceptual shape:
+
+```ts
+type WorkflowResult = {
+  // Your keys:
+  [aliasOrNodeId: string]: any; // each node's output blob (heuristically narrowed)
+  // Metadata:
+  _promptId?: string;
+  _nodes?: string[];                 // collected node ids
+  _aliases?: Record<string,string>;  // nodeId -> alias
+  _autoSeeds?: Record<string,number>; // nodeId -> randomized seed (when -1 sentinel used)
+};
+```
+
+Example with heuristics:
+
+```ts
+const wf = Workflow.fromAugmented(json)
+  .output('gallery:SAVE_IMAGE')
+  .output('sampler:KSampler');
+type R = ReturnType<typeof wf.typedResult>; // => { gallery: { images?: any[] }; sampler: { samples?: any }; _promptId?: ... }
+```
+
+Heuristics are intentionally shallow – they provide just enough structure for IDE discovery without locking you into specific upstream node versions. Missing shape? You still get the alias key with `any` type; open a PR to extend the mapping.
+
+Access patterns:
+
+```ts
+const job = await api.run(wf);
+job.on('output', id => console.log('node completed', id));
+const res = await job.done();
+console.log(res._promptId, Object.keys(res));
+for (const img of (res.gallery?.images || [])) {
+  console.log(api.ext.file.getPathImage(img));
+}
+```
+
+If you need a stable exported type for consumers:
+
+```ts
+export type GenerationResult = ReturnType<typeof wf.typedResult>;
+```
+
+Changing outputs later? Re‑generate the type after adding the new `.output()` call.
+
 
 ## Multi-Instance Pool
 
@@ -878,6 +1054,31 @@ bun test && bun run coverage
 ```
 
 before opening a PR, and prefer adding tests alongside new feature code.
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+| ------- | ------------ | ---- |
+| `progress_pct` never fires | Only listening to raw `progress` (or run finished instantly) | Subscribe to `progress_pct`; ensure workflow isn't trivially cached / instant |
+| Empty `images` array | Wrong node id in `.output()` or no `SaveImage` nodes detected | Verify node id in base JSON; omit outputs to let auto-detect run |
+| `_autoSeeds` missing | No `seed: -1` inputs present | Set seed field explicitly to `-1` on nodes requiring randomization |
+| Autocomplete missing for sampler | Used `Workflow.from(...)` not `fromAugmented` | Switch to `Workflow.fromAugmented(json)` |
+| Type not updating after new `.output()` | Captured type alias before adding the call | Recompute `type R = ReturnType<typeof wf.typedResult>` after the last output declaration |
+| Execution error but no missing outputs | Underlying node error surfaced via `execution_error` event | Listen to `failed` + inspect error / server logs |
+| Job hangs waiting for output | Declared non-existent node id | Run with fewer outputs or validate JSON; inspect `_nodes` metadata |
+| Random seed not changing between runs | Provided explicit numeric seed | Use `-1` sentinel or generate a random seed before `.set()` |
+| Preview frames never appear | Workflow lacks preview-capable nodes (e.g. KSampler) | Confirm server emits `b_preview` events for your graph |
+| Pool never selects idle client | Mode set to `PICK_LOWEST` with constant queue depth | Switch to `PICK_ZERO` for latency focus |
+| High-level run returns immediately | Accessed `await api.run(wf)` only (acceptance barrier) | Await `job.done()` or events to completion |
+
+Diagnostic tips:
+
+- Enable verbose progress: set `COMFY_PROGRESS_VERBOSE=1` before running the smoke script.
+- For enqueue failures inspect `EnqueueFailedError` fields (`status`, `reason`, `bodyTextSnippet`).
+- Use `_aliases` metadata to confirm alias -> node id mapping at runtime.
+- Log `_autoSeeds` to verify sentinel replacement behavior in batch runs.
+- If types feel stale, close & reopen the file – TypeScript sometimes caches deep conditional expansions.
+
 
 ## Published Smoke Test
 
