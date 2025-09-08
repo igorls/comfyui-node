@@ -1,7 +1,6 @@
-import { ComfyApi } from "../client";
-import { ModelFile, ModelFolder, ModelPreviewResponse } from "../types/api";
-
-import { FeatureBase } from "./base";
+import { ComfyApi } from "../client.js";
+import { ModelFile, ModelFolder, ModelPreviewResponse } from "../types/api.js";
+import { FeatureBase } from "./base.js";
 
 /** Experimental model browsing + preview retrieval. */
 export class ModelFeature extends FeatureBase {

@@ -12,8 +12,8 @@ import {
   IExtensionActiveRequest,
   IModelInstallRequest,
   INodeMapItem
-} from "src/types/manager";
-import { AbstractFeature } from "./abstract";
+} from "../types/manager.js";
+import { AbstractFeature } from "./abstract.js";
 
 export interface FetchOptions extends RequestInit {
   headers?: {

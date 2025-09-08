@@ -1,5 +1,5 @@
-import { ComfyApi } from "../client";
-import { FeatureBase } from "./base";
+import { ComfyApi } from "../client.js";
+import { FeatureBase } from "./base.js";
 
 export interface ServerFeatureFlags {
   [key: string]: boolean | string | number | object | null;
@@ -21,12 +21,13 @@ export class FeatureFlagsFeature extends FeatureBase {
     return res.json();
   }
 
-  async checkSupported(): Promise<void> {
+  async checkSupported(): Promise<boolean> {
     try {
       await this.getServerFeatures();
       this.isSupported = true;
     } catch {
       this.isSupported = false;
     }
+    return this.isSupported;
   }
 }

@@ -1,6 +1,6 @@
-import { TComfyPoolEventMap } from "./types/event";
-import { ComfyApi } from "./client";
-import { delay } from "./tools";
+import { TComfyPoolEventMap } from "./types/event.js";
+import { ComfyApi } from "./client.js";
+import { delay } from "./tools.js";
 
 interface JobItem {
   weight: number;
@@ -16,7 +16,7 @@ interface JobItem {
   /**
    * Optional error handler invoked if the job cannot be started (e.g. timeout acquiring client).
    */
-  onError?: (err: any) => void;
+  onError?: (err: unknown) => void;
 }
 
 /**
@@ -53,13 +53,13 @@ export class ComfyPool extends EventTarget {
   private mode: EQueueMode = EQueueMode.PICK_ZERO;
   private jobQueue: Array<JobItem> = [];
   private routineIdx: number = 0;
-  private listeners: {
+  private listeners: Array<{
     event: keyof TComfyPoolEventMap;
     options?: AddEventListenerOptions | boolean;
-    handler: (event: TComfyPoolEventMap[keyof TComfyPoolEventMap]) => void;
-  }[] = [];
+    handler: (event: unknown) => void;
+  }> = [];
   private readonly maxQueueSize: number = 1000;
-  private poolMonitoringInterval: any;
+  private poolMonitoringInterval: ReturnType<typeof setInterval> | undefined;
   private claimTimeoutMs: number = -1;
 
   constructor(
@@ -118,8 +118,8 @@ export class ComfyPool extends EventTarget {
     callback: (event: TComfyPoolEventMap[K]) => void,
     options?: AddEventListenerOptions | boolean
   ) {
-    this.addEventListener(type, callback as any, options);
-    this.listeners.push({ event: type, handler: callback, options });
+  this.addEventListener(type, callback as any, options);
+  this.listeners.push({ event: type, handler: callback as any, options });
     return this;
   }
 
@@ -128,7 +128,7 @@ export class ComfyPool extends EventTarget {
     callback: (event: TComfyPoolEventMap[K]) => void,
     options?: EventListenerOptions | boolean
   ) {
-    this.removeEventListener(type, callback as any, options);
+  this.removeEventListener(type as string, callback as any, options as any);
     this.listeners = this.listeners.filter((listener) => listener.event !== type && listener.handler !== callback);
     return this;
   }
@@ -138,7 +138,7 @@ export class ComfyPool extends EventTarget {
    */
   public removeAllListeners() {
     this.listeners.forEach((listener) => {
-      this.removeEventListener(listener.event, listener.handler, listener.options);
+      this.removeEventListener(listener.event as string, listener.handler as any, listener.options as any);
     });
     this.listeners = [];
   }
@@ -298,7 +298,7 @@ export class ComfyPool extends EventTarget {
       let attempt = 0;
       const onlineClients = this.clientStates.filter((c) => c.online);
       const maxRetries = options?.maxRetries || onlineClients.length;
-      let lastError: any = null;
+  let lastError: unknown = null;
 
       const tryExecute = async (): Promise<void> => {
         attempt++;
@@ -534,7 +534,7 @@ export class ComfyPool extends EventTarget {
       includeIds?: string[];
       excludeIds?: string[];
     },
-    onError?: (err: any) => void
+    onError?: (err: unknown) => void
   ): Promise<void> {
     if (this.jobQueue.length >= this.maxQueueSize) {
       throw new Error("Job queue limit reached");
@@ -639,6 +639,7 @@ export class ComfyPool extends EventTarget {
 // Test-only helpers (non-breaking; ignored at runtime usage)
 export const __TEST_ONLY__ = {
   snapshotQueue(pool: ComfyPool) {
-    return (pool as any).jobQueue.map((j: any) => ({ weight: j.weight, include: j.includeClientIds, exclude: j.excludeClientIds }));
+    const queue: JobItem[] = (pool as unknown as { jobQueue: JobItem[] }).jobQueue;
+    return queue.map((j) => ({ weight: j.weight, include: j.includeClientIds, exclude: j.excludeClientIds }));
   }
 };

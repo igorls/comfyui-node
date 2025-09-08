@@ -1,6 +1,6 @@
-import { encodeNTPath, encodePosixPath } from "./tools";
-import { NodeData, OSType } from "./types/api";
-import { DeepKeys, Simplify } from "./types/tool";
+import { encodeNTPath, encodePosixPath } from "./tools.js";
+import { NodeData, OSType } from "./types/api.js";
+import { DeepKeys, Simplify } from "./types/tool.js";
 
 export class PromptBuilder<I extends string, O extends string, T extends NodeData> {
   prompt: T;

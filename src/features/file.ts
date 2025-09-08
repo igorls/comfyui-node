@@ -1,7 +1,6 @@
-import { ComfyApi } from "../client";
-import { ImageInfo } from "../types/api";
-
-import { FeatureBase } from "./base";
+import { ComfyApi } from "../client.js";
+import { ImageInfo } from "../types/api.js";
+import { FeatureBase } from "./base.js";
 
 /** File upload helpers and userdata file operations. */
 export class FileFeature extends FeatureBase {

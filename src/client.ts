@@ -8,25 +8,23 @@ import {
   OSType,
   QueueResponse,
   QueueStatus
-} from "./types/api";
-
+} from "./types/api.js";
 import { WebSocket } from "ws";
-
-import { TComfyAPIEventMap } from "./types/event";
-import { delay } from "./tools";
-import { ManagerFeature } from "./features/manager";
-import { MonitoringFeature } from "./features/monitoring";
-import { QueueFeature } from "./features/queue";
-import { HistoryFeature } from "./features/history";
-import { SystemFeature } from "./features/system";
-import { NodeFeature } from "./features/node";
-import { UserFeature } from "./features/user";
-import { FileFeature } from "./features/file";
-import { ModelFeature } from "./features/model";
-import { TerminalFeature } from "./features/terminal";
-import { MiscFeature } from "./features/misc";
-import { FeatureFlagsFeature } from "./features/feature-flags";
-import { runWebSocketReconnect } from "./utils/ws-reconnect";
+import { TComfyAPIEventMap } from "./types/event.js";
+import { delay } from "./tools.js";
+import { ManagerFeature } from "./features/manager.js";
+import { MonitoringFeature } from "./features/monitoring.js";
+import { QueueFeature } from "./features/queue.js";
+import { HistoryFeature } from "./features/history.js";
+import { SystemFeature } from "./features/system.js";
+import { NodeFeature } from "./features/node.js";
+import { UserFeature } from "./features/user.js";
+import { FileFeature } from "./features/file.js";
+import { ModelFeature } from "./features/model.js";
+import { TerminalFeature } from "./features/terminal.js";
+import { MiscFeature } from "./features/misc.js";
+import { FeatureFlagsFeature } from "./features/feature-flags.js";
+import { runWebSocketReconnect } from "./utils/ws-reconnect.js";
 
 interface FetchOptions extends RequestInit {
   headers?: {
@@ -51,7 +49,7 @@ export class ComfyApi extends EventTarget {
   /** Base host (including protocol) e.g. http://localhost:8188 */
   public apiHost: string;
   /** OS type as reported by the server (resolved during init) */
-  public osType: OSType;
+  public osType!: OSType; // assigned during init()
   /** Indicates feature probing + socket establishment completed */
   public isReady: boolean = false;
   /** Whether to subscribe to terminal log streaming on init */
@@ -68,11 +66,11 @@ export class ComfyApi extends EventTarget {
   private readonly apiBase: string;
   private clientId: string | null;
   private socket: WebSocket | null = null;
-  private listeners: {
+  private listeners: Array<{
     event: keyof TComfyAPIEventMap;
     options?: AddEventListenerOptions | boolean;
-    handler: (event: TComfyAPIEventMap[keyof TComfyAPIEventMap]) => void;
-  }[] = [];
+    handler: (event: any) => void; // store loosely to avoid union explosion
+  }> = [];
   private readonly credentials: BasicCredentials | BearerTokenCredentials | CustomCredentials | null = null;
 
   /** Modular feature namespaces (tree intentionally flat & dependency‑free) */
@@ -102,6 +100,11 @@ export class ComfyApi extends EventTarget {
     /** Server advertised feature flags */
     featureFlags: new FeatureFlagsFeature(this)
   } as const;
+
+  /** Helper type guard shaping expected feature API */
+  private asFeature(obj: any): { isSupported?: boolean; destroy?: () => void; checkSupported?: () => Promise<boolean>; } {
+    return obj;
+  }
 
   static generateId(): string {
     return "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
@@ -135,7 +138,7 @@ export class ComfyApi extends EventTarget {
   public removeAllListeners() {
     this.log("removeAllListeners", "Triggered");
     this.listeners.forEach((listener) => {
-      this.removeEventListener(listener.event, listener.handler, listener.options);
+      this.removeEventListener(listener.event as string, listener.handler as any, listener.options as any);
     });
     this.listeners = [];
   }
@@ -150,13 +153,10 @@ export class ComfyApi extends EventTarget {
    * @returns An object containing the available features, where each feature is a key-value pair.
    */
   get availableFeatures() {
-    return Object.keys(this.ext).reduce(
-      (acc, key) => ({
-        ...acc,
-        [key]: this.ext[key as keyof typeof this.ext].isSupported
-      }),
-      {}
-    );
+    return Object.keys(this.ext).reduce((acc, key) => {
+      const feat = this.asFeature(this.ext[key as keyof typeof this.ext]);
+      return { ...acc, [key]: !!feat.isSupported };
+    }, {} as Record<string, boolean>);
   }
 
   constructor(
@@ -218,7 +218,7 @@ export class ComfyApi extends EventTarget {
    * Ensures all connections, timers and event listeners are properly closed.
    */
   destroy() {
-  this.log("destroy", "Destroying client...");
+    this.log("destroy", "Destroying client...");
     // Cleanup flag to prevent re-entry
     if ((this as any)._destroyed) {
       this.log("destroy", "Client already destroyed");
@@ -265,7 +265,8 @@ export class ComfyApi extends EventTarget {
     // Destroy all extensions
     for (const ext in this.ext) {
       try {
-        this.ext[ext as keyof typeof this.ext].destroy();
+        const feat = this.asFeature(this.ext[ext as keyof typeof this.ext]);
+        feat.destroy?.();
       } catch (e) {
         this.log("destroy", `Error destroying extension ${ext}`, e);
       }
@@ -334,8 +335,8 @@ export class ComfyApi extends EventTarget {
   }
 
   private async testFeatures() {
-    const extensions = Object.values(this.ext);
-    await Promise.all(extensions.map((ext) => ext.checkSupported()));
+    const extensions = Object.values(this.ext).map((e) => this.asFeature(e));
+    await Promise.all(extensions.map((ext) => ext.checkSupported?.()))
     /**
      * Mark the client is ready to use the API.
      */
@@ -537,7 +538,7 @@ export class ComfyApi extends EventTarget {
   public async reconnectWs(triggerEvent?: boolean) {
     if ((this as any)._reconnectController) {
       // Avoid stacking multiple controllers concurrently
-      try { (this as any)._reconnectController.abort(); } catch {}
+      try { (this as any)._reconnectController.abort(); } catch { }
     }
     (this as any)._reconnectController = runWebSocketReconnect(this, () => this.createSocket(true), {
       triggerEvents: !!triggerEvent,
@@ -552,7 +553,7 @@ export class ComfyApi extends EventTarget {
 
   /** Abort any in-flight reconnection loop (no-op if none active). */
   public abortReconnect() {
-    try { (this as any)._reconnectController?.abort(); } catch {}
+    try { (this as any)._reconnectController?.abort(); } catch { }
   }
 
   private resetLastActivity() {

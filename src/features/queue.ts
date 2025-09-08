@@ -1,8 +1,7 @@
-import { ComfyApi } from "../client";
-import { QueuePromptResponse } from "../types/api";
-import { buildEnqueueFailedError } from "../utils/response-error";
-
-import { FeatureBase } from "./base";
+import { ComfyApi } from "../client.js";
+import { QueuePromptResponse } from "../types/api.js";
+import { buildEnqueueFailedError } from "../utils/response-error.js";
+import { FeatureBase } from "./base.js";
 
 /**
  * Queue & execution control endpoints (enqueue / append / interrupt).

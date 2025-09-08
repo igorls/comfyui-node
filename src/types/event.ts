@@ -1,6 +1,6 @@
-import { EQueueMode } from "../pool";
-import { ComfyApi } from "../client";
-import { TMonitorEvent } from "../features/monitoring";
+import { EQueueMode } from "../pool.js";
+import { ComfyApi } from "../client.js";
+import { TMonitorEvent } from "../features/monitoring.js";
 
 export type TEventStatus = {
   status: {

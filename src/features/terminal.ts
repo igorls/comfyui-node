@@ -1,6 +1,5 @@
-import { ComfyApi } from "../client";
-
-import { FeatureBase } from "./base";
+import { ComfyApi } from "../client.js";
+import { FeatureBase } from "./base.js";
 
 /** Terminal log retrieval & subscription control. */
 export class TerminalFeature extends FeatureBase {

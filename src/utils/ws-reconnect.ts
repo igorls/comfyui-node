@@ -1,5 +1,5 @@
 import { WebSocket } from "ws";
-import { ComfyApi } from "../client";
+import { ComfyApi } from "../client.js";
 
 export interface ReconnectOptions {
   /** Maximum reconnection attempts before giving up (default 10) */

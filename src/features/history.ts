@@ -1,7 +1,7 @@
-import { ComfyApi } from "../client";
-import { HistoryEntry, HistoryResponse } from "../types/api";
+import { ComfyApi } from "../client.js";
+import { HistoryEntry, HistoryResponse } from "../types/api.js";
 
-import { FeatureBase } from "./base";
+import { FeatureBase } from "./base.js";
 
 /** Access execution history entries (summary + individual). */
 export class HistoryFeature extends FeatureBase {

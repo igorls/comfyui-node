@@ -1,6 +1,5 @@
-import { ComfyApi } from "../client";
-
-import { FeatureBase } from "./base";
+import { ComfyApi } from "../client.js";
+import { FeatureBase } from "./base.js";
 
 /** Miscellaneous endpoints (extensions list, embeddings with legacy fallback). */
 export class MiscFeature extends FeatureBase {

@@ -2,12 +2,10 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "./src",
-    "module": "ESNext",
+  "module": "NodeNext",
     "target": "ES2022",
-    "lib": [
-      "ES2022",
-      "DOM"
-    ],
+    "lib": ["ES2022", "DOM"],
+    "moduleResolution": "NodeNext",
     "allowSyntheticDefaultImports": true,
     "sourceMap": true,
     "allowJs": false,
@@ -15,19 +13,16 @@
     "declaration": true,
     "declarationMap": true,
     "resolveJsonModule": true,
-    "moduleResolution": "Node",
     "forceConsistentCasingInFileNames": true,
-    "noImplicitReturns": true,
-    "noImplicitThis": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
+    "strict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "esModuleInterop": true,
     "baseUrl": ".",
-    "typeRoots": [
-      "./node_modules/@types"
-    ],
+    "paths": {
+      "src/*": ["src/*"]
+    },
+    "typeRoots": ["./node_modules/@types"],
     "composite": true,
     "noEmit": false,
     "incremental": true,

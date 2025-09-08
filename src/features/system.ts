@@ -1,7 +1,7 @@
-import { ComfyApi } from "../client";
-import { SystemStatsResponse } from "../types/api";
+import { ComfyApi } from "../client.js";
+import { SystemStatsResponse } from "../types/api.js";
 
-import { FeatureBase } from "./base";
+import { FeatureBase } from "./base.js";
 
 /** System stats & memory management (mirrors `/system_stats` & `/free`). */
 export class SystemFeature extends FeatureBase {

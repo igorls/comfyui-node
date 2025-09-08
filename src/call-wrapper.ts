@@ -1,9 +1,9 @@
-import { NodeData, NodeDef, NodeProgress } from "./types/api";
-import { ComfyApi } from "./client";
-import { PromptBuilder } from "./prompt-builder";
-import { TExecutionCached } from "./types/event";
-import { FailedCacheError, WentMissingError, EnqueueFailedError, DisconnectedError, CustomEventError, ExecutionFailedError, ExecutionInterruptedError, MissingNodeError } from "./types/error";
-import { buildEnqueueFailedError } from "./utils/response-error";
+import { NodeData, NodeDef, NodeProgress } from "./types/api.js";
+import { ComfyApi } from "./client.js";
+import { PromptBuilder } from "./prompt-builder.js";
+import { TExecutionCached } from "./types/event.js";
+import { FailedCacheError, WentMissingError, EnqueueFailedError, DisconnectedError, CustomEventError, ExecutionFailedError, ExecutionInterruptedError, MissingNodeError } from "./types/error.js";
+import { buildEnqueueFailedError } from "./utils/response-error.js";
 
 /**
  * Represents a wrapper class for making API calls using the ComfyApi client.
@@ -20,7 +20,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
   private onPendingFn?: (promptId?: string) => void;
   private onStartFn?: (promptId?: string) => void;
   private onOutputFn?: (
-    key: keyof PromptBuilder<I, string, T>["mapOutputKeys"] | "_raw",
+    key: keyof PromptBuilder<I, O, T>["mapOutputKeys"] | string | "_raw",
     data: any,
     promptId?: string
   ) => void;
@@ -100,7 +100,13 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
    * @param fn - The callback function to handle the output.
    * @returns The current instance of the class.
    */
-  onOutput(fn: (key: keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", data: any, promptId?: string) => void) {
+  onOutput(
+    fn: (
+      key: keyof PromptBuilder<I, O, T>["mapOutputKeys"] | string | "_raw",
+      data: any,
+      promptId?: string
+    ) => void
+  ) {
     this.onOutputFn = fn;
     return this;
   }
@@ -284,8 +290,8 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
 
       const classType = workflow[nodeId as string].class_type;
 
-  // Directly use feature namespace to avoid deprecated internal call
-  const def = nodeDefs[classType] || (await this.client.ext.node.getNodeDefs(classType))?.[classType];
+      // Directly use feature namespace to avoid deprecated internal call
+      const def = nodeDefs[classType] || (await this.client.ext.node.getNodeDefs(classType))?.[classType];
       if (!def) {
         throw new MissingNodeError(`Node type ${workflow[nodeId as string].class_type} is missing from server!`);
       }
@@ -353,7 +359,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       }
     }
 
-  const job = await this.client.ext.queue.appendPrompt(workflow).catch(async (e) => {
+    const job = await this.client.ext.queue.appendPrompt(workflow).catch(async (e) => {
       try {
         if (e instanceof EnqueueFailedError) {
           this.onFailedFn?.(e);
@@ -386,7 +392,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
   private async handleCachedOutput(
     promptId: string
   ): Promise<Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false | null> {
-  const hisData = await this.client.ext.history.getHistory(promptId);
+    const hisData = await this.client.ext.history.getHistory(promptId);
     if (hisData?.status?.completed) {
       const output = this.mapOutput(hisData.outputs);
       if (Object.values(output).some((v) => v !== undefined)) {
@@ -454,7 +460,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     const executedEnd = async () => {
       if (remainingOutput !== 0) {
         // some cached output nodes might output after executedEnd, so check history data if an output is really missing
-  const hisData = await this.client.ext.history.getHistory(promptId);
+        const hisData = await this.client.ext.history.getHistory(promptId);
         if (hisData?.status?.completed) {
           const outputCount = Object.keys(hisData.outputs).length;
           if (outputCount > 0 && outputCount - totalOutput === 0) {

@@ -19,7 +19,7 @@
   },
   "4": {
     "inputs": {
-      "ckpt_name": "SDXL/dreamshaperXL_v2TurboDpmppSDE.safetensors"
+      "ckpt_name": "SDXL/sd_xl_base_1.0.safetensors"
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
@@ -79,7 +79,7 @@
   },
   "10": {
     "inputs": {
-      "model_name": "4x-ClearRealityV1.pth"
+      "model_name": "RealESRGAN_x4plus.safetensors"
     },
     "class_type": "UpscaleModelLoader",
     "_meta": {

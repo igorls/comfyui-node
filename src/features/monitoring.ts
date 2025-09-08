@@ -1,5 +1,5 @@
-import { AbstractFeature } from "./abstract";
-import { FetchOptions } from "./manager";
+import { AbstractFeature } from "./abstract.js";
+import { FetchOptions } from "./manager.js";
 
 const SYSTEM_MONITOR_EXTENSION = encodeURIComponent("Primitive boolean [Crystools]");
 

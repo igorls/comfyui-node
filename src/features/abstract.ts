@@ -1,4 +1,4 @@
-import { ComfyApi } from "src/client";
+import { ComfyApi } from "../client.js";
 
 export abstract class AbstractFeature extends EventTarget {
   protected client: ComfyApi;

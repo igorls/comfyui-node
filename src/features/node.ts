@@ -1,8 +1,7 @@
-import { ComfyApi } from "../client";
-import { NodeDefsResponse } from "../types/api";
-import { LOAD_CHECKPOINTS_EXTENSION, LOAD_KSAMPLER_EXTENSION, LOAD_LORAS_EXTENSION } from "../constants";
-
-import { FeatureBase } from "./base";
+import { ComfyApi } from "../client.js";
+import { NodeDefsResponse } from "../types/api.js";
+import { LOAD_CHECKPOINTS_EXTENSION, LOAD_KSAMPLER_EXTENSION, LOAD_LORAS_EXTENSION } from "../constants.js";
+import { FeatureBase } from "./base.js";
 
 /** Node definition introspection + model/sampler metadata helpers. */
 export class NodeFeature extends FeatureBase {
