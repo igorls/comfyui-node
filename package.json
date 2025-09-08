@@ -16,7 +16,9 @@
     "build": "tsc --project tsconfig.json",
     "build:watch": "tsc --project tsconfig.json --watch",
     "test": "bun test",
-    "test:local": "bun test ./test"
+    "test:local": "bun test ./test",
+    "test:real": "cross-env COMFY_REAL=1 bun test ./test/real.integration.spec.ts",
+    "test:full": "cross-env COMFY_REAL=1 COMFY_FULL=1 bun test ./test/real.full.integration.spec.ts"
   },
   "license": "MIT",
   "dependencies": {
@@ -27,6 +29,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "24.3.1",
     "@types/ws": "^8.18.1",
+    "cross-env": "^7.0.3",
     "typescript": "5.9.2"
   }
 }
