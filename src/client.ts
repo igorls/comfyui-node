@@ -26,6 +26,7 @@ import { ModelFeature } from "./features/model";
 import { TerminalFeature } from "./features/terminal";
 import { MiscFeature } from "./features/misc";
 import { FeatureFlagsFeature } from "./features/feature-flags";
+import { runWebSocketReconnect } from "./utils/ws-reconnect";
 
 interface FetchOptions extends RequestInit {
   headers?: {
@@ -162,21 +163,29 @@ export class ComfyApi extends EventTarget {
     host: string,
     clientId: string = ComfyApi.generateId(),
     opts?: {
-      /**
-       * Do not fallback to HTTP if WebSocket is not available.
-       * This will retry to connect to WebSocket on error.
-       */
+      /** Do not fallback to HTTP if WebSocket is not available (keeps retrying WS). */
       forceWs?: boolean;
-      /**
-       * Timeout for WebSocket connection.
-       * Default is 10000ms.
-       */
+      /** Timeout for WebSocket inactivity before reconnect (default 10000ms). */
       wsTimeout?: number;
-      /**
-       * Listen to terminal logs from the server. Default (false)
-       */
+      /** Subscribe to terminal logs immediately on init (default false). */
       listenTerminal?: boolean;
+      /** Authentication credentials (basic / bearer / custom headers). */
       credentials?: BasicCredentials | BearerTokenCredentials | CustomCredentials;
+      /** WebSocket reconnection tuning */
+      reconnect?: {
+        /** Max reconnection attempts before giving up (default 10). */
+        maxAttempts?: number;
+        /** Base delay (ms) for exponential backoff (default 1000). */
+        baseDelayMs?: number;
+        /** Max delay cap (ms) (default 15000). */
+        maxDelayMs?: number;
+        /** Backoff strategy: exponential | linear | custom (default exponential). */
+        strategy?: "exponential" | "linear" | "custom";
+        /** Percent jitter (0 disables). Only for linear/exponential (default 30). */
+        jitterPercent?: number;
+        /** Custom delay fn if strategy === 'custom'. Receives attempt (1-based). */
+        customDelayFn?: (attempt: number, opts: { baseDelayMs: number; maxDelayMs: number }) => number;
+      };
     }
   ) {
     super();
@@ -193,6 +202,9 @@ export class ComfyApi extends EventTarget {
     if (opts?.listenTerminal) {
       this.listenTerminal = opts.listenTerminal;
     }
+    if (opts?.reconnect) {
+      (this as any)._reconnect = { ...opts.reconnect };
+    }
     this.log("constructor", "Initialized", {
       host,
       clientId,
@@ -206,8 +218,7 @@ export class ComfyApi extends EventTarget {
    * Ensures all connections, timers and event listeners are properly closed.
    */
   destroy() {
-    this.log("destroy", "Destroying client...");
-
+  this.log("destroy", "Destroying client...");
     // Cleanup flag to prevent re-entry
     if ((this as any)._destroyed) {
       this.log("destroy", "Client already destroyed");
@@ -524,73 +535,24 @@ export class ComfyApi extends EventTarget {
    * Falls back to a bounded number of attempts then emits `reconnection_failed`.
    */
   public async reconnectWs(triggerEvent?: boolean) {
-    if (triggerEvent) {
-      this.dispatchEvent(new CustomEvent("disconnected"));
-      this.dispatchEvent(new CustomEvent("reconnecting"));
+    if ((this as any)._reconnectController) {
+      // Avoid stacking multiple controllers concurrently
+      try { (this as any)._reconnectController.abort(); } catch {}
     }
+    (this as any)._reconnectController = runWebSocketReconnect(this, () => this.createSocket(true), {
+      triggerEvents: !!triggerEvent,
+      maxAttempts: (this as any)._reconnect?.maxAttempts,
+      baseDelayMs: (this as any)._reconnect?.baseDelayMs,
+      maxDelayMs: (this as any)._reconnect?.maxDelayMs,
+      strategy: (this as any)._reconnect?.strategy,
+      jitterPercent: (this as any)._reconnect?.jitterPercent,
+      customDelayFn: (this as any)._reconnect?.customDelayFn
+    });
+  }
 
-    // Maximum number of reconnection attempts
-    const MAX_ATTEMPTS = 10;
-    // Base delay in milliseconds
-    const BASE_DELAY = 1000;
-    // Maximum delay between attempts (15 seconds)
-    const MAX_DELAY = 15000;
-
-    let attempt = 0;
-
-    const tryReconnect = () => {
-      attempt++;
-      this.log("socket", `WebSocket reconnection attempt #${attempt}`);
-
-      // Clean up any existing socket
-      if (this.socket) {
-        try {
-          // Only call terminate if it exists (Node.js environment)
-          if (typeof this.socket.terminate === "function") {
-            this.socket.terminate();
-          }
-          this.socket.close();
-        } catch (error) {
-          this.log("socket", "Error while closing previous socket", error);
-        }
-      }
-
-      this.socket = null;
-
-      // Create a new socket connection
-      try {
-        this.createSocket(true);
-      } catch (error) {
-        this.log("socket", "Error creating socket during reconnect", error);
-      }
-
-      // Calculate next retry delay with exponential backoff and jitter
-      if (attempt < MAX_ATTEMPTS) {
-        // Exponential backoff formula: baseDelay * 2^attempt + random jitter
-        const exponentialDelay = Math.min(BASE_DELAY * Math.pow(2, attempt - 1), MAX_DELAY);
-
-        // Add jitter (±30% of the delay) to prevent all clients reconnecting simultaneously
-        const jitter = exponentialDelay * 0.3 * (Math.random() - 0.5);
-        const delay = Math.max(1000, exponentialDelay + jitter);
-
-        this.log("socket", `Will retry in ${Math.round(delay / 1000)} seconds`);
-
-        // Check if the socket is reconnected within the timeout
-        setTimeout(() => {
-          if (!this.socket || (this.socket.readyState !== WebSocket.OPEN && this.socket.readyState !== WebSocket.CONNECTING)) {
-            this.log("socket", "Reconnection failed or timed out, retrying...");
-            tryReconnect(); // Retry if not connected
-          } else {
-            this.log("socket", "Reconnection successful");
-          }
-        }, delay);
-      } else {
-        this.log("socket", `Maximum reconnection attempts (${MAX_ATTEMPTS}) reached.`);
-        this.dispatchEvent(new CustomEvent("reconnection_failed"));
-      }
-    };
-
-    tryReconnect();
+  /** Abort any in-flight reconnection loop (no-op if none active). */
+  public abortReconnect() {
+    try { (this as any)._reconnectController?.abort(); } catch {}
   }
 
   private resetLastActivity() {
