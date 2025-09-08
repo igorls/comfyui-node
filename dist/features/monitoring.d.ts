@@ -24,6 +24,9 @@ export declare class MonitoringFeature extends AbstractFeature {
     private resources?;
     private listeners;
     private bound;
+    /** Enable verbose debug logs (env: COMFY_MONITOR_DEBUG=1) */
+    private debug;
+    constructor(client: any);
     checkSupported(): Promise<boolean>;
     destroy(): void;
     private fetchApi;

@@ -366,6 +366,11 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
     return Promise.all(jobs.map((task) => this.run(task, weight, clientFilter)));
   }
 
+  /** Convenience: pick a client and run a Workflow / raw workflow JSON via its api.runWorkflow */
+  async runWorkflow(wf: any, weight?: number, clientFilter?: { includeIds?: string[]; excludeIds?: string[] }, options?: { enableFailover?: boolean; maxRetries?: number; retryDelay?: number; includeOutputs?: string[] }) {
+    return this.run(async (api) => api.runWorkflow(wf, { includeOutputs: options?.includeOutputs }), weight, clientFilter, options);
+  }
+
   private async initializeClient(client: ComfyApi, index: number) {
     this.dispatchEvent(
       new CustomEvent("loading_client", {

@@ -24,6 +24,7 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 - [Reference Overview](#reference-overview)
 - [Examples](#examples)
 - [Errors & Diagnostics](#errors--diagnostics)
+- [Published Smoke Test](#published-smoke-test)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -41,56 +42,196 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 - Structured errors & narrow fetch helper
 - Validation utilities for prompt graphs (missing mappings, immediate cycles)
 - JSON round‑trip support for builder state persistence
+- High‑level `Workflow` abstraction (rapid parameter tweaking of existing JSON graphs)
+- Input sugar helpers: `wf.input(...)`, `wf.batchInputs(...)`
+- Soft autocomplete mode for sampler / scheduler (`Workflow.fromAugmented`)
+- Progressive typed outputs inferred from `wf.output(...)` declarations
+- Per‑node output shape heuristics (e.g. `SaveImage*`, `KSampler`)
+- Automatic random seed substitution for `seed: -1` with `_autoSeeds` metadata
 
 ## Installation
 
+Requires Node.js >= 22 (modern WebSocket + fetch + ES2023 features). Works with Bun as well.
+
 ```bash
-bun add comfyui-node
-# or
 npm install comfyui-node
-```
+# or
+pnpm add comfyui-node
+# or
+bun add comfyui-node
+```text
 
-Requires Node.js 22+ (Active / Current). Earlier Node versions are not supported in 1.0+.
+TypeScript types are bundled; no extra install needed.
 
-## Quick Start
+Minimal ESM usage example:
 
 ```ts
-import { ComfyApi, CallWrapper, PromptBuilder, seed, TSamplerName, TSchedulerName } from "comfyui-node";
-import ExampleTxt2ImgWorkflow from "./example-txt2img-workflow.json";
+import { ComfyApi, Workflow } from 'comfyui-node';
+import BaseWorkflow from './example-txt2img-workflow.json';
 
-const api = new ComfyApi("http://localhost:8189").init();
-const workflow = new PromptBuilder(
-  ExampleTxt2ImgWorkflow,
-  ["positive","negative","checkpoint","seed","batch","step","cfg","sampler","sheduler","width","height"],
-  ["images"]
-)
-  .setInputNode("checkpoint","4.inputs.ckpt_name")
-  .setInputNode("seed","3.inputs.seed")
-  .setInputNode("batch","5.inputs.batch_size")
-  .setInputNode("negative","7.inputs.text")
-  .setInputNode("positive","6.inputs.text")
-  .setInputNode("cfg","3.inputs.cfg")
-  .setInputNode("sampler","3.inputs.sampler_name")
-  .setInputNode("sheduler","3.inputs.scheduler")
-  .setInputNode("step","3.inputs.steps")
-  .setInputNode("width","5.inputs.width")
-  .setInputNode("height","5.inputs.height")
-  .setOutputNode("images","9")
-  .input("checkpoint","SDXL/realvisxlV40_v40LightningBakedvae.safetensors", api.osType)
-  .input("seed", seed())
-  .input("step", 6)
-  .input("cfg", 1)
-  .input<TSamplerName>("sampler","dpmpp_2m_sde_gpu")
-  .input<TSchedulerName>("sheduler","sgm_uniform")
-  .input("width",1024)
-  .input("height",1024)
-  .input("batch",1)
-  .input("positive","A picture of a dog on the street");
+async function main() {
+  const api = await new ComfyApi('http://127.0.0.1:8188').ready();
+  const wf = Workflow.from(BaseWorkflow)
+    .set('6.inputs.text', 'Hello ComfyUI SDK')
+    .output('images:9');
+  const job = await api.run(wf, { autoDestroy: true });
+  const result = await job.done();
+  for (const img of (result.images?.images || [])) {
+    console.log('image path:', api.ext.file.getPathImage(img));
+  }
+}
+main();
+```text
 
-new CallWrapper(api, workflow)
-  .onFinished(d => console.log(d.images?.images.map((img: any) => api.ext.file.getPathImage(img))))
-  .run();
+
+### High‑Level Workflow API (Experimental) – Quick Intro
+
+Skip manual `PromptBuilder` wiring with `Workflow` when you just want to tweak an existing graph JSON and run it. A full step‑by‑step tutorial is below; here is the 10‑second overview:
+
+- Load JSON – `Workflow.from(json)`
+- Mutate values – `.set('nodeId.inputs.field', value)`
+- Declare outputs – `.output('alias:nodeId')` (or just `.output('nodeId')`; falls back to auto‑detecting `SaveImage` nodes)
+- Execute – `await api.run(wf)` (or `api.runWorkflow(wf)` alias) returning a `WorkflowJob` (Promise‑like)
+- Subscribe to events – `progress`, `progress_pct`, `preview`, `output`, `finished`, `failed`
+- Await final object – either `await job` or `await job.done()`
+
+See the dedicated tutorial section for a narrated example and option details.
+
+### Recent Enhancements (Ergonomics & Typing)
+
+The `Workflow` surface has gained several quality‑of‑life helpers and **progressive typing** features. All are additive (no breaking changes) and optional—fall back to raw `set()` / `output()` styles whenever you prefer.
+
+| Feature | Purpose | Example |
+| ------- | ------- | ------- |
+| `wf.input(nodeId, inputName, value)` | Direct, concise single input mutation (vs. dotted path) | `wf.input('SAMPLER','steps',30)` |
+| `wf.batchInputs(nodeId, { ... })` | Set multiple inputs on one node | `wf.batchInputs('SAMPLER',{ steps:30, cfg:5 })` |
+| `wf.batchInputs({ NODEA:{...}, NODEB:{...} })` | Multi‑node batch mutation | `wf.batchInputs({ SAMPLER:{ cfg:6 }, CLIP:{ text:'hello' } })` |
+| `Workflow.fromAugmented(json)` | Adds soft autocomplete to certain inputs (e.g. sampler & scheduler) while allowing arbitrary strings | `Workflow.fromAugmented(base)` |
+| Typed output inference | Each `.output(...)` refines the eventual `job.done()` result type with keys you declare | `wf.output('images:SAVE_IMAGE')` |
+| Per‑node output shape hints | Common node classes mapped to rough output structures (currently `SaveImage*` & `KSampler`) | `result.images.images` autocompletes |
+| Multiple output syntaxes | Flexibility / readability | `'alias:NodeId'`, `('alias','NodeId')`, or `'NodeId'` |
+| `wf.typedResult()` | IDE‑only helper returning an empty object typed as the final output (aliases + metadata) | `type R = ReturnType<typeof wf.typedResult>` |
+
+> All typing is structural—no runtime validation. Unknown / future sampler names or new node classes continue to work.
+
+#### Input Helpers
+
+```ts
+const wf = Workflow.fromAugmented(baseJson)
+  .input('LOADER','ckpt_name','model.safetensors')
+  .batchInputs('SAMPLER', {
+    steps: 30,
+    cfg: 4,
+    sampler_name: 'euler_ancestral', // autocomplete + accepts future strings
+    scheduler: 'karras',             // autocomplete + forward compatible
+    seed: -1                         // -1 -> auto randomized before submit
+  })
+  .batchInputs({
+    CLIP_TEXT_ENCODE_POSITIVE: { text: 'A moody cinematic landscape' },
+    LATENT_IMAGE: { width: 896, height: 1152 }
+  });
 ```
+
+### Output Declaration & Typing
+
+Each `output()` call accumulates inferred keys:
+
+```ts
+const wf2 = Workflow.fromAugmented(baseJson)
+  .output('gallery:SAVE_IMAGE')       // key 'gallery'
+  .output('KSamplerNode')             // key 'KSamplerNode'
+  .output('thumb','THUMBNAIL_NODE');  // key 'thumb'
+
+// Type exploration (IDE only):
+type Wf2Result = ReturnType<typeof wf2.typedResult>;
+// Wf2Result ~ {
+//   gallery: { images?: any[] };   // SaveImage heuristic
+//   KSamplerNode: { samples?: any }; // KSampler heuristic
+//   thumb: any;                    // THUMBNAIL_NODE class not mapped yet
+//   _promptId?: string; _nodes?: string[]; _aliases?: Record<string,string>; _autoSeeds?: Record<string,number>;
+// }
+
+const job = await api.run(wf2);
+const final = await job.done();
+final.gallery.images?.forEach(img => console.log(api.ext.file.getPathImage(img)));
+```
+
+Supported output forms (all equivalent semantically; choose your style):
+
+```ts
+wf.output('alias:NodeId');
+wf.output('alias','NodeId');
+wf.output('NodeId'); // raw key = node id
+```
+
+If you declare *no* outputs the SDK still auto‑collects all `SaveImage` nodes.
+
+#### Per‑Node Output Shapes (Heuristics)
+
+Currently recognized:
+
+| class_type match | Inferred shape fragment |
+| ---------------- | ----------------------- |
+| `SaveImage`, `SaveImageAdvanced` | `{ images?: any[] }` |
+| `KSampler` | `{ samples?: any }` |
+
+All others are typed as `any` (you still get alias key inference). This table will expand; explicit contributions welcome.
+
+#### Combining With Result Metadata
+
+The object from `job.done()` (and `runAndWait`) is always the intersection:
+
+```ts
+// final result shape (conceptual)
+{ ...yourDeclaredOutputs, _promptId?: string, _nodes?: string[], _aliases?: Record<string,string>, _autoSeeds?: Record<string,number> }
+```
+
+#### When to Use `Workflow.fromAugmented`
+
+Use it when you want IDE suggestions for sampler / scheduler *without* losing forward compatibility. The widened types are `TSamplerName | (string & {})` and `TSchedulerName | (string & {})` internally—any new upstream values are valid.
+
+#### Extracting a Stable Result Type
+
+If you want to export a type for downstream modules:
+
+```ts
+export type MyGenerationResult = ReturnType<typeof wf.typedResult>;
+```
+
+This stays accurate as long as all `output()` calls run before the type is captured.
+
+#### Limitations & Future Work
+
+- Output shapes are heuristic; not all node classes annotated yet.
+- Dynamic node creation using non‑strict `input()` cannot update the generic shape (TypeScript limitation). You can re‑wrap with `Workflow.fromAugmented` after structural edits if needed.
+- Potential future API: `wf.withOutputShapes({ MyCustomNode: { customField: string } })` for user overrides.
+
+---
+
+Pool variant (experimental):
+
+```ts
+import { ComfyApi, ComfyPool, Workflow } from 'comfyui-node';
+import BaseWorkflow from './example-txt2img-workflow.json';
+
+const pool = new ComfyPool([
+  new ComfyApi('http://localhost:8188'),
+  new ComfyApi('http://localhost:8189')
+]);
+
+const wf = Workflow.from(BaseWorkflow)
+  .set('6.inputs.text', 'A macro photo of a dewdrop on a leaf')
+  .output('9');
+
+// Run using one specific API (pool provided for scheduling context)
+const api2 = pool.clients[0];
+const job2 = await api2.run(wf, { pool });
+await job2.done();
+```
+
+Notes:
+
+- Experimental surface: event names / helpers may refine before a stable minor release.
 
 ### PromptBuilder Validation & Serialization
 
@@ -147,33 +288,154 @@ function safeBuild(wf: any) {
 ```ts
 import { ComfyApi, ComfyPool, EQueueMode, CallWrapper, PromptBuilder, seed } from "comfyui-node";
 import ExampleTxt2ImgWorkflow from "./example-txt2img-workflow.json";
+// ... pool basic example content (see earlier dedicated Workflow section for high-level abstraction)
+```
 
-// Create two API clients (auth / headers etc still work as normal)
+Pool variant (experimental):
+
+```ts
+import { ComfyApi, ComfyPool, Workflow } from 'comfyui-node';
+import BaseWorkflow from './example-txt2img-workflow.json';
+
 const pool = new ComfyPool([
-  new ComfyApi("http://localhost:8188"),
-  new ComfyApi("http://localhost:8189")
-]); // defaults to PICK_ZERO
+  new ComfyApi('http://localhost:8188'),
+  new ComfyApi('http://localhost:8189')
+]);
 
-// A single generation task (returns file paths for convenience)
-const generate = async (api: ComfyApi) => {
-  const wf = new PromptBuilder(ExampleTxt2ImgWorkflow,["positive","checkpoint","seed"],["images"])
-    .setInputNode("checkpoint","4.inputs.ckpt_name")
-    .setInputNode("seed","3.inputs.seed")
-    .setInputNode("positive","6.inputs.text")
-    .setOutputNode("images","9")
-    .input("checkpoint","SDXL/realvisxlV40_v40LightningBakedvae.safetensors", api.osType)
-    .input("seed", seed())
-    .input("positive","A close up picture of a cat");
-  return await new Promise<string[]>(resolve => {
-    new CallWrapper(api, wf)
-      .onFinished(data => resolve(data.images?.images.map((img: any) => api.ext.file.getPathImage(img)) || []))
-      .run();
-  });
-};
+const wf = Workflow.from(BaseWorkflow)
+  .set('6.inputs.text', 'A macro photo of a dewdrop on a leaf')
+  .output('9');
 
-// Dispatch 3 parallel generations across the pool
-const results = await pool.batch(Array(3).fill(generate));
-console.log(results.flat());
+// Run using one specific API (pool provided for scheduling context)
+const api = pool.clients[0];
+const job = await api.run(wf, { pool });
+await job.done();
+```
+
+Notes:
+
+- Experimental surface: event names / helpers may refine before a stable minor release.
+- Falls back to `SaveImage` detection if you omit `output(...)`.
+- For advanced validation, serialization, or complex key mapping prefer `PromptBuilder`.
+
+---
+
+## High‑Level Workflow Tutorial (New Users of This SDK)
+
+Audience: You already understand ComfyUI graphs & node JSON, but are new to this TypeScript SDK.
+
+Goals after this section you can: (a) clone a base workflow, (b) modify its parameters, (c) name your desired outputs, (d) track progress & previews, and (e) retrieve final image paths – with minimal boilerplate.
+
+### 1. Prepare a Base Workflow JSON
+
+Export or copy a working ComfyUI txt2img graph (e.g. the one in `test/example-txt2img-workflow.json`). Ensure you know the node ID of the final `SaveImage` (here we assume `9`).
+
+### 2. Initialize the API
+
+`api.ready()` handles connection & feature probing. It is idempotent (can be safely called multiple times). You can override the host using `COMFY_HOST`.
+
+### 3. Mutate Parameters & Declare Outputs
+
+Use `.set('<nodeId>.inputs.<field>', value)` to change values. Call `.output('alias:nodeId')` to collect that node's result under a friendly key (`alias`). If you omit alias (`.output('9')`) the key will be the node ID. If you omit all outputs the SDK tries to collect every `SaveImage` node automatically.
+
+Auto seed: If any node has an input field literally named `seed` with value `-1`, the SDK will replace it with a random 32‑bit integer before submission and expose the mapping in the final result under `_autoSeeds` (object keyed by node id). This lets you keep templates with `-1` sentinel for “random every run”.
+
+### 4. Run & Observe Progress
+
+`api.run(workflow, { autoDestroy: true })` executes and (optionally) closes underlying sockets once finished/failed so the process can exit without manual cleanup. The returned `WorkflowJob` is an EventEmitter‑like object AND a Promise: `await job` works just like `await job.done()`.
+
+### 5. Extract Image Paths
+
+Final structure includes your alias keys plus `_promptId`, `_nodes` and `_aliases` metadata. Use `api.ext.file.getPathImage(imageInfo)` to build a fetchable URL.
+
+### Complete Example
+
+```ts
+import { ComfyApi, Workflow } from 'comfyui-node';
+import BaseWorkflow from './example-txt2img-workflow.json';
+
+async function main() {
+  const api = await new ComfyApi(process.env.COMFY_HOST || 'http://127.0.0.1:8188').ready();
+
+  const wf = Workflow.from(BaseWorkflow)
+    .set('4.inputs.ckpt_name', process.env.COMFY_MODEL || 'SDXL/realvisxlV40_v40LightningBakedvae.safetensors')
+    .set('6.inputs.text', 'A dramatic cinematic landscape, volumetric light')
+    .set('7.inputs.text', 'text, watermark')
+    .set('3.inputs.seed', Math.floor(Math.random() * 10_000_000))
+    .set('3.inputs.steps', 8)
+    .set('3.inputs.cfg', 2)
+    .set('3.inputs.sampler_name', 'dpmpp_sde')
+    .set('3.inputs.scheduler', 'sgm_uniform')
+    .set('5.inputs.width', 1024)
+    .set('5.inputs.height', 1024)
+    .output('images:9'); // alias 'images' -> node 9
+
+  const job = await api.runWorkflow(wf, { autoDestroy: true });
+
+  job
+    .on('pending', id => console.log('[queue]', id))
+    .on('start', id => console.log('[start]', id))
+    .on('progress_pct', pct => process.stdout.write(`\rprogress ${pct}%   `))
+    .on('preview', blob => console.log('\npreview frame bytes=', blob.size))
+    .on('failed', err => console.error('\nerror', err));
+
+  const result = await job; // or await job.done();
+  console.log('\nPrompt ID:', result._promptId);
+  for (const img of (result.images?.images || [])) {
+    console.log('image path:', api.ext.file.getPathImage(img));
+  }
+}
+
+main().catch(e => { console.error(e); process.exit(1); });
+```
+
+### Key Options Recap
+
+| Option | Where | Purpose |
+| ------ | ----- | ------- |
+| `autoDestroy` | `api.run(...)` | Automatically `destroy()` the client on finish/fail |
+| `includeOutputs` | `api.run(wf,{ includeOutputs:['9'] })` | Force extra node IDs (in addition to `.output(...)`) |
+| `pool` | (advanced) | Execute through a `ComfyPool` for multi‑instance scheduling |
+
+### Event Cheat Sheet (WorkflowJob)
+
+| Event | Payload | Description |
+| ----- | ------- | ----------- |
+| `pending` | promptId | Enqueued, waiting to start |
+| `start` | promptId | Execution began |
+| `progress` | raw `{ value,max }` | Low‑level progress data |
+| `progress_pct` | number (0‑100) | Deduped integer percentage (fires on change) |
+| `preview` | `Blob` | Live image preview frame |
+| `output` | nodeId | Partial node output arrived |
+| `finished` | final object | All requested outputs resolved |
+| `failed` | `Error` | Execution failed / interrupted |
+
+### Execution Flow & Await Semantics
+
+`await api.run(wf)` resolves AFTER the job has been accepted (queued) and returns a `WorkflowJob` handle you can attach events to. You then explicitly `await job.done()` for final outputs.
+
+```ts
+const job = await api.run(wf);     // acceptance barrier reached -> you have prompt id via 'pending' event
+job
+  .on('progress_pct', pct => console.log('progress', pct))
+  .on('preview', blob => console.log('preview frame', blob.size));
+
+const outputs = await job.done();  // final mapped outputs + metadata
+```
+
+This two‑stage await keeps early feedback (events available immediately after acceptance) while still letting you write linear code for final result consumption.
+
+Auto‑generated metadata keys:
+
+| Key | Meaning |
+| --- | ------- |
+| `_promptId` | Server prompt id assigned |
+| `_nodes` | Array of collected node ids |
+| `_aliases` | Mapping nodeId -> alias (where provided) |
+| `_autoSeeds` | Mapping nodeId -> randomized seed (only when you used -1 sentinel) |
+
+---
+
 ```
 
 ### Job Weighting
@@ -455,6 +717,31 @@ Supporting classes:
 
 Enums & Types: `EQueueMode`, sampler / scheduler unions, `OSType`, plus exported response types found under `types/*`.
 
+## Monitoring: System vs Job Progress
+
+"Monitoring" in this SDK refers to two unrelated event domains:
+
+| Type | Source | Requires Extension | Events | Usage |
+| ---- | ------ | ------------------ | ------ | ----- |
+| System Monitoring | Crystools extension | Yes (ComfyUI-Crystools) | `system_monitor` (pool) + feature internals | Host CPU/GPU/RAM telemetry |
+| Job Progress | Core ComfyUI | No | `executing`, `progress`, `executed`, `execution_success`, `execution_error`, `execution_interrupted`, `b_preview` | Per‑job progress %, live image previews |
+
+System monitoring is toggled via env flags in the smoke script (`COMFY_MONITOR`, `COMFY_MONITOR_STRICT`, `COMFY_MONITOR_FORCE`) and is surfaced under `api.ext.monitor`.
+
+Job progress monitoring is always active: subscribe directly (`api.on("progress", ...)`) or use higher‑level helpers:
+
+```ts
+new CallWrapper(api, builder)
+  .onProgress(p => console.log(p.value, '/', p.max))
+  .onPreview(blob => /* show transient image */)
+  .onFinished(out => /* final outputs */)
+  .run();
+```
+
+The published smoke test now logs job progress automatically and counts preview frames. Set `COMFY_PROGRESS_VERBOSE=1` to force log every step (not just percentage changes).
+
+If you only need generation progress & previews you do NOT need the Crystools extension.
+
 ## Examples
 
 See the `examples` directory for text‑to‑image, image‑to‑image, upscaling and pool orchestration patterns.
@@ -529,10 +816,6 @@ const restored = PromptBuilder.fromJSON(snapshot)
 
 This is useful for deferred execution, cross‑process scheduling, or audit logging of the exact prompt graph sent to the server.
 
-## Contributing
-
-Issues and PRs welcome. Please include focused changes and tests where sensible. Adhere to existing coding style and keep feature surfaces minimal & cohesive.
-
 ## Testing & Coverage
 
 This repository uses Bun's built-in test runner. Common scripts:
@@ -595,6 +878,61 @@ bun test && bun run coverage
 ```
 
 before opening a PR, and prefer adding tests alongside new feature code.
+
+## Published Smoke Test
+
+The script `scripts/published-e2e.ts` offers a zero‑config verification of the published npm artifact with **Bun auto‑install**. It dynamically imports `comfyui-node`, builds a small txt2img workflow (optionally an upscale branch), waits for completion and prints output image URLs.
+
+### Quick Run (Auto‑Install)
+
+```bash
+mkdir comfyui-node-smoke
+cd comfyui-node-smoke
+curl -o published-e2e.ts https://raw.githubusercontent.com/igorls/comfyui-node/main/scripts/published-e2e.ts
+COMFY_HOST=http://localhost:8188 bun run published-e2e.ts
+```
+
+### Optional Explicit Install
+
+```bash
+mkdir comfyui-node-smoke
+cd comfyui-node-smoke
+bun add comfyui-node
+curl -o published-e2e.ts https://raw.githubusercontent.com/igorls/comfyui-node/main/scripts/published-e2e.ts
+COMFY_HOST=http://localhost:8188 bun run published-e2e.ts
+```
+
+### Environment Variables
+
+| Var | Default | Purpose |
+| --- | ------- | ------- |
+| `COMFY_HOST` | `http://127.0.0.1:8188` | Base ComfyUI server |
+| `COMFY_MODEL` | `SDXL/sd_xl_base_1.0.safetensors` | Checkpoint file name (must exist) |
+| `COMFY_POSITIVE_PROMPT` | scenic base prompt | Positive text |
+| `COMFY_NEGATIVE_PROMPT` | `text, watermark` | Negative text |
+| `COMFY_SEED` | random | Deterministic seed override |
+| `COMFY_STEPS` | `8` | Sampling steps |
+| `COMFY_CFG` | `2` | CFG scale |
+| `COMFY_SAMPLER` | `dpmpp_sde` | Sampler name |
+| `COMFY_SCHEDULER` | `sgm_uniform` | Scheduler name |
+| `COMFY_TIMEOUT_MS` | `120000` | Overall timeout (ms) |
+| `COMFY_UPSCALE` | unset | If set, adds RealESRGAN upscale branch |
+| `COMFY_MONITOR` | unset | If set, attempt to enable Crystools system monitor & log first event |
+| `COMFY_MONITOR_STRICT` | unset | With monitor enabled, fail (exit 5) if no events received |
+
+Exit codes: 0 success, 1 import failure, 2 timeout, 3 enqueue failure, 4 other error, 5 monitor strict failure.
+
+### Rationale
+
+Ensures the published `dist` is coherent and functional in a clean consumer environment; can later be wired into CI behind an opt‑in flag (e.g. `E2E_PUBLISHED=1`).
+
+### Future
+
+Possible enhancement: GitHub Action that spins up a ComfyUI container, runs the smoke test, and archives generated images as artifacts.
+
+## Contributing
+
+Issues and PRs welcome. Please include focused changes and tests where sensible. Adhere to existing coding style and keep feature surfaces minimal & cohesive.
 
 ## License
 

@@ -26,6 +26,7 @@ import { TerminalFeature } from "./features/terminal.js";
 import { MiscFeature } from "./features/misc.js";
 import { FeatureFlagsFeature } from "./features/feature-flags.js";
 import { runWebSocketReconnect } from "./utils/ws-reconnect.js";
+import { Workflow, WorkflowJob, WorkflowResult } from "./workflow.js";
 
 interface FetchOptions extends RequestInit {
   headers?: {
@@ -53,6 +54,9 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   public osType!: OSType; // assigned during init()
   /** Indicates feature probing + socket establishment completed */
   public isReady: boolean = false;
+  /** Internal ready promise (resolved once). */
+  private readyPromise: Promise<this>;
+  private resolveReady!: (self: this) => void;
   /** Whether to subscribe to terminal log streaming on init */
   public listenTerminal: boolean = false;
   /** Monotonic timestamp of last socket activity (used for timeout detection) */
@@ -185,6 +189,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     this.apiHost = host;
     this.apiBase = host.split("://")[1];
     this.clientId = clientId;
+    this.readyPromise = new Promise<this>(res => { this.resolveReady = res; });
     if (opts?.credentials) {
       this.credentials = opts?.credentials;
       this.testCredentials();
@@ -467,6 +472,8 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
 
       // Mark as ready
       this.isReady = true;
+      // Resolve ready promise exactly once
+      try { this.resolveReady?.(this); } catch { /* no-op */ }
 
       return this;
     } catch (e) {
@@ -491,10 +498,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
 
   /** Await until feature probing + socket creation finished. */
   async waitForReady() {
-    while (!this.isReady) {
-      await delay(100);
-    }
-    return this;
+    return this.readyPromise;
   }
 
   /**
@@ -540,6 +544,83 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
 
   private resetLastActivity() {
     this.lastActivity = Date.now();
+  }
+
+  /** Convenience: init + waitForReady (idempotent). */
+  public async ready(): Promise<this> {
+    if (!this.isReady) {
+      await this.init();
+      await this.waitForReady();
+    }
+    return this;
+  }
+
+  /**
+   * High-level sugar: run a Workflow or PromptBuilder directly.
+   * Accepts experimental Workflow abstraction or a raw PromptBuilder-like object with setInputNode/output mappings already applied.
+   */
+  public async run(wf: any, opts?: { pool?: any; autoDestroy?: boolean; includeOutputs?: string[] }): Promise<WorkflowJob<WorkflowResult>> {
+    if (wf instanceof Workflow) {
+      await this.ready();
+      const job = await wf.run(this as any, { pool: opts?.pool, includeOutputs: opts?.includeOutputs });
+      const ensured = this._ensureWorkflowJob(job);
+      if (opts?.autoDestroy) {
+        if (ensured && typeof (ensured as any).on === 'function') {
+          (ensured as any).on('finished', () => this.destroy()).on('failed', () => this.destroy());
+        } else if (ensured && typeof (ensured as any).finally === 'function') {
+          (ensured as any).finally(() => this.destroy());
+        }
+      }
+      return ensured;
+    }
+    // Assume raw JSON -> wrap
+    if (typeof wf === 'object' && !wf.run) {
+      const w = Workflow.from(wf as any);
+      await this.ready();
+      const job = await w.run(this as any, { pool: opts?.pool, includeOutputs: opts?.includeOutputs });
+      const ensured = this._ensureWorkflowJob(job);
+      if (opts?.autoDestroy) {
+        if (ensured && typeof (ensured as any).on === 'function') {
+          (ensured as any).on('finished', () => this.destroy()).on('failed', () => this.destroy());
+        } else if (ensured && typeof (ensured as any).finally === 'function') {
+          (ensured as any).finally(() => this.destroy());
+        }
+      }
+      return ensured;
+    }
+    throw new Error('Unsupported workflow object passed to api.run');
+  }
+
+  /** Backwards compatibility: ensure returned value has minimal WorkflowJob surface (.on/.done). */
+  private _ensureWorkflowJob(job: any) {
+    if (!job) return job;
+    const hasOn = typeof job.on === 'function';
+    const hasDone = typeof job.done === 'function';
+    if (hasOn && hasDone) return job; // already a WorkflowJob
+    // Wrap plain promise-like
+    if (typeof job.then === 'function') {
+      const listeners: Record<string, Function[]> = {};
+      const emit = (evt: string, ...args: any[]) => (listeners[evt] || []).forEach(fn => { try { fn(...args); } catch { } });
+      // Attempt to tap into resolution
+      job.then((val: any) => { emit('finished', val, (val && val._promptId) || undefined); return val; }, (err: any) => { emit('failed', err); throw err; });
+      return Object.assign(job, {
+        on(evt: string, fn: Function) { (listeners[evt] = listeners[evt] || []).push(fn); return this; },
+        off(evt: string, fn: Function) { listeners[evt] = (listeners[evt] || []).filter(f => f !== fn); return this; },
+        done() { return job; }
+      });
+    }
+    return job;
+  }
+
+  /** Alias for clarity when passing explicit Workflow objects */
+  public async runWorkflow(wf: any, opts?: { pool?: any; autoDestroy?: boolean; includeOutputs?: string[] }): Promise<import('./workflow.js').WorkflowJob<import('./workflow.js').WorkflowResult>> {
+    return this.run(wf, opts);
+  }
+
+  /** Convenience helper: run + wait for completion results in one call. */
+  public async runAndWait(wf: any, opts?: { pool?: any; includeOutputs?: string[] }): Promise<import('./workflow.js').WorkflowResult> {
+    const job = await this.run(wf, { pool: opts?.pool, includeOutputs: opts?.includeOutputs });
+    return (job as any).done();
   }
 
   /**
@@ -601,31 +682,51 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       this.socket.onmessage = (event) => {
         this.resetLastActivity();
         try {
+          // Unified binary handling: Buffer (ws), ArrayBuffer (WHATWG / Node >= 22), or typed array view
+          let u8: Uint8Array | null = null;
           if (event.data instanceof Buffer) {
-            const buffer = event.data;
-            const view = new DataView(buffer.buffer);
-            const eventType = view.getUint32(0);
+            u8 = event.data;
+          } else if (event.data instanceof ArrayBuffer) {
+            u8 = new Uint8Array(event.data);
+          } else if (ArrayBuffer.isView(event.data)) {
+            const viewAny = event.data as ArrayBufferView;
+            u8 = new Uint8Array(viewAny.buffer, viewAny.byteOffset, viewAny.byteLength);
+          }
+
+          if (u8) {
+            if (u8.byteLength < 8) {
+              this.log("socket", "Binary frame too small for preview header", { size: u8.byteLength });
+              return;
+            }
+            const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+            const eventType = view.getUint32(0); // protocol: first 4 bytes event kind
             switch (eventType) {
-              case 1:
-                const imageType = view.getUint32(0);
-                let imageMime;
+              case 1: { // preview image
+                // second 4 bytes = image type (1=jpeg,2=png). Previously we mistakenly re-read offset 0.
+                const imageType = view.getUint32(4);
+                let imageMime: string;
                 switch (imageType) {
+                  case 2:
+                    imageMime = "image/png";
+                    break;
                   case 1:
                   default:
                     imageMime = "image/jpeg";
                     break;
-                  case 2:
-                    imageMime = "image/png";
                 }
-                const imageBlob = new Blob([buffer.slice(8)], {
-                  type: imageMime
-                });
+                const imageBlob = new Blob([u8.slice(8)], { type: imageMime });
                 this.dispatchEvent(new CustomEvent("b_preview", { detail: imageBlob }));
                 break;
+              }
               default:
-                throw new Error(`Unknown binary websocket message of type ${eventType}`);
+                // Unknown binary type – ignore but log once (could extend protocol later)
+                this.log("socket", "Unknown binary websocket message", { eventType, size: u8.byteLength });
+                break;
             }
-          } else if (typeof event.data === "string") {
+            return; // handled binary branch
+          }
+
+          if (typeof event.data === "string") {
             const msg = JSON.parse(event.data);
             if (!msg.data || !msg.type) return;
             this.dispatchEvent(new CustomEvent("all", { detail: msg }));
@@ -638,7 +739,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
               this.clientId = msg.data.sid;
             }
           } else {
-            this.log("socket", "Unhandled message", event);
+            this.log("socket", "Unhandled message", { kind: typeof event.data });
           }
         } catch (error) {
           this.log("socket", "Unhandled message", { event, error });

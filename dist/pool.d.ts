@@ -154,6 +154,16 @@ export declare class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
          */
         excludeIds?: string[];
     }): Promise<T[]>;
+    /** Convenience: pick a client and run a Workflow / raw workflow JSON via its api.runWorkflow */
+    runWorkflow(wf: any, weight?: number, clientFilter?: {
+        includeIds?: string[];
+        excludeIds?: string[];
+    }, options?: {
+        enableFailover?: boolean;
+        maxRetries?: number;
+        retryDelay?: number;
+        includeOutputs?: string[];
+    }): Promise<import("./workflow.js").WorkflowJob<import("./workflow.js").WorkflowResult>>;
     private initializeClient;
     private bindClientSystemMonitor;
     private pushJobByWeight;

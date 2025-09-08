@@ -13,6 +13,7 @@ import { ModelFeature } from "./features/model.js";
 import { TerminalFeature } from "./features/terminal.js";
 import { MiscFeature } from "./features/misc.js";
 import { FeatureFlagsFeature } from "./features/feature-flags.js";
+import { WorkflowJob, WorkflowResult } from "./workflow.js";
 interface FetchOptions extends RequestInit {
     headers?: {
         [key: string]: string;
@@ -38,6 +39,9 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     osType: OSType;
     /** Indicates feature probing + socket establishment completed */
     isReady: boolean;
+    /** Internal ready promise (resolved once). */
+    private readyPromise;
+    private resolveReady;
     /** Whether to subscribe to terminal log streaming on init */
     listenTerminal: boolean;
     /** Monotonic timestamp of last socket activity (used for timeout detection) */
@@ -187,6 +191,30 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     /** Abort any in-flight reconnection loop (no-op if none active). */
     abortReconnect(): void;
     private resetLastActivity;
+    /** Convenience: init + waitForReady (idempotent). */
+    ready(): Promise<this>;
+    /**
+     * High-level sugar: run a Workflow or PromptBuilder directly.
+     * Accepts experimental Workflow abstraction or a raw PromptBuilder-like object with setInputNode/output mappings already applied.
+     */
+    run(wf: any, opts?: {
+        pool?: any;
+        autoDestroy?: boolean;
+        includeOutputs?: string[];
+    }): Promise<WorkflowJob<WorkflowResult>>;
+    /** Backwards compatibility: ensure returned value has minimal WorkflowJob surface (.on/.done). */
+    private _ensureWorkflowJob;
+    /** Alias for clarity when passing explicit Workflow objects */
+    runWorkflow(wf: any, opts?: {
+        pool?: any;
+        autoDestroy?: boolean;
+        includeOutputs?: string[];
+    }): Promise<import('./workflow.js').WorkflowJob<import('./workflow.js').WorkflowResult>>;
+    /** Convenience helper: run + wait for completion results in one call. */
+    runAndWait(wf: any, opts?: {
+        pool?: any;
+        includeOutputs?: string[];
+    }): Promise<import('./workflow.js').WorkflowResult>;
     /**
      * Establish a WebSocket connection for real‑time events; installs polling fallback on failure.
      * @param isReconnect internal flag indicating this creation follows a reconnect attempt

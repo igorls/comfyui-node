@@ -205,4 +205,44 @@ describe("CallWrapper branches", () => {
     expect(res).toBe(false);
     expect(err).toBeInstanceOf(WentMissingError);
   });
+
+  it("streams progress & preview events and finishes", async () => {
+    const history: Record<string, any> = {};
+    const api = new FakeApi(history);
+    let jobId: string | undefined;
+    const builder = baseBuilder();
+    // Track callbacks
+    let progressEvents = 0;
+    let previewEvents = 0;
+    let finished: any = null;
+
+    const wrapper = new CallWrapper(api as any, builder)
+      .onPending((id) => {
+        jobId = id;
+        setTimeout(() => {
+          api.emit("executing", { prompt_id: jobId });
+          // simulate progress steps
+          for (let v = 1; v <= 3; v++) {
+            setTimeout(() => api.emit("progress", { prompt_id: jobId, value: v, max: 3 }), v * 5);
+          }
+          // emit two preview frames interleaved
+          setTimeout(() => api.dispatchEvent(new CustomEvent("b_preview", { detail: new Blob([new Uint8Array([1,2,3])], { type: "image/jpeg" }) })), 8);
+          setTimeout(() => api.dispatchEvent(new CustomEvent("b_preview", { detail: new Blob([new Uint8Array([4,5,6])], { type: "image/png" }) })), 15);
+          // executed + success
+          setTimeout(() => {
+            api.emit("executed", { prompt_id: jobId, node: "B", output: { images: [{ filename: "x.png", subfolder: "", type: "output" }] } });
+            api.emit("execution_success", { prompt_id: jobId });
+          }, 25);
+        }, 0);
+      })
+      .onProgress(() => progressEvents++)
+      .onPreview(() => previewEvents++)
+      .onFinished((o) => (finished = o));
+
+    const res = await wrapper.run();
+    expect(res).toBeTruthy();
+    expect(finished).toBeTruthy();
+    expect(progressEvents).toBeGreaterThanOrEqual(3);
+    expect(previewEvents).toBeGreaterThanOrEqual(2);
+  });
 });

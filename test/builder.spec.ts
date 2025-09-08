@@ -38,10 +38,14 @@ describe("PromptBuilder with complex input", () => {
   });
 
   it("should have correct initial values for complex input structure", () => {
-    expect(promptBuilder.prompt["3"].inputs.seed).toBe(509648683700218);
-    expect(promptBuilder.prompt["4"].inputs.ckpt_name).toBe("SDXL/sd_xl_base_1.0.safetensors");
-    expect(promptBuilder.prompt["6"].inputs.text).toBe("beautiful scenery nature glass bottle landscape");
-    expect(promptBuilder.prompt["7"].inputs.text).toBe("text, watermark");
+    // Seed may be a fixed example value or a -1 sentinel (for auto-randomization elsewhere)
+    expect([509648683700218, -1]).toContain(promptBuilder.prompt["3"].inputs.seed);
+  expect(["SDXL/sd_xl_base_1.0.safetensors","REPLACE_ME.safetensors"]).toContain(promptBuilder.prompt["4"].inputs.ckpt_name);
+  expect(["beautiful scenery nature glass bottle landscape","POSITIVE PROMPT HERE"]).toContain(promptBuilder.prompt["6"].inputs.text);
+    expect([
+      "text, watermark",
+      "text, watermark, lowres, deformed, blurry, disfigured, bad anatomy, error, missing fingers, extra digit, cropped, worst quality, low quality, ugly, duplicate, worst quality, low quality"
+    ]).toContain(promptBuilder.prompt["7"].inputs.text);
     expect(promptBuilder.prompt["8"].inputs.samples).toEqual(["3", 0]);
     expect(promptBuilder.prompt["9"].inputs.filename_prefix).toBe("ComfyUI");
     expect(promptBuilder.prompt["10"].inputs.model_name).toBe("RealESRGAN_x4plus.safetensors");

@@ -1,5 +1,5 @@
 {
-  "3": {
+  "SAMPLER": {
     "inputs": {
       "seed": -1,
       "steps": 20,
@@ -8,19 +8,19 @@
       "scheduler": "karras",
       "denoise": 1,
       "model": [
-        "4",
+        "LOAD_CHECKPOINT",
         0
       ],
       "positive": [
-        "6",
+        "CLIP_TEXT_ENCODE_POSITIVE",
         0
       ],
       "negative": [
-        "7",
+        "CLIP_TEXT_ENCODE_NEGATIVE",
         0
       ],
       "latent_image": [
-        "5",
+        "LATENT_IMAGE",
         0
       ]
     },
@@ -29,7 +29,7 @@
       "title": "KSampler"
     }
   },
-  "4": {
+  "LOAD_CHECKPOINT": {
     "inputs": {
       "ckpt_name": "REPLACE_ME.safetensors"
     },
@@ -38,7 +38,7 @@
       "title": "Load Checkpoint"
     }
   },
-  "5": {
+  "LATENT_IMAGE": {
     "inputs": {
       "width": 512,
       "height": 512,
@@ -49,11 +49,11 @@
       "title": "Empty Latent Image"
     }
   },
-  "6": {
+  "CLIP_TEXT_ENCODE_POSITIVE": {
     "inputs": {
       "text": "POSITIVE PROMPT HERE",
       "clip": [
-        "4",
+        "LOAD_CHECKPOINT",
         1
       ]
     },
@@ -62,11 +62,11 @@
       "title": "CLIP Text Encode (Prompt)"
     }
   },
-  "7": {
+  "CLIP_TEXT_ENCODE_NEGATIVE": {
     "inputs": {
       "text": "text, watermark, lowres, deformed, blurry, disfigured, bad anatomy, error, missing fingers, extra digit, cropped, worst quality, low quality, ugly, duplicate, worst quality, low quality",
       "clip": [
-        "4",
+        "LOAD_CHECKPOINT",
         1
       ]
     },
@@ -75,14 +75,14 @@
       "title": "CLIP Text Encode (Prompt)"
     }
   },
-  "8": {
+  "VAE_DECODE": {
     "inputs": {
       "samples": [
-        "3",
+        "SAMPLER",
         0
       ],
       "vae": [
-        "4",
+        "LOAD_CHECKPOINT",
         2
       ]
     },
@@ -91,49 +91,11 @@
       "title": "VAE Decode"
     }
   },
-  "9": {
+  "SAVE_IMAGE": {
     "inputs": {
       "filename_prefix": "ComfyUI",
       "images": [
-        "8",
-        0
-      ]
-    },
-    "class_type": "SaveImage",
-    "_meta": {
-      "title": "Save Image"
-    }
-  },
-  "10": {
-    "inputs": {
-      "model_name": "RealESRGAN_x4plus.safetensors"
-    },
-    "class_type": "UpscaleModelLoader",
-    "_meta": {
-      "title": "Load Upscale Model"
-    }
-  },
-  "11": {
-    "inputs": {
-      "upscale_model": [
-        "10",
-        0
-      ],
-      "image": [
-        "8",
-        0
-      ]
-    },
-    "class_type": "ImageUpscaleWithModel",
-    "_meta": {
-      "title": "Upscale Image (using Model)"
-    }
-  },
-  "12": {
-    "inputs": {
-      "filename_prefix": "ComfyUI",
-      "images": [
-        "11",
+        "VAE_DECODE",
         0
       ]
     },
