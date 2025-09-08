@@ -3,6 +3,7 @@ import { SystemStatsResponse } from "../types/api";
 
 import { FeatureBase } from "./base";
 
+/** System stats & memory management (mirrors `/system_stats` & `/free`). */
 export class SystemFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);

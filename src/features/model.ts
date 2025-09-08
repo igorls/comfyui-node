@@ -3,6 +3,7 @@ import { ModelFile, ModelFolder, ModelPreviewResponse } from "../types/api";
 
 import { FeatureBase } from "./base";
 
+/** Experimental model browsing + preview retrieval. */
 export class ModelFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);

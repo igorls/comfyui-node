@@ -4,16 +4,19 @@ import { buildEnqueueFailedError } from "../utils/response-error";
 
 import { FeatureBase } from "./base";
 
+/**
+ * Queue & execution control endpoints (enqueue / append / interrupt).
+ * Emits structured enqueue errors with detailed diagnostics.
+ */
 export class QueueFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);
   }
 
   /**
-   * Queues a prompt for processing.
-   * @param {number} number The index at which to queue the prompt. using NULL will append to the end of the queue.
-   * @param {object} workflow Additional workflow data.
-   * @returns {Promise<QueuePromptResponse>} The response from the API.
+   * Enqueue a workflow for execution.
+   * @param number Explicit queue position: `null` append (default), `-1` front, `0` auto, positive integer index.
+   * @param workflow Serialized workflow / graph JSON.
    */
   async queuePrompt(number: number | null, workflow: object): Promise<QueuePromptResponse> {
     const body = {
@@ -46,12 +49,7 @@ export class QueueFeature extends FeatureBase {
     return response.json();
   }
 
-  /**
-   * Appends a prompt to the workflow queue.
-   *
-   * @param {object} workflow Additional workflow data.
-   * @returns {Promise<QueuePromptResponse>} The response from the API.
-   */
+  /** Shorthand for append enqueue (position null). */
   async appendPrompt(workflow: object): Promise<QueuePromptResponse> {
     try {
       return await this.queuePrompt(null, workflow);
@@ -62,9 +60,7 @@ export class QueueFeature extends FeatureBase {
   }
 
   /**
-   * Interrupts the execution of the running prompt.
-   * @param {string} [promptId] - The ID of the prompt to interrupt. If not provided, a global interrupt will be triggered.
-   * @returns {Promise<void>}
+   * Interrupt an in‑flight prompt by id (or all if omitted depending on server semantics).
    */
   async interrupt(promptId?: string): Promise<void> {
     await this.client.fetchApi("/interrupt", {

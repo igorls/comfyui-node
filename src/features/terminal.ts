@@ -2,6 +2,7 @@ import { ComfyApi } from "../client";
 
 import { FeatureBase } from "./base";
 
+/** Terminal log retrieval & subscription control. */
 export class TerminalFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);

@@ -1,8 +1,8 @@
 # ComfyUI SDK
 
-[![NPM Version](https://img.shields.io/npm/v/@saintno/comfyui-sdk?style=flat-square)](https://www.npmjs.com/package/@saintno/comfyui-sdk)
-[![License](https://img.shields.io/npm/l/@saintno/comfyui-sdk?style=flat-square)](https://github.com/tctien342/comfyui-sdk/blob/main/LICENSE)
-![CI](https://github.com/tctien342/comfyui-sdk/actions/workflows/release.yml/badge.svg)
+[![NPM Version](https://img.shields.io/npm/v/comfyui-node?style=flat-square)](https://www.npmjs.com/package/comfyui-node)
+[![License](https://img.shields.io/npm/l/comfyui-node?style=flat-square)](https://github.com/igorls/comfyui-node/blob/main/LICENSE)
+![CI](https://github.com/igorls/comfyui-node/actions/workflows/release.yml/badge.svg)
 
 TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonymous/ComfyUI) API – focused on workflow construction, prompt execution orchestration, multi‑instance scheduling and extension integration.
 
@@ -17,7 +17,7 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 - [Authentication](#authentication)
 - [Custom WebSocket](#custom-websocket)
 - [Modular Features (`api.ext`)](#modular-features-apiext)
-- [Migration & Deprecations](#migration--deprecations)
+- [1.0 Migration](#10-migration)
 - [Reference Overview](#reference-overview)
 - [Examples](#examples)
 - [Errors & Diagnostics](#errors--diagnostics)
@@ -42,15 +42,15 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 ## Installation
 
 ```bash
-bun add @saintno/comfyui-sdk
+bun add comfyui-node
 # or
-npm install @saintno/comfyui-sdk
+npm install comfyui-node
 ```
 
 ## Quick Start
 
 ```ts
-import { ComfyApi, CallWrapper, PromptBuilder, seed, TSamplerName, TSchedulerName } from "@saintno/comfyui-sdk";
+import { ComfyApi, CallWrapper, PromptBuilder, seed, TSamplerName, TSchedulerName } from "comfyui-node";
 import ExampleTxt2ImgWorkflow from "./example-txt2img-workflow.json";
 
 const api = new ComfyApi("http://localhost:8189").init();
@@ -140,7 +140,7 @@ function safeBuild(wf: any) {
 ### Basic Example
 
 ```ts
-import { ComfyApi, ComfyPool, EQueueMode, CallWrapper, PromptBuilder, seed } from "@saintno/comfyui-sdk";
+import { ComfyApi, ComfyPool, EQueueMode, CallWrapper, PromptBuilder, seed } from "comfyui-node";
 import ExampleTxt2ImgWorkflow from "./example-txt2img-workflow.json";
 
 // Create two API clients (auth / headers etc still work as normal)
@@ -237,7 +237,7 @@ pool.destroy();
 ### Combined Orchestration Example (Auth + Pool + Validation + Retry)
 
 ```ts
-import { ComfyApi, ComfyPool, EQueueMode, PromptBuilder, CallWrapper, seed } from "@saintno/comfyui-sdk";
+import { ComfyApi, ComfyPool, EQueueMode, PromptBuilder, CallWrapper, seed } from "comfyui-node";
 
 const pool = new ComfyPool([
   new ComfyApi(process.env.C1!,"c1", { credentials: { type: "bearer_token", token: process.env.C1_TOKEN! } }),
@@ -302,7 +302,7 @@ If you build one, open a PR – keep the core minimal & dependency‑free.
 ## Authentication
 
 ```ts
-import { ComfyApi, BasicCredentials, BearerTokenCredentials, CustomCredentials } from "@saintno/comfyui-sdk";
+import { ComfyApi, BasicCredentials, BearerTokenCredentials, CustomCredentials } from "comfyui-node";
 
 const basic = new ComfyApi("http://localhost:8189","id1", { credentials: { type: "basic", username: "u", password: "p" } as BasicCredentials }).init();
 const bearer = new ComfyApi("http://localhost:8189","id2", { credentials: { type: "bearer_token", token: "token" } as BearerTokenCredentials }).init();
@@ -312,7 +312,7 @@ const custom = new ComfyApi("http://localhost:8189","id3", { credentials: { type
 ## Custom WebSocket
 
 ```ts
-import { ComfyApi, WebSocketInterface } from "@saintno/comfyui-sdk";
+import { ComfyApi, WebSocketInterface } from "comfyui-node";
 import CustomWebSocket from "your-custom-ws";
 
 const api = new ComfyApi("http://localhost:8189", "node-id", { customWebSocketImpl: CustomWebSocket as WebSocketInterface }).init();
@@ -344,9 +344,9 @@ const flags = await api.ext.featureFlags.getServerFeatures();
 | `monitor` | Crystools monitor events & snapshot |
 | `featureFlags` | Server capabilities (`/features`) |
 
-## Migration & Deprecations
+## 1.0 Migration
 
-Legacy `ComfyApi` instance methods are deprecated in favor of `api.ext.*` namespaces. Each deprecated call emits a one‑time runtime warning. Removal planned no earlier than **0.3.0**.
+All legacy `ComfyApi` instance methods listed below were **removed in 1.0.0** after a deprecation window in 0.2.x. Migrate to the `api.ext.*` namespaces. If you're upgrading from <1.0, replace calls as shown. No runtime warnings remain (they were stripped with the removals).
 
 | Deprecated | Replacement |
 | ---------- | ----------- |
@@ -379,6 +379,24 @@ Legacy `ComfyApi` instance methods are deprecated in favor of `api.ext.*` namesp
 | `getTerminalLogs()` | `api.ext.terminal.getTerminalLogs()` |
 | `setTerminalSubscription()` | `api.ext.terminal.setTerminalSubscription()` |
 | `interrupt()` | `api.ext.queue.interrupt()` |
+
+Quick grep-based migration (bash):
+
+```bash
+grep -R "api\.getSystemStats" -n src | cut -d: -f1 | xargs sed -i '' 's/api\.getSystemStats()/api.ext.system.getSystemStats()/g'
+```
+
+PowerShell example:
+
+```powershell
+Get-ChildItem -Recurse -Include *.ts | ForEach-Object {
+  (Get-Content $_.FullName) -replace 'api.getSystemStats\(\)', 'api.ext.system.getSystemStats()' | Set-Content $_.FullName
+}
+```
+
+(Adjust the pattern per method; or use a codemod tool if you have many occurrences.)
+
+Diff example:
 
 Example migration:
 
@@ -425,7 +443,7 @@ The SDK raises specialized subclasses of `Error` to improve debuggability during
 Every custom error exposes a stable `code` (enum) to enable branch logic without string matching message text:
 
 ```ts
-import { ErrorCode, EnqueueFailedError } from "@saintno/comfyui-sdk";
+import { ErrorCode, EnqueueFailedError } from "comfyui-node";
 
 try { /* run call wrapper */ } catch (e) {
   if ((e as any).code === ErrorCode.ENQUEUE_FAILED) {
@@ -539,7 +557,7 @@ If contributing, please run at least:
 ```bash
 bun test && bun run coverage
 ```
- 
+
 before opening a PR, and prefer adding tests alongside new feature code.
 
 ## License

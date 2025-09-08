@@ -2,6 +2,7 @@ import { ComfyApi } from "../client";
 
 import { FeatureBase } from "./base";
 
+/** User configuration & settings CRUD. */
 export class UserFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);

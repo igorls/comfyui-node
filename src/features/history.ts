@@ -3,6 +3,7 @@ import { HistoryEntry, HistoryResponse } from "../types/api";
 
 import { FeatureBase } from "./base";
 
+/** Access execution history entries (summary + individual). */
 export class HistoryFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);
@@ -18,11 +19,7 @@ export class HistoryFeature extends FeatureBase {
     return response.json();
   }
 
-  /**
-   * Retrieves the history entry for a given prompt ID.
-   * @param promptId - The ID of the prompt.
-   * @returns A Promise that resolves to the HistoryEntry object.
-   */
+  /** Fetch a specific history entry by prompt id. */
   async getHistory(promptId: string): Promise<HistoryEntry | undefined> {
     const response = await this.client.fetchApi(`/history/${promptId}`);
     const history: HistoryResponse = await response.json();

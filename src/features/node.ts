@@ -4,6 +4,7 @@ import { LOAD_CHECKPOINTS_EXTENSION, LOAD_KSAMPLER_EXTENSION, LOAD_LORAS_EXTENSI
 
 import { FeatureBase } from "./base";
 
+/** Node definition introspection + model/sampler metadata helpers. */
 export class NodeFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);

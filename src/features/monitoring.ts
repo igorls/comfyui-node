@@ -25,6 +25,7 @@ export type TMonitorEventMap = {
   system_monitor: CustomEvent<TMonitorEvent>;
 };
 
+/** Crystools system monitoring (GPU/CPU/RAM/HDD + streaming events). */
 export class MonitoringFeature extends AbstractFeature {
   private resources?: TMonitorEvent;
   private listeners: {
@@ -35,8 +36,8 @@ export class MonitoringFeature extends AbstractFeature {
   private bound = false;
 
   async checkSupported() {
-  // Use feature namespace directly to avoid triggering deprecated wrapper
-  const data = await this.client.ext.node.getNodeDefs(SYSTEM_MONITOR_EXTENSION);
+    // Use feature namespace directly to avoid triggering deprecated wrapper
+    const data = await this.client.ext.node.getNodeDefs(SYSTEM_MONITOR_EXTENSION);
     if (data) {
       this.supported = true;
       this.bind();

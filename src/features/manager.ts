@@ -21,6 +21,7 @@ export interface FetchOptions extends RequestInit {
   };
 }
 
+/** ComfyUI-Manager extension operations (extension lifecycle, updates, preview config, model install). */
 export class ManagerFeature extends AbstractFeature {
   async checkSupported() {
     const data = await this.getVersion().catch(() => false);

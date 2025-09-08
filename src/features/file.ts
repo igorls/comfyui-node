@@ -3,6 +3,7 @@ import { ImageInfo } from "../types/api";
 
 import { FeatureBase } from "./base";
 
+/** File upload helpers and userdata file operations. */
 export class FileFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);

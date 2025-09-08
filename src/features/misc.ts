@@ -2,6 +2,7 @@ import { ComfyApi } from "../client";
 
 import { FeatureBase } from "./base";
 
+/** Miscellaneous endpoints (extensions list, embeddings with legacy fallback). */
 export class MiscFeature extends FeatureBase {
   constructor(client: ComfyApi) {
     super(client);
