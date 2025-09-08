@@ -13,7 +13,7 @@ class MockComfyApi extends EventTarget {
   constructor(id: string) {
     super();
     this.id = id;
-    this.ext = { monitor: { isSupported: false, on: () => {} } };
+    this.ext = { monitor: { isSupported: false, on: () => { } } };
   }
 
   async init() {
@@ -59,7 +59,7 @@ describe("ComfyPool", () => {
   });
 
   it("initializes clients and emits ready", async () => {
-  const pool = new ComfyPool(clients as any);
+    const pool = new ComfyPool(clients as any);
     let readyCount = 0;
     pool.on("ready", () => readyCount++);
     await wait(10);
@@ -69,7 +69,7 @@ describe("ComfyPool", () => {
   });
 
   it("runs jobs in PICK_ZERO favoring idle clients", async () => {
-  const pool = new ComfyPool(clients as any, EQueueMode.PICK_ZERO);
+    const pool = new ComfyPool(clients as any, EQueueMode.PICK_ZERO);
     await wait(5);
     const used: string[] = [];
     await pool.batch([
@@ -83,19 +83,19 @@ describe("ComfyPool", () => {
   });
 
   it("round-robin distributes clients", async () => {
-  const pool = new ComfyPool(clients as any, EQueueMode.PICK_ROUTINE);
+    const pool = new ComfyPool(clients as any, EQueueMode.PICK_ROUTINE);
     await wait(5);
     const used: string[] = [];
-    for (let i=0;i<6;i++) {
+    for (let i = 0; i < 6; i++) {
       await pool.run(async (api: any) => { used.push(api.id); api.simulateExecutionSuccess(); });
     }
     // Expect approximate repeating pattern a,b,c,a,b,c
-    expect(used.slice(0,3)).toEqual(["a","b","c"]);
+    expect(used.slice(0, 3)).toEqual(["a", "b", "c"]);
     pool.destroy();
   });
 
   it("lowest queue mode picks client with smallest queue_remaining", async () => {
-  const pool = new ComfyPool(clients as any, EQueueMode.PICK_LOWEST);
+    const pool = new ComfyPool(clients as any, EQueueMode.PICK_LOWEST);
     await wait(5);
     // Simulate queue depths
     (pool.clients[0] as any).emitStatus(5);
@@ -116,7 +116,7 @@ describe("ComfyPool", () => {
       pool.run(async (api: any) => { order.push("w1"); api.simulateExecutionSuccess(); }, 1),
       pool.run(async (api: any) => { order.push("w5"); api.simulateExecutionSuccess(); }, 5)
     ]);
-    expect(new Set(order)).toEqual(new Set(["w10","w1","w5"]));
+    expect(new Set(order)).toEqual(new Set(["w10", "w1", "w5"]));
     // TODO: expose internal job queue snapshot to assert stability ordering
     pool.destroy();
   });
@@ -171,7 +171,7 @@ describe("ComfyPool", () => {
     const pool = new ComfyPool(clients as any, EQueueMode.PICK_ZERO, { claimTimeoutMs: 50 });
     await wait(5);
     // Mark all clients as online but busy (locked & queueRemaining > 0)
-  (pool as any).clientStates.forEach((s: any) => { s.online = true; s.queueRemaining = 1; s.locked = true; });
+    (pool as any).clientStates.forEach((s: any) => { s.online = true; s.queueRemaining = 1; s.locked = true; });
     let timedOut = false;
     try {
       await pool.run(async () => { /* unreachable */ }, undefined, undefined, { enableFailover: false });
@@ -183,22 +183,28 @@ describe("ComfyPool", () => {
   });
 
   it("failover retries other clients on error", async () => {
-  const pool = new ComfyPool(clients as any);
+    const pool = new ComfyPool(clients as any);
     await wait(5);
     let attempts: string[] = [];
     let first = true;
     await pool.run(async (api: any) => {
       attempts.push(api.id);
-      if (first) { first = false; throw new Error("boom"); }
+      if (first) {
+        first = false;
+        throw new Error("boom"); // force failover
+      }
       api.simulateExecutionSuccess();
-    }, undefined, undefined, { maxRetries: 3, retryDelay: 1 });
+    }, undefined, undefined, {
+      maxRetries: 3,
+      retryDelay: 1
+    });
     expect(attempts.length).toBeGreaterThanOrEqual(2);
     expect(new Set(attempts).size).toBeGreaterThanOrEqual(2); // switched client
     pool.destroy();
   });
 
   it("failover exhaustion emits retries then final rejection", async () => {
-    const two = clients.slice(0,2);
+    const two = clients.slice(0, 2);
     const pool = new ComfyPool(two as any);
     await wait(5);
     const events: any[] = [];
@@ -259,8 +265,8 @@ describe("ComfyPool", () => {
   it("round-robin long run fairness", async () => {
     const pool = new ComfyPool(clients as any, EQueueMode.PICK_ROUTINE);
     await wait(5);
-    const counts: Record<string, number> = { a:0, b:0, c:0 };
-    for (let i=0;i<30;i++) {
+    const counts: Record<string, number> = { a: 0, b: 0, c: 0 };
+    for (let i = 0; i < 30; i++) {
       await pool.run(async (api: any) => { counts[api.id]++; api.simulateExecutionSuccess(); });
     }
     const values = Object.values(counts);
@@ -270,7 +276,7 @@ describe("ComfyPool", () => {
   });
 
   it("destroy clears clients and prevents further processing", async () => {
-  const pool = new ComfyPool(clients as any);
+    const pool = new ComfyPool(clients as any);
     await wait(5);
     pool.destroy();
     expect(pool.clients.length).toBe(0);

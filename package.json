@@ -18,7 +18,11 @@
     "test": "bun test",
     "test:local": "bun test ./test",
     "test:real": "cross-env COMFY_REAL=1 bun test ./test/real.integration.spec.ts",
-    "test:full": "cross-env COMFY_REAL=1 COMFY_FULL=1 bun test ./test/real.full.integration.spec.ts"
+    "test:full": "cross-env COMFY_REAL=1 COMFY_FULL=1 bun test ./test/real.full.integration.spec.ts",
+    "coverage": "bun test --coverage",
+    "coverage:lcov": "bun test --coverage --coverage-reporter=lcov",
+    "coverage:enforce": "bun run coverage:lcov && bun run coverage:check",
+    "coverage:check": "bun scripts/coverage-check.ts"
   },
   "license": "MIT",
   "dependencies": {
@@ -29,7 +33,8 @@
     "@types/jest": "^30.0.0",
     "@types/node": "24.3.1",
     "@types/ws": "^8.18.1",
-    "cross-env": "^7.0.3",
+    "cross-env": "^10.0.0",
+    "@istanbuljs/schema": "^0.1.3",
     "typescript": "5.9.2"
   }
 }

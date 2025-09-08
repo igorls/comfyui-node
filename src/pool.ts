@@ -1,6 +1,6 @@
-import {TComfyPoolEventMap} from "./types/event";
-import {ComfyApi} from "./client";
-import {delay} from "./tools";
+import { TComfyPoolEventMap } from "./types/event";
+import { ComfyApi } from "./client";
+import { delay } from "./tools";
 
 interface JobItem {
   weight: number;
@@ -30,15 +30,15 @@ export enum EQueueMode {
   /**
    * Picks the client which has zero queue remaining. This is the default mode. (For who using along with ComfyUI web interface)
    */
-    "PICK_ZERO",
+  "PICK_ZERO",
   /**
    * Picks the client which has the lowest queue remaining.
    */
-    "PICK_LOWEST",
+  "PICK_LOWEST",
   /**
    * Picks the client in a round-robin manner.
    */
-    "PICK_ROUTINE"
+  "PICK_ROUTINE"
 }
 
 export class ComfyPool extends EventTarget {
@@ -102,7 +102,7 @@ export class ComfyPool extends EventTarget {
       this.dispatchEvent(new CustomEvent("init"));
     }).catch(reason => {
       console.error("[ComfyPool] Error initializing pool:", reason);
-      this.dispatchEvent(new CustomEvent("error", {detail: reason}));
+      this.dispatchEvent(new CustomEvent("error", { detail: reason }));
     });
   }
 
@@ -119,7 +119,7 @@ export class ComfyPool extends EventTarget {
     options?: AddEventListenerOptions | boolean
   ) {
     this.addEventListener(type, callback as any, options);
-    this.listeners.push({event: type, handler: callback, options});
+    this.listeners.push({ event: type, handler: callback, options });
     return this;
   }
 
@@ -158,7 +158,7 @@ export class ComfyPool extends EventTarget {
       online: false
     });
     await this.initializeClient(client, index);
-    this.dispatchEvent(new CustomEvent("added", {detail: {client, clientIdx: index}}));
+    this.dispatchEvent(new CustomEvent("added", { detail: { client, clientIdx: index } }));
   }
 
   /**
@@ -166,7 +166,6 @@ export class ComfyPool extends EventTarget {
    * Ensures all connections, timers and event listeners are properly closed.
    */
   destroy() {
-    console.log("[ComfyPool] Destroying pool with", this.clients.length, "clients...");
 
     // Cancel any pending jobs
     this.jobQueue = [];
@@ -174,7 +173,6 @@ export class ComfyPool extends EventTarget {
     // Destroy all clients properly and ensure they're cleaned up
     this.clients.forEach((client, index) => {
       try {
-        console.log(`[ComfyPool] Destroying client ${client.id} (${index + 1}/${this.clients.length})...`);
         client.destroy();
       } catch (e) {
         console.error(`[ComfyPool] Error destroying client ${client.id}:`, e);
@@ -192,8 +190,6 @@ export class ComfyPool extends EventTarget {
       clearInterval(this.poolMonitoringInterval);
       this.poolMonitoringInterval = undefined;
     }
-
-    console.log("[ComfyPool] Pool destroyed successfully");
   }
 
   /**
@@ -219,7 +215,7 @@ export class ComfyPool extends EventTarget {
       const client = this.clients.splice(index, 1)[0];
       client.destroy();
       this.clientStates.splice(index, 1);
-      this.dispatchEvent(new CustomEvent("removed", {detail: {client, clientIdx: index}}));
+      this.dispatchEvent(new CustomEvent("removed", { detail: { client, clientIdx: index } }));
     }
   }
 
@@ -231,7 +227,7 @@ export class ComfyPool extends EventTarget {
    */
   changeMode(mode: EQueueMode): void {
     this.mode = mode;
-    this.dispatchEvent(new CustomEvent("change_mode", {detail: {mode}}));
+    this.dispatchEvent(new CustomEvent("change_mode", { detail: { mode } }));
   }
 
   /**
@@ -308,10 +304,10 @@ export class ComfyPool extends EventTarget {
         attempt++;
 
         const fn = async (client: ComfyApi, idx?: number) => {
-          this.dispatchEvent(new CustomEvent("executing", {detail: {client, clientIdx: idx}}));
+          this.dispatchEvent(new CustomEvent("executing", { detail: { client, clientIdx: idx } }));
           try {
             const result = await job(client, idx);
-            this.dispatchEvent(new CustomEvent("executed", {detail: {client, clientIdx: idx}}));
+            this.dispatchEvent(new CustomEvent("executed", { detail: { client, clientIdx: idx } }));
             resolve(result);
           } catch (e) {
             lastError = e;
@@ -322,7 +318,7 @@ export class ComfyPool extends EventTarget {
               excludedIds.push(client.id);
               this.dispatchEvent(
                 new CustomEvent("execution_error", {
-                  detail: {client, clientIdx: idx, error: e, willRetry: true, attempt, maxRetries}
+                  detail: { client, clientIdx: idx, error: e, willRetry: true, attempt, maxRetries }
                 })
               );
 
@@ -334,7 +330,7 @@ export class ComfyPool extends EventTarget {
               // No more retries or failover disabled, reject with the error
               this.dispatchEvent(
                 new CustomEvent("execution_error", {
-                  detail: {client, clientIdx: idx, error: e, willRetry: false, attempt, maxRetries}
+                  detail: { client, clientIdx: idx, error: e, willRetry: false, attempt, maxRetries }
                 })
               );
               reject(e);
@@ -390,25 +386,25 @@ export class ComfyPool extends EventTarget {
   private async initializeClient(client: ComfyApi, index: number) {
     this.dispatchEvent(
       new CustomEvent("loading_client", {
-        detail: {client, clientIdx: index}
+        detail: { client, clientIdx: index }
       })
     );
     const states = this.clientStates[index];
     client.on("status", (ev) => {
       if (states.online === false) {
-        this.dispatchEvent(new CustomEvent("connected", {detail: {client, clientIdx: index}}));
+        this.dispatchEvent(new CustomEvent("connected", { detail: { client, clientIdx: index } }));
       }
       states.online = true;
       if (ev.detail.status.exec_info && ev.detail.status.exec_info.queue_remaining !== states.queueRemaining) {
         if (ev.detail.status.exec_info.queue_remaining > 0) {
           this.dispatchEvent(
             new CustomEvent("have_job", {
-              detail: {client, remain: states.queueRemaining}
+              detail: { client, remain: states.queueRemaining }
             })
           );
         }
         if (ev.detail.status.exec_info.queue_remaining === 0) {
-          this.dispatchEvent(new CustomEvent("idle", {detail: {client}}));
+          this.dispatchEvent(new CustomEvent("idle", { detail: { client } }));
         }
       }
       states.queueRemaining = ev.detail.status.exec_info.queue_remaining;
@@ -431,7 +427,7 @@ export class ComfyPool extends EventTarget {
       states.locked = false;
       this.dispatchEvent(
         new CustomEvent("disconnected", {
-          detail: {client, clientIdx: index}
+          detail: { client, clientIdx: index }
         })
       );
     });
@@ -440,7 +436,7 @@ export class ComfyPool extends EventTarget {
       states.locked = false;
       this.dispatchEvent(
         new CustomEvent("reconnected", {
-          detail: {client, clientIdx: index}
+          detail: { client, clientIdx: index }
         })
       );
     });
@@ -465,7 +461,7 @@ export class ComfyPool extends EventTarget {
           detail: {
             client,
             clientIdx: index,
-            error: new Error(ev.detail.exception_type, {cause: ev.detail})
+            error: new Error(ev.detail.exception_type, { cause: ev.detail })
           }
         })
       );
@@ -476,21 +472,21 @@ export class ComfyPool extends EventTarget {
     client.on("auth_error", (ev) => {
       this.dispatchEvent(
         new CustomEvent("auth_error", {
-          detail: {client, clientIdx: index, res: ev.detail}
+          detail: { client, clientIdx: index, res: ev.detail }
         })
       );
     });
     client.on("auth_success", (ev) => {
       this.dispatchEvent(
         new CustomEvent("auth_success", {
-          detail: {client, clientIdx: index}
+          detail: { client, clientIdx: index }
         })
       );
     });
     client.on("connection_error", (ev) => {
       this.dispatchEvent(
         new CustomEvent("connection_error", {
-          detail: {client, clientIdx: index, res: ev.detail}
+          detail: { client, clientIdx: index, res: ev.detail }
         })
       );
     });
@@ -502,7 +498,7 @@ export class ComfyPool extends EventTarget {
 
     // No need to call waitForReady() as init() already does that
     this.bindClientSystemMonitor(client, index);
-    this.dispatchEvent(new CustomEvent("ready", {detail: {client, clientIdx: index}}));
+    this.dispatchEvent(new CustomEvent("ready", { detail: { client, clientIdx: index } }));
   }
 
   private async bindClientSystemMonitor(client: ComfyApi, index: number) {
@@ -553,7 +549,7 @@ export class ComfyPool extends EventTarget {
     });
     this.dispatchEvent(
       new CustomEvent("add_job", {
-        detail: {jobIdx: idx, weight: inputWeight}
+        detail: { jobIdx: idx, weight: inputWeight }
       })
     );
     await this.processJobQueue();
@@ -603,10 +599,11 @@ export class ComfyPool extends EventTarget {
   }
 
   private async processJobQueue(): Promise<void> {
+
     if (this.jobQueue.length === 0) {
       return;
     }
-    console.log("[ComfyPool] Processing job queue with", this.jobQueue.length, "jobs...");
+
     while (this.jobQueue.length > 0) {
       const job = this.jobQueue.shift();
       if (!job) continue;
@@ -618,9 +615,10 @@ export class ComfyPool extends EventTarget {
         console.error("[ComfyPool] Error processing job:", error);
         try {
           job?.onError?.(error);
-        } catch {}
+        } catch { }
       }
     }
+
   }
 
   private async pickJob(): Promise<void> {

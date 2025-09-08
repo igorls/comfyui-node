@@ -479,6 +479,69 @@ This is useful for deferred execution, cross‑process scheduling, or audit logg
 
 Issues and PRs welcome. Please include focused changes and tests where sensible. Adhere to existing coding style and keep feature surfaces minimal & cohesive.
 
+## Testing & Coverage
+
+This repository uses Bun's built-in test runner. Common scripts:
+
+```bash
+bun test                 # unit + lightweight integration tests
+bun run test:real        # real server tests (COMFY_REAL=1)
+bun run test:full        # comprehensive real server tests (COMFY_REAL=1 COMFY_FULL=1)
+bun run coverage         # text coverage summary (lines/functions per file)
+bun run coverage:lcov    # generate coverage/lcov.info (for badges or external services)
+bun run coverage:enforce # generate LCOV then enforce thresholds
+```
+
+Environment flags:
+
+- `COMFY_REAL=1` enables `test/real.integration.spec.ts` (expects a running ComfyUI at `http://localhost:8188` unless overridden via `COMFY_HOST`).
+- `COMFY_FULL=1` additionally enables the extended `test/real.full.integration.spec.ts` suite.
+- `COMFY_HOST=http://host:port` to point at a non-default instance.
+
+Coverage thresholds are enforced by `scripts/coverage-check.ts` (baseline intentionally modest to allow incremental improvement):
+
+Default thresholds:
+
+- Lines: `>= 25%`
+- Functions: `>= 60%`
+
+Override thresholds ad hoc (CI example):
+
+```bash
+COVERAGE_MIN_LINES=30 COVERAGE_MIN_FUNCTIONS=65 bun run coverage:enforce
+```
+
+or in PowerShell:
+
+```powershell
+$env:COVERAGE_MIN_LINES=30; $env:COVERAGE_MIN_FUNCTIONS=65; bun run coverage:enforce
+```
+
+### Improving Coverage
+
+Current low-coverage areas (see `bun test --coverage` output):
+
+- `src/client.ts` – large surface; break out helpers & add unit tests for fetch error branches and WebSocket reconnect logic.
+- `src/call-wrapper.ts` – test error paths (enqueue failure, execution interruption, missing outputs) with mocked `fetch` & event streams.
+- Feature modules with toleration logic (`monitoring`, `manager`, `terminal`) – add mocks to simulate absent endpoints & successful responses.
+
+Incremental strategy:
+
+1. Extract pure helper functions from monolithic classes (e.g., parsing, polling backoff) into modules you can unit test in isolation.
+2. Add fine-grained tests for error branches (simulate non-200 responses & malformed JSON bodies) to raise line coverage quickly.
+3. Introduce deterministic mock WebSocket that replays scripted events (connection drop, progress, output) to cover reconnect & event translation.
+4. Gradually raise `COVERAGE_MIN_LINES` by 5% after each meaningful set of additions.
+
+Skipping heavy real-image generation: full suite internally tolerates missing models & will skip or soften assertions rather than fail—use it sparingly in CI (nightly job) if runtime is a concern.
+
+If contributing, please run at least:
+
+```bash
+bun test && bun run coverage
+```
+ 
+before opening a PR, and prefer adding tests alongside new feature code.
+
 ## License
 
 MIT – see `LICENSE`.
