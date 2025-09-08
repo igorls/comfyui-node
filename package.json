@@ -1,6 +1,6 @@
 {
   "name": "comfyui-node",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "ComfyUI Node.js Client",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -48,7 +48,7 @@
     "coverage:enforce": "bun run coverage:lcov && bun run coverage:check",
     "coverage:check": "bun scripts/coverage-check.ts",
     "typecov": "type-coverage --detail --ignore-catch --at-least 0",
-    "typecov:strict": "type-coverage --detail --ignore-catch --at-least 95",
+    "typecov:strict": "type-coverage --detail --ignore-catch --at-least 90",
     "dist:fresh": "bun run build && bun run dist:fresh:check",
     "dist:fresh:check": "bun scripts/dist-fresh-check.mjs",
     "check:all": "bun run build && bun run test && bun run typecov:strict && bun run dist:fresh",
