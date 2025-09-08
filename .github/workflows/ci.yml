@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    strategy:
+      matrix:
+        node: [22.x, 24.x]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Use Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: TypeScript build
+        run: bun run build
+      - name: Run tests
+        run: bun run test
+      - name: Type coverage (strict)
+        run: bun run typecov:strict
+      - name: Dist freshness
+        run: bun run dist:fresh
+      - name: Coverage (generate lcov)
+        run: bun run coverage:lcov
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: error

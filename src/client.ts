@@ -11,6 +11,7 @@ import {
 } from "./types/api.js";
 import { WebSocket } from "ws";
 import { TComfyAPIEventMap } from "./types/event.js";
+import { TypedEventTarget } from "./typed-event-target.js";
 import { delay } from "./tools.js";
 import { ManagerFeature } from "./features/manager.js";
 import { MonitoringFeature } from "./features/monitoring.js";
@@ -45,7 +46,7 @@ interface FetchOptions extends RequestInit {
  * This class purposefully keeps business logic for specific domains inside feature modules
  * (see files in `src/features/`). Only generic transport & coordination logic lives here.
  */
-export class ComfyApi extends EventTarget {
+export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   /** Base host (including protocol) e.g. http://localhost:8188 */
   public apiHost: string;
   /** OS type as reported by the server (resolved during init) */
@@ -69,7 +70,7 @@ export class ComfyApi extends EventTarget {
   private listeners: Array<{
     event: keyof TComfyAPIEventMap;
     options?: AddEventListenerOptions | boolean;
-    handler: (event: any) => void; // store loosely to avoid union explosion
+    handler: (event: TComfyAPIEventMap[keyof TComfyAPIEventMap]) => void;
   }> = [];
   private readonly credentials: BasicCredentials | BearerTokenCredentials | CustomCredentials | null = null;
 
@@ -114,31 +115,23 @@ export class ComfyApi extends EventTarget {
     });
   }
 
-  public on<K extends keyof TComfyAPIEventMap>(
-    type: K,
-    callback: (event: TComfyAPIEventMap[K]) => void,
-    options?: AddEventListenerOptions | boolean
-  ) {
+  public on<K extends keyof TComfyAPIEventMap>(type: K, callback: (event: TComfyAPIEventMap[K]) => void, options?: AddEventListenerOptions | boolean) {
     this.log("on", "Add listener", { type, callback, options });
-    this.addEventListener(type, callback as any, options);
-    this.listeners.push({ event: type, handler: callback, options });
+    super.on(type, callback, options);
+    this.listeners.push({ event: type, handler: callback as any, options });
     return () => this.off(type, callback, options);
   }
 
-  public off<K extends keyof TComfyAPIEventMap>(
-    type: K,
-    callback: (event: TComfyAPIEventMap[K]) => void,
-    options?: EventListenerOptions | boolean
-  ): void {
+  public off<K extends keyof TComfyAPIEventMap>(type: K, callback: (event: TComfyAPIEventMap[K]) => void, options?: EventListenerOptions | boolean): void {
     this.log("off", "Remove listener", { type, callback, options });
-    this.listeners = this.listeners.filter((listener) => listener.event !== type && listener.handler !== callback);
-    this.removeEventListener(type, callback as any, options);
+    this.listeners = this.listeners.filter((l) => !(l.event === type && l.handler === callback));
+    super.off(type, callback as any, options);
   }
 
   public removeAllListeners() {
     this.log("removeAllListeners", "Triggered");
     this.listeners.forEach((listener) => {
-      this.removeEventListener(listener.event as string, listener.handler as any, listener.options as any);
+      super.off(listener.event, listener.handler as any, listener.options as any);
     });
     this.listeners = [];
   }
@@ -502,17 +495,6 @@ export class ComfyApi extends EventTarget {
       await delay(100);
     }
     return this;
-  }
-
-  private async pullOsType() {
-    try {
-      const data = await this.ext.system.getSystemStats();
-      this.osType = data.system.os;
-    } catch (error) {
-      console.warn("Failed to get OS type:", error);
-      // Set to unknown if we can't determine
-      this.osType = "Unknown" as OSType;
-    }
   }
 
   /**

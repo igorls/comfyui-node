@@ -47,7 +47,7 @@ export type TExecutionInterrupted = TExecution & {
   executed: string[];
 };
 
-export type TEventKey =
+export type ComfyApiEventKey =
   | "all"
   | "auth_error"
   | "connection_error"
@@ -93,7 +93,7 @@ export type TComfyAPIEventMap = {
   execution_cached: CustomEvent<TExecutionCached>;
 };
 
-export type TComfyPoolEventKey =
+export type ComfyPoolEventKey =
   | "init"
   | "init_client"
   | "auth_error"

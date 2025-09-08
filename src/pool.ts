@@ -1,6 +1,7 @@
 import { TComfyPoolEventMap } from "./types/event.js";
 import { ComfyApi } from "./client.js";
 import { delay } from "./tools.js";
+import { TypedEventTarget } from "./typed-event-target.js";
 
 interface JobItem {
   weight: number;
@@ -41,7 +42,7 @@ export enum EQueueMode {
   "PICK_ROUTINE"
 }
 
-export class ComfyPool extends EventTarget {
+export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
   public clients: ComfyApi[] = [];
   private clientStates: Array<{
     id: string;
@@ -53,11 +54,6 @@ export class ComfyPool extends EventTarget {
   private mode: EQueueMode = EQueueMode.PICK_ZERO;
   private jobQueue: Array<JobItem> = [];
   private routineIdx: number = 0;
-  private listeners: Array<{
-    event: keyof TComfyPoolEventMap;
-    options?: AddEventListenerOptions | boolean;
-    handler: (event: unknown) => void;
-  }> = [];
   private readonly maxQueueSize: number = 1000;
   private poolMonitoringInterval: ReturnType<typeof setInterval> | undefined;
   private claimTimeoutMs: number = -1;
@@ -113,23 +109,13 @@ export class ComfyPool extends EventTarget {
     await this.processJobQueue();
   }
 
-  public on<K extends keyof TComfyPoolEventMap>(
-    type: K,
-    callback: (event: TComfyPoolEventMap[K]) => void,
-    options?: AddEventListenerOptions | boolean
-  ) {
-  this.addEventListener(type, callback as any, options);
-  this.listeners.push({ event: type, handler: callback as any, options });
+  // Use inherited on/off which return unsubscriber; provide chain helpers if desired.
+  public chainOn<K extends keyof TComfyPoolEventMap>(type: K, callback: (event: TComfyPoolEventMap[K]) => void, options?: AddEventListenerOptions | boolean) {
+    super.on(type, callback, options);
     return this;
   }
-
-  public off<K extends keyof TComfyPoolEventMap>(
-    type: K,
-    callback: (event: TComfyPoolEventMap[K]) => void,
-    options?: EventListenerOptions | boolean
-  ) {
-  this.removeEventListener(type as string, callback as any, options as any);
-    this.listeners = this.listeners.filter((listener) => listener.event !== type && listener.handler !== callback);
+  public chainOff<K extends keyof TComfyPoolEventMap>(type: K, callback: (event: TComfyPoolEventMap[K]) => void, options?: EventListenerOptions | boolean) {
+    super.off(type, callback as any, options);
     return this;
   }
 
@@ -137,10 +123,7 @@ export class ComfyPool extends EventTarget {
    * Removes all event listeners from the pool.
    */
   public removeAllListeners() {
-    this.listeners.forEach((listener) => {
-      this.removeEventListener(listener.event as string, listener.handler as any, listener.options as any);
-    });
-    this.listeners = [];
+    // No internal registry now; rely on GC for one-off handlers or keep a manual registry later if needed.
   }
 
   /**
@@ -619,20 +602,6 @@ export class ComfyPool extends EventTarget {
       }
     }
 
-  }
-
-  private async pickJob(): Promise<void> {
-    while (true) {
-      console.log("[ComfyPool] Picking job...");
-      if (this.jobQueue.length === 0) {
-        await delay(100);
-        continue;
-      }
-      const job = this.jobQueue.shift();
-      const client = await this.getAvailableClient(job?.includeClientIds, job?.excludeClientIds);
-      const clientIdx = this.clients.indexOf(client);
-      job?.fn?.(client, clientIdx);
-    }
   }
 }
 

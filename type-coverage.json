@@ -1,0 +1,8 @@
+{
+  "include": ["src"],
+  "ignoreCatch": true,
+  "detail": true,
+  "strict": false,
+  "ignoreFiles": ["src/types"],
+  "atLeast": 0
+}

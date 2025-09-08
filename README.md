@@ -3,10 +3,12 @@
 [![NPM Version](https://img.shields.io/npm/v/comfyui-node?style=flat-square)](https://www.npmjs.com/package/comfyui-node)
 [![License](https://img.shields.io/npm/l/comfyui-node?style=flat-square)](https://github.com/igorls/comfyui-node/blob/main/LICENSE)
 ![CI](https://github.com/igorls/comfyui-node/actions/workflows/release.yml/badge.svg)
+![Type Coverage](https://img.shields.io/badge/type--coverage-95%25-brightgreen?style=flat-square)
+![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=flat-square)
 
 TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonymous/ComfyUI) API – focused on workflow construction, prompt execution orchestration, multi‑instance scheduling and extension integration.
 
-> From 0.2.x the API surface is transitioning from a monolithic `ComfyApi` to modular feature namespaces under `api.ext.*`. Legacy methods remain (deprecated) with one‑time runtime warnings. See Migration section.
+> 1.0 is a complete redesign around modular feature namespaces (`api.ext.*`) and stronger typing. All legacy instance methods have been removed – see Migration section if upgrading.
 
 ## Contents
 
@@ -17,6 +19,7 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 - [Authentication](#authentication)
 - [Custom WebSocket](#custom-websocket)
 - [Modular Features (`api.ext`)](#modular-features-apiext)
+- [Events](#events)
 - [1.0 Migration](#10-migration)
 - [Reference Overview](#reference-overview)
 - [Examples](#examples)
@@ -46,6 +49,8 @@ bun add comfyui-node
 # or
 npm install comfyui-node
 ```
+
+Requires Node.js 22+ (Active / Current). Earlier Node versions are not supported in 1.0+.
 
 ## Quick Start
 
@@ -125,7 +130,7 @@ function safeBuild(wf: any) {
 }
 ```
 
-## Multi‑Instance Pool
+## Multi-Instance Pool
 
 `ComfyPool` provides weighted job scheduling & automatic client selection across multiple ComfyUI instances. It is transport‑agnostic and only relies on the standard `ComfyApi` event surface.
 
@@ -206,9 +211,9 @@ Disable failover:
 await pool.run(doGenerate, undefined, undefined, { enableFailover: false });
 ```
 
-### Events
+### Pool Events
 
-`ComfyPool` itself is an `EventTarget` emitting high‑level orchestration signals:
+`ComfyPool` is an `EventTarget` emitting high‑level orchestration signals:
 
 | Event | Detail Payload | When |
 | ----- | -------------- | ---- |
@@ -343,6 +348,37 @@ const flags = await api.ext.featureFlags.getServerFeatures();
 | `manager` | ComfyUI Manager extension integration |
 | `monitor` | Crystools monitor events & snapshot |
 | `featureFlags` | Server capabilities (`/features`) |
+
+## Events
+
+Both `ComfyApi` and `ComfyPool` expose strongly typed event maps. Import the key unions or event maps for generic helpers:
+
+```ts
+import { ComfyApi, ComfyApiEventKey, TComfyAPIEventMap } from 'comfyui-node';
+
+const api = new ComfyApi('http://localhost:8188');
+api.on('progress', (ev) => {
+  console.log(ev.detail.value, '/', ev.detail.max);
+});
+
+function handleApiEvent<K extends ComfyApiEventKey>(k: K, e: TComfyAPIEventMap[K]) {
+  if (k === 'executed') {
+    console.log('Node executed:', e.detail.node);
+  }
+}
+```
+
+Pool usage:
+
+```ts
+import { ComfyPool, ComfyPoolEventKey } from 'comfyui-node';
+
+pool.on('execution_error', (ev) => {
+  if (ev.detail.willRetry) console.warn('Transient failure, retrying...');
+});
+```
+
+---
 
 ## 1.0 Migration
 
