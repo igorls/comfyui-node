@@ -177,6 +177,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     host: string,
     clientId: string = ComfyApi.generateId(),
     opts?: {
+      /** Additional headers to include in all requests. */
       headers?: Record<string, string>;
       /** Do not fallback to HTTP if WebSocket is not available (keeps retrying WS). */
       forceWs?: boolean;

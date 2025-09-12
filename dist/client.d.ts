@@ -98,6 +98,7 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
      */
     get availableFeatures(): Record<string, boolean>;
     constructor(host: string, clientId?: string, opts?: {
+        /** Additional headers to include in all requests. */
         headers?: Record<string, string>;
         /** Do not fallback to HTTP if WebSocket is not available (keeps retrying WS). */
         forceWs?: boolean;
