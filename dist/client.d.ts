@@ -56,6 +56,7 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     private socket;
     private listeners;
     private readonly credentials;
+    private headers;
     /** Modular feature namespaces (tree intentionally flat & dependency‑free) */
     ext: {
         /** ComfyUI-Manager extension integration */
@@ -97,6 +98,7 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
      */
     get availableFeatures(): Record<string, boolean>;
     constructor(host: string, clientId?: string, opts?: {
+        headers?: Record<string, string>;
         /** Do not fallback to HTTP if WebSocket is not available (keeps retrying WS). */
         forceWs?: boolean;
         /** Timeout for WebSocket inactivity before reconnect (default 10000ms). */
@@ -209,12 +211,12 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         pool?: any;
         autoDestroy?: boolean;
         includeOutputs?: string[];
-    }): Promise<import('./workflow.js').WorkflowJob<import('./workflow.js').WorkflowResult>>;
+    }): Promise<import("./workflow.js").WorkflowJob<import("./workflow.js").WorkflowResult>>;
     /** Convenience helper: run + wait for completion results in one call. */
     runAndWait(wf: any, opts?: {
         pool?: any;
         includeOutputs?: string[];
-    }): Promise<import('./workflow.js').WorkflowResult>;
+    }): Promise<import("./workflow.js").WorkflowResult>;
     /**
      * Establish a WebSocket connection for real‑time events; installs polling fallback on failure.
      * @param isReconnect internal flag indicating this creation follows a reconnect attempt

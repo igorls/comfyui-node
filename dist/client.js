@@ -52,6 +52,7 @@ export class ComfyApi extends TypedEventTarget {
     socket = null;
     listeners = [];
     credentials = null;
+    headers = {};
     /** Modular feature namespaces (tree intentionally flat & dependency‑free) */
     ext = {
         /** ComfyUI-Manager extension integration */
@@ -127,7 +128,9 @@ export class ComfyApi extends TypedEventTarget {
         this.apiHost = host;
         this.apiBase = host.split("://")[1];
         this.clientId = clientId;
-        this.readyPromise = new Promise(res => { this.resolveReady = res; });
+        this.readyPromise = new Promise((res) => {
+            this.resolveReady = res;
+        });
         if (opts?.credentials) {
             this.credentials = opts?.credentials;
             this.testCredentials();
@@ -140,6 +143,9 @@ export class ComfyApi extends TypedEventTarget {
         }
         if (opts?.reconnect) {
             this._reconnect = { ...opts.reconnect };
+        }
+        if (opts?.headers) {
+            this.headers = opts.headers;
         }
         this.log("constructor", "Initialized", {
             host,
@@ -179,8 +185,7 @@ export class ComfyApi extends TypedEventTarget {
                 this.socket.onmessage = null;
                 this.socket.onopen = null;
                 // Forcefully close the WebSocket
-                if (this.socket.readyState === WebSocket.OPEN ||
-                    this.socket.readyState === WebSocket.CONNECTING) {
+                if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
                     this.socket.close();
                 }
                 // Terminate the WebSocket connection
@@ -279,9 +284,11 @@ export class ComfyApi extends TypedEventTarget {
             options = {};
         }
         options.headers = {
+            ...this.headers,
             ...this.getCredentialHeaders()
         };
         options.mode = "cors";
+        console.log(route, options.headers);
         return fetch(this.apiURL(route), options);
     }
     /**
@@ -395,7 +402,9 @@ export class ComfyApi extends TypedEventTarget {
             try {
                 this.resolveReady?.(this);
             }
-            catch { /* no-op */ }
+            catch {
+                /* no-op */
+            }
             return this;
         }
         catch (e) {
@@ -485,54 +494,70 @@ export class ComfyApi extends TypedEventTarget {
             const job = await wf.run(this, { pool: opts?.pool, includeOutputs: opts?.includeOutputs });
             const ensured = this._ensureWorkflowJob(job);
             if (opts?.autoDestroy) {
-                if (ensured && typeof ensured.on === 'function') {
-                    ensured.on('finished', () => this.destroy()).on('failed', () => this.destroy());
+                if (ensured && typeof ensured.on === "function") {
+                    ensured.on("finished", () => this.destroy()).on("failed", () => this.destroy());
                 }
-                else if (ensured && typeof ensured.finally === 'function') {
+                else if (ensured && typeof ensured.finally === "function") {
                     ensured.finally(() => this.destroy());
                 }
             }
             return ensured;
         }
         // Assume raw JSON -> wrap
-        if (typeof wf === 'object' && !wf.run) {
+        if (typeof wf === "object" && !wf.run) {
             const w = Workflow.from(wf);
             await this.ready();
             const job = await w.run(this, { pool: opts?.pool, includeOutputs: opts?.includeOutputs });
             const ensured = this._ensureWorkflowJob(job);
             if (opts?.autoDestroy) {
-                if (ensured && typeof ensured.on === 'function') {
-                    ensured.on('finished', () => this.destroy()).on('failed', () => this.destroy());
+                if (ensured && typeof ensured.on === "function") {
+                    ensured.on("finished", () => this.destroy()).on("failed", () => this.destroy());
                 }
-                else if (ensured && typeof ensured.finally === 'function') {
+                else if (ensured && typeof ensured.finally === "function") {
                     ensured.finally(() => this.destroy());
                 }
             }
             return ensured;
         }
-        throw new Error('Unsupported workflow object passed to api.run');
+        throw new Error("Unsupported workflow object passed to api.run");
     }
     /** Backwards compatibility: ensure returned value has minimal WorkflowJob surface (.on/.done). */
     _ensureWorkflowJob(job) {
         if (!job)
             return job;
-        const hasOn = typeof job.on === 'function';
-        const hasDone = typeof job.done === 'function';
+        const hasOn = typeof job.on === "function";
+        const hasDone = typeof job.done === "function";
         if (hasOn && hasDone)
             return job; // already a WorkflowJob
         // Wrap plain promise-like
-        if (typeof job.then === 'function') {
+        if (typeof job.then === "function") {
             const listeners = {};
-            const emit = (evt, ...args) => (listeners[evt] || []).forEach(fn => { try {
-                fn(...args);
-            }
-            catch { } });
+            const emit = (evt, ...args) => (listeners[evt] || []).forEach((fn) => {
+                try {
+                    fn(...args);
+                }
+                catch { }
+            });
             // Attempt to tap into resolution
-            job.then((val) => { emit('finished', val, (val && val._promptId) || undefined); return val; }, (err) => { emit('failed', err); throw err; });
+            job.then((val) => {
+                emit("finished", val, (val && val._promptId) || undefined);
+                return val;
+            }, (err) => {
+                emit("failed", err);
+                throw err;
+            });
             return Object.assign(job, {
-                on(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); return this; },
-                off(evt, fn) { listeners[evt] = (listeners[evt] || []).filter(f => f !== fn); return this; },
-                done() { return job; }
+                on(evt, fn) {
+                    (listeners[evt] = listeners[evt] || []).push(fn);
+                    return this;
+                },
+                off(evt, fn) {
+                    listeners[evt] = (listeners[evt] || []).filter((f) => f !== fn);
+                    return this;
+                },
+                done() {
+                    return job;
+                }
             });
         }
         return job;
@@ -558,6 +583,7 @@ export class ComfyApi extends TypedEventTarget {
             return;
         }
         const headers = {
+            ...this.headers,
             ...this.getCredentialHeaders()
         };
         const existingSession = `?clientId=${this.clientId}`;
@@ -620,7 +646,8 @@ export class ComfyApi extends TypedEventTarget {
                         const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
                         const eventType = view.getUint32(0); // protocol: first 4 bytes event kind
                         switch (eventType) {
-                            case 1: { // preview image
+                            case 1: {
+                                // preview image
                                 // second 4 bytes = image type (1=jpeg,2=png). Previously we mistakenly re-read offset 0.
                                 const imageType = view.getUint32(4);
                                 let imageMime;
