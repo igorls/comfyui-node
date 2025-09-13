@@ -1,42 +1,145 @@
+/**
+ * Union type representing the default UI options in ComfyUI Manager
+ */
 export type TDefaultUI = "none" | "history" | "queue";
+
+/**
+ * Union type representing the extension active status options
+ */
 export type TExtensionActive = "Enabled" | "Disabled";
+
+/**
+ * Union type representing the preview method options in ComfyUI Manager
+ */
 export type TPreviewMethod = "auto" | "latent2rgb" | "taesd" | "none";
+
+/**
+ * Enum representing the installation state of an extension
+ */
 export enum EInstallationState {
+  /**
+   * Extension is not installed
+   */
   NOT_INSTALLED = "not-installed",
+  /**
+   * Extension is installed
+   */
   INSTALLED = "installed"
 }
 
+/**
+ * Enum representing the model types in ComfyUI Manager
+ */
 enum EModelType {
+  /**
+   * Checkpoint model type
+   */
   CHECKPOINT = "checkpoint",
+  /**
+   * Unclip model type
+   */
   UNCLIP = "unclip",
+  /**
+   * CLIP model type
+   */
   CLIP = "clip",
+  /**
+   * VAE model type
+   */
   VAE = "VAE",
+  /**
+   * LORA model type
+   */
   LORA = "lora",
+  /**
+   * T2I Adapter model type
+   */
   T2I_ADAPTER = "T2I-Adapter",
+  /**
+   * T2I Style model type
+   */
   T2I_STYLE = "T2I-Style",
+  /**
+   * ControlNet model type
+   */
   CONTROLNET = "controlnet",
+  /**
+   * CLIP Vision model type
+   */
   CLIP_VISION = "clip_vision",
+  /**
+   * GLIGEN model type
+   */
   GLIGEN = "gligen",
+  /**
+   * Upscale model type
+   */
   UPSCALE = "upscale",
+  /**
+   * Embeddings model type
+   */
   EMBEDDINGS = "embeddings",
+  /**
+   * Other model type
+   */
   ETC = "etc"
 }
 
+/**
+ * Enum representing the installation types in ComfyUI Manager
+ */
 export enum EInstallType {
+  /**
+   * Install via git clone
+   */
   GIT_CLONE = "git-clone",
+  /**
+   * Install via copy
+   */
   COPY = "copy",
+  /**
+   * Install via CNR (ComfyUI Node Registry)
+   */
   CNR = "cnr",
+  /**
+   * Install via unzip
+   */
   UNZIP = "unzip"
 }
 
+/**
+ * Enum representing the extension update check results in ComfyUI Manager
+ */
 export enum EExtensionUpdateCheckResult {
+  /**
+   * No update available
+   */
   NO_UPDATE = 0,
+  /**
+   * Update available
+   */
   UPDATE_AVAILABLE = 1,
+  /**
+   * Update check failed
+   */
   FAILED = 2
 }
+
+/**
+ * Enum representing the update results in ComfyUI Manager
+ */
 export enum EUpdateResult {
+  /**
+   * No changes made
+   */
   UNCHANGED = 0,
+  /**
+   * Update successful
+   */
   SUCCESS = 1,
+  /**
+   * Update failed
+   */
   FAILED = 2
 }
 export type TExtensionNodeItem = {

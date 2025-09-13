@@ -288,7 +288,6 @@ export class ComfyApi extends TypedEventTarget {
             ...this.getCredentialHeaders()
         };
         options.mode = "cors";
-        console.log(route, options.headers);
         return fetch(this.apiURL(route), options);
     }
     /**

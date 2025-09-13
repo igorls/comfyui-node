@@ -1,5 +1,9 @@
 import { EnqueueFailedError } from "../types/error.js";
-/** Extract a diagnostic reason string from arbitrary JSON */
+/**
+ * Extract a diagnostic reason string from arbitrary JSON
+ * @param json - The JSON object to extract the reason from
+ * @returns A string reason or undefined if none could be extracted
+ */
 function extractReason(json) {
     if (!json || typeof json !== "object")
         return undefined;
@@ -17,6 +21,11 @@ function extractReason(json) {
     }
     return undefined;
 }
+/**
+ * Builds a detailed EnqueueFailedError from a Response object
+ * @param resp - The Response object to extract error information from
+ * @returns A promise that resolves to an EnqueueFailedError with detailed information
+ */
 export async function buildEnqueueFailedError(resp) {
     let bodyJSON;
     let bodyTextSnippet;
@@ -49,6 +58,11 @@ export async function buildEnqueueFailedError(resp) {
         reason
     });
 }
+/**
+ * Normalizes an unknown error to an EnqueueFailedError
+ * @param e - The unknown error to normalize
+ * @returns An EnqueueFailedError instance
+ */
 export function normalizeUnknownError(e) {
     if (e instanceof EnqueueFailedError)
         return e;

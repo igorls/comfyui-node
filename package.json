@@ -1,6 +1,6 @@
 {
   "name": "comfyui-node",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "ComfyUI Node.js Client",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -51,6 +51,7 @@
     "typecov:strict": "type-coverage --detail --ignore-catch --at-least 90",
     "dist:fresh": "bun run build && bun run dist:fresh:check",
     "dist:fresh:check": "bun scripts/dist-fresh-check.mjs",
+    "update-samplers": "bun scripts/update-sampler-types.ts",
     "check:all": "bun run build && bun run test && bun run typecov:strict && bun run dist:fresh",
     "prepublishOnly": "bun run check:all"
   },

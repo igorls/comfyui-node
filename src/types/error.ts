@@ -1,48 +1,140 @@
+/**
+ * Enum representing error codes for ComfyUI operations
+ */
 export enum ErrorCode {
+  /**
+   * The job went missing
+   */
   WENT_MISSING = "E_WENT_MISSING",
+  /**
+   * Failed to get cached output
+   */
   FAILED_CACHE = "E_FAILED_CACHE",
+  /**
+   * Failed to enqueue prompt
+   */
   ENQUEUE_FAILED = "E_ENQUEUE_FAILED",
+  /**
+   * Disconnected from server
+   */
   DISCONNECTED = "E_DISCONNECTED",
+  /**
+   * Execution failed
+   */
   EXECUTION_FAILED = "E_EXECUTION_FAILED",
+  /**
+   * Custom event error
+   */
   CUSTOM_EVENT = "E_CUSTOM_EVENT",
+  /**
+   * Execution was interrupted
+   */
   EXECUTION_INTERRUPTED = "E_EXECUTION_INTERRUPTED",
+  /**
+   * Missing node in workflow
+   */
   MISSING_NODE = "E_MISSING_NODE"
 }
 
+/**
+ * Base error class for ComfyUI call wrapper operations
+ */
 export class CallWrapperError extends Error {
+  /**
+   * The name of the error class
+   */
   name = "CallWrapperError";
-  /** Stable machine-readable error code */
+  
+  /**
+   * Stable machine-readable error code
+   */
   code: ErrorCode | string = "";
 }
 
+/**
+ * Error thrown when a job goes missing
+ */
 export class WentMissingError extends CallWrapperError {
+  /**
+   * The name of the error class
+   */
   name = "WentMissingError";
+  
+  /**
+   * The error code for this error type
+   */
   code = ErrorCode.WENT_MISSING;
 }
 
+/**
+ * Error thrown when failed to get cached output
+ */
 export class FailedCacheError extends CallWrapperError {
+  /**
+   * The name of the error class
+   */
   name = "FailedCacheError";
+  
+  /**
+   * The error code for this error type
+   */
   code = ErrorCode.FAILED_CACHE;
 }
 
+/**
+ * Error thrown when failed to enqueue a prompt
+ */
 export class EnqueueFailedError extends CallWrapperError {
+  /**
+   * The name of the error class
+   */
   name = "EnqueueFailedError";
+  
+  /**
+   * The error code for this error type
+   */
   code = ErrorCode.ENQUEUE_FAILED;
-  /** HTTP status code when available */
+  
+  /**
+   * HTTP status code when available
+   */
   status?: number;
-  /** HTTP status text */
+  
+  /**
+   * HTTP status text
+   */
   statusText?: string;
-  /** Request URL (if known) */
+  
+  /**
+   * Request URL (if known)
+   */
   url?: string;
-  /** HTTP method (if known) */
+  
+  /**
+   * HTTP method (if known)
+   */
   method?: string;
-  /** Parsed JSON body (if any) */
+  
+  /**
+   * Parsed JSON body (if any)
+   */
   bodyJSON?: any;
-  /** Raw body text snippet (truncated) */
+  
+  /**
+   * Raw body text snippet (truncated)
+   */
   bodyTextSnippet?: string;
-  /** Extracted concise reason message */
+  
+  /**
+   * Extracted concise reason message
+   */
   reason?: string;
 
+  /**
+   * Creates a new EnqueueFailedError instance
+   * @param message - The error message
+   * @param init - Initialization options for the error
+   */
   constructor(message: string, init?: {
     cause?: any;
     status?: number;
@@ -66,27 +158,77 @@ export class EnqueueFailedError extends CallWrapperError {
   }
 }
 
+/**
+ * Error thrown when disconnected from server
+ */
 export class DisconnectedError extends CallWrapperError {
+  /**
+   * The name of the error class
+   */
   name = "DisconnectedError";
+  
+  /**
+   * The error code for this error type
+   */
   code = ErrorCode.DISCONNECTED;
 }
 
+/**
+ * Error thrown when execution fails
+ */
 export class ExecutionFailedError extends CallWrapperError {
+  /**
+   * The name of the error class
+   */
   name = "ExecutionFailedError";
+  
+  /**
+   * The error code for this error type
+   */
   code = ErrorCode.EXECUTION_FAILED;
 }
 
+/**
+ * Error thrown for custom events
+ */
 export class CustomEventError extends CallWrapperError {
+  /**
+   * The name of the error class
+   */
   name = "CustomEventError";
+  
+  /**
+   * The error code for this error type
+   */
   code = ErrorCode.CUSTOM_EVENT;
 }
 
+/**
+ * Error thrown when execution is interrupted
+ */
 export class ExecutionInterruptedError extends CallWrapperError {
+  /**
+   * The name of the error class
+   */
   name = "ExecutionInterruptedError";
+  
+  /**
+   * The error code for this error type
+   */
   code = ErrorCode.EXECUTION_INTERRUPTED;
 }
 
+/**
+ * Error thrown when a node is missing from the workflow
+ */
 export class MissingNodeError extends CallWrapperError {
+  /**
+   * The name of the error class
+   */
   name = "MissingNodeError";
+  
+  /**
+   * The error code for this error type
+   */
   code = ErrorCode.MISSING_NODE;
 }
