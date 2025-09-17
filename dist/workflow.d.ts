@@ -22,6 +22,10 @@ export interface WorkflowJobEvents<R extends WorkflowResult = WorkflowResult> {
     }) => void;
     progress_pct: (pct: number, info: any) => void;
     preview: (blob: Blob) => void;
+    preview_meta: (data: {
+        blob: Blob;
+        metadata: any;
+    }) => void;
     pending: (promptId: string) => void;
     start: (promptId: string) => void;
     output: (key: string, data: any) => void;

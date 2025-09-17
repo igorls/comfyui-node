@@ -28,6 +28,7 @@ export interface WorkflowJobEvents<R extends WorkflowResult = WorkflowResult> {
     }) => void;
     progress_pct: (pct: number, info: any) => void;
     preview: (blob: Blob) => void;
+    preview_meta: (data: { blob: Blob; metadata: any }) => void;
     pending: (promptId: string) => void;
     start: (promptId: string) => void;
     output: (key: string, data: any) => void;
@@ -261,8 +262,10 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
                 }
             })
             .onPreview((blob) => job._emit('preview', blob))
-            .onOutput((key, data) => job._emit('output', key as string, data))
-            .onFinished((data, pid) => {
+            // Forward preview metadata when available
+            .onPreviewMeta((payload: { blob: Blob; metadata: any }) => job._emit('preview_meta', payload))
+            .onOutput((key: string, data: any) => job._emit('output', key as string, data))
+            .onFinished((data: any, pid?: string) => {
                 const out: WorkflowResult = {} as any;
                 for (const nodeId of this.outputNodeIds) {
                     const key = this.outputAliases[nodeId] || nodeId;
@@ -277,7 +280,7 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
                 job._emit('finished', typedOut as any, pid!);
                 job._finish(typedOut as any);
             })
-            .onFailed((err, pid) => {
+            .onFailed((err: Error, pid?: string) => {
                 job._emit('failed', err, pid);
                 job._fail(err, pid);
             });

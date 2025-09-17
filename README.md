@@ -24,6 +24,7 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 - [Custom WebSocket](#custom-websocket)
 - [Modular Features (`api.ext`)](#modular-features-apiext)
 - [Events](#events)
+- [Preview Metadata](#preview-metadata)
 - [1.0 Migration](#10-migration)
 - [Reference Overview](#reference-overview)
 - [Examples](#examples)
@@ -64,7 +65,7 @@ npm install comfyui-node
 pnpm add comfyui-node
 # or
 bun add comfyui-node
-```text
+```ts
 
 TypeScript types are bundled; no extra install needed.
 
@@ -86,7 +87,7 @@ async function main() {
   }
 }
 main();
-```text
+```ts
 
 ## Cheat Sheet
 
@@ -815,6 +816,65 @@ pool.on('execution_error', (ev) => {
   if (ev.detail.willRetry) console.warn('Transient failure, retrying...');
 });
 ```
+
+---
+
+## Preview Metadata
+
+When the server advertises the `supports_preview_metadata` feature flag, binary preview frames are sent using a richer protocol (`PREVIEW_IMAGE_WITH_METADATA`). The SDK decodes these frames and exposes both legacy and richer events.
+
+What you get:
+
+- Low-level API events on `ComfyApi`:
+  - `b_preview` – existing event with `Blob` image only (kept for backward compatibility)
+  - `b_preview_meta` – new event with `{ blob: Blob; metadata: any }`
+
+- High-level `WorkflowJob` events:
+  - `preview` – existing event with `Blob`
+  - `preview_meta` – new event with `{ blob, metadata }`
+
+Server protocol (per ComfyUI `protocol.py`):
+
+- Binary event IDs:
+  - `1` = `PREVIEW_IMAGE` (legacy)
+  - `4` = `PREVIEW_IMAGE_WITH_METADATA`
+- For type `4`, payload format after the 4-byte type header:
+  - 4 bytes: big-endian uint32 `metadata_length`
+  - N bytes: UTF-8 JSON metadata
+  - remaining: image bytes (PNG or JPEG)
+
+The SDK reads `metadata.image_type` to set the Blob MIME type.
+
+Example – low-level API usage:
+
+```ts
+api.on('b_preview_meta', (ev) => {
+  const { blob, metadata } = ev.detail;
+  console.log('[b_preview_meta]', metadata, 'bytes=', blob.size);
+});
+```
+
+Example – high-level Workflow API usage:
+
+```ts
+const job = await api.run(wf, { autoDestroy: true });
+
+job
+  .on('preview', (blob) => console.log('preview bytes=', blob.size))
+  .on('preview_meta', ({ blob, metadata }) => {
+     console.log('mime:', metadata?.image_type, 'size=', blob.size);
+     // other metadata fields depend on the server implementation
+  });
+```
+
+Backwards compatibility:
+
+- If the server only emits legacy frames, you will still receive `preview` / `b_preview` events as before.
+- When metadata frames are present, both are emitted: `b_preview` and `b_preview_meta` (and at the high level, `preview` and `preview_meta`).
+
+Troubleshooting:
+
+- Ensure your ComfyUI build supports `PREVIEW_IMAGE_WITH_METADATA` and that the feature flag is enabled. The SDK announces support via WebSocket on connect.
 
 ---
 

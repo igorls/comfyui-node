@@ -19,6 +19,12 @@ interface FetchOptions extends RequestInit {
         [key: string]: string;
     };
 }
+type FeatureFlagsAnnouncement = {
+    /** Whether client supports decoding preview frames with metadata (default: true) */
+    supports_preview_metadata: boolean;
+    /** Client-advertised max upload size in bytes (default: 200MB) */
+    max_upload_size: number;
+};
 /**
  * Primary client for interacting with a ComfyUI server.
  *
@@ -57,6 +63,8 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     private listeners;
     private readonly credentials;
     private headers;
+    /** Feature flags we announce to the server upon socket open */
+    private announcedFeatureFlags;
     /** Modular feature namespaces (tree intentionally flat & dependency‑free) */
     ext: {
         /** ComfyUI-Manager extension integration */
@@ -108,6 +116,8 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         listenTerminal?: boolean;
         /** Authentication credentials (basic / bearer / custom headers). */
         credentials?: BasicCredentials | BearerTokenCredentials | CustomCredentials;
+        /** Optional feature flags to announce on WebSocket open (merged with defaults). */
+        announceFeatureFlags?: Partial<FeatureFlagsAnnouncement>;
         /** WebSocket reconnection tuning */
         reconnect?: {
             /** Max reconnection attempts before giving up (default 10). */
@@ -196,6 +206,16 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     private resetLastActivity;
     /** Convenience: init + waitForReady (idempotent). */
     ready(): Promise<this>;
+    /**
+     * Decode a preview-with-metadata binary frame.
+     * Layout after the 4-byte event type header:
+     *   [0..3]   eventType (already consumed by caller)
+     *   [4..7]   big-endian uint32: metadata JSON byte length (N)
+     *   [8..8+N) metadata JSON (utf-8)
+     *   [8+N..]  image bytes (png/jpeg as declared in metadata.image_type)
+     * Returns null if parsing fails.
+     */
+    private _decodePreviewWithMetadata;
     /**
      * High-level sugar: run a Workflow or PromptBuilder directly.
      * Accepts experimental Workflow abstraction or a raw PromptBuilder-like object with setInputNode/output mappings already applied.

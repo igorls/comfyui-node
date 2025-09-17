@@ -12,6 +12,7 @@ export declare class CallWrapper<I extends string, O extends string, T extends N
     private promptId?;
     private output;
     private onPreviewFn?;
+    private onPreviewMetaFn?;
     private onPendingFn?;
     private onStartFn?;
     private onOutputFn?;
@@ -41,6 +42,13 @@ export declare class CallWrapper<I extends string, O extends string, T extends N
      * @returns The current instance of the CallWrapper.
      */
     onPreview(fn: (ev: Blob, promptId?: string) => void): this;
+    /**
+     * Set the callback function to be called when a preview-with-metadata event occurs.
+     */
+    onPreviewMeta(fn: (payload: {
+        blob: Blob;
+        metadata: any;
+    }, promptId?: string) => void): this;
     /**
      * Set a callback function to be executed when the job is queued.
      * @param {Function} fn - The callback function to be executed.

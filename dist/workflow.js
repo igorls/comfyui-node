@@ -203,6 +203,8 @@ export class Workflow {
             }
         })
             .onPreview((blob) => job._emit('preview', blob))
+            // Forward preview metadata when available
+            .onPreviewMeta((payload) => job._emit('preview_meta', payload))
             .onOutput((key, data) => job._emit('output', key, data))
             .onFinished((data, pid) => {
             const out = {};

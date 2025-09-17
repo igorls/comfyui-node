@@ -17,6 +17,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
   private output: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> = {} as any;
 
   private onPreviewFn?: (ev: Blob, promptId?: string) => void;
+  private onPreviewMetaFn?: (payload: { blob: Blob; metadata: any }, promptId?: string) => void;
   private onPendingFn?: (promptId?: string) => void;
   private onStartFn?: (promptId?: string) => void;
   private onOutputFn?: (
@@ -67,6 +68,14 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
    */
   onPreview(fn: (ev: Blob, promptId?: string) => void) {
     this.onPreviewFn = fn;
+    return this;
+  }
+
+  /**
+   * Set the callback function to be called when a preview-with-metadata event occurs.
+   */
+  onPreviewMeta(fn: (payload: { blob: Blob; metadata: any }, promptId?: string) => void) {
+    this.onPreviewMetaFn = fn;
     return this;
   }
 
@@ -431,7 +440,11 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     const reverseOutputMapped = this.reverseMapOutputKeys();
 
     this.progressHandlerOffFn = this.client.on("progress", (ev) => this.handleProgress(ev, promptId));
-    this.previewHandlerOffFn = this.client.on("b_preview", (ev) => this.onPreviewFn?.(ev.detail, this.promptId));
+  this.previewHandlerOffFn = this.client.on("b_preview", (ev) => this.onPreviewFn?.(ev.detail, this.promptId));
+  // Also forward preview with metadata if available
+  const offPreviewMeta = this.client.on("b_preview_meta", (ev) => this.onPreviewMetaFn?.(ev.detail as any, this.promptId));
+  const prevCleanup = this.previewHandlerOffFn;
+  this.previewHandlerOffFn = () => { prevCleanup?.(); offPreviewMeta?.(); };
 
     const totalOutput = Object.keys(reverseOutputMapped).length;
     let remainingOutput = totalOutput;

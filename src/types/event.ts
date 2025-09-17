@@ -151,7 +151,8 @@ export type ComfyApiEventKey =
   | "log"
   | "terminal"
   | "reconnecting"
-  | "b_preview";
+  | "b_preview"
+  | "b_preview_meta";
 
 /**
  * Type mapping ComfyUI API event keys to their respective CustomEvent types
@@ -201,6 +202,10 @@ export type TComfyAPIEventMap = {
    * Binary preview image event
    */
   b_preview: CustomEvent<Blob>;
+  /**
+   * Binary preview image event with metadata (emitted when server supports metadata previews)
+   */
+  b_preview_meta: CustomEvent<{ blob: Blob; metadata: any }>;
   /**
    * Log message event
    */

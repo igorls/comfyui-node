@@ -11,6 +11,7 @@ export class CallWrapper {
     promptId;
     output = {};
     onPreviewFn;
+    onPreviewMetaFn;
     onPendingFn;
     onStartFn;
     onOutputFn;
@@ -45,6 +46,13 @@ export class CallWrapper {
      */
     onPreview(fn) {
         this.onPreviewFn = fn;
+        return this;
+    }
+    /**
+     * Set the callback function to be called when a preview-with-metadata event occurs.
+     */
+    onPreviewMeta(fn) {
+        this.onPreviewMetaFn = fn;
         return this;
     }
     /**
@@ -346,6 +354,10 @@ export class CallWrapper {
         const reverseOutputMapped = this.reverseMapOutputKeys();
         this.progressHandlerOffFn = this.client.on("progress", (ev) => this.handleProgress(ev, promptId));
         this.previewHandlerOffFn = this.client.on("b_preview", (ev) => this.onPreviewFn?.(ev.detail, this.promptId));
+        // Also forward preview with metadata if available
+        const offPreviewMeta = this.client.on("b_preview_meta", (ev) => this.onPreviewMetaFn?.(ev.detail, this.promptId));
+        const prevCleanup = this.previewHandlerOffFn;
+        this.previewHandlerOffFn = () => { prevCleanup?.(); offPreviewMeta?.(); };
         const totalOutput = Object.keys(reverseOutputMapped).length;
         let remainingOutput = totalOutput;
         const executionHandler = (ev) => {

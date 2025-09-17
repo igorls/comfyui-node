@@ -19,6 +19,12 @@ async function main() {
     const api = new ComfyApi('http://127.0.0.1:8188');
     await api.ready();
 
+    console.log('ComfyAPI ready, version');
+
+    api.on('b_preview', () => {
+        console.log('[preview] new frame');
+    });
+
     // Create a mutable workflow copy.
     const wf = Workflow.fromAugmented(BaseWorkflow)
 
@@ -35,8 +41,8 @@ async function main() {
         .batchInputs('SAMPLER', {
             sampler_name: "dpmpp_2m_sde_gpu",
             scheduler: "karras",
-            steps: 60,
-            cfg: 6.0,
+            steps: 20,
+            cfg: 1.2,
             seed: -1
         })
 
@@ -57,6 +63,7 @@ async function main() {
     let totalSteps = 0;
 
     job.on('progress', (info) => {
+        console.log(info);
         currentPct = (info.value / info.max * 100).toFixed(1) + '%';
         currentNode = info.node;
         currentStep = info.value;
@@ -65,6 +72,10 @@ async function main() {
 
     job.on('preview', (blob: Blob) => {
         console.log(`[preview] [${currentNode}] [STEP: ${currentStep}/${totalSteps}] new frame - ${blob.size} bytes (${currentPct})`);
+    });
+
+    job.on('preview_meta', ({ metadata, blob }) => {
+        console.log(`[preview-meta] [${currentNode}] [STEP: ${currentStep}/${totalSteps}] new frame - ${blob.size} bytes (${currentPct})`, metadata);
     });
 
     job.on('failed', (err: Error) => {

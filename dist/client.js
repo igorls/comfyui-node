@@ -53,6 +53,11 @@ export class ComfyApi extends TypedEventTarget {
     listeners = [];
     credentials = null;
     headers = {};
+    /** Feature flags we announce to the server upon socket open */
+    announcedFeatureFlags = {
+        supports_preview_metadata: true,
+        max_upload_size: 50 * 1024 * 1024
+    };
     /** Modular feature namespaces (tree intentionally flat & dependency‑free) */
     ext = {
         /** ComfyUI-Manager extension integration */
@@ -146,6 +151,13 @@ export class ComfyApi extends TypedEventTarget {
         }
         if (opts?.headers) {
             this.headers = opts.headers;
+        }
+        // Merge announced feature flags overrides
+        if (opts?.announceFeatureFlags) {
+            this.announcedFeatureFlags = {
+                ...this.announcedFeatureFlags,
+                ...opts.announceFeatureFlags
+            };
         }
         this.log("constructor", "Initialized", {
             host,
@@ -484,6 +496,48 @@ export class ComfyApi extends TypedEventTarget {
         return this;
     }
     /**
+     * Decode a preview-with-metadata binary frame.
+     * Layout after the 4-byte event type header:
+     *   [0..3]   eventType (already consumed by caller)
+     *   [4..7]   big-endian uint32: metadata JSON byte length (N)
+     *   [8..8+N) metadata JSON (utf-8)
+     *   [8+N..]  image bytes (png/jpeg as declared in metadata.image_type)
+     * Returns null if parsing fails.
+     */
+    _decodePreviewWithMetadata(u8, payloadOffset) {
+        try {
+            if (u8.byteLength < payloadOffset + 4)
+                return null;
+        }
+        catch { }
+        // Re-parse with explicit big-endian
+        try {
+            const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+            const metaLen = view.getUint32(payloadOffset, false /* big-endian */);
+            const metaStart = payloadOffset + 4;
+            const metaEnd = metaStart + metaLen;
+            if (metaEnd > u8.byteLength)
+                return null;
+            const metaBytes = u8.slice(metaStart, metaEnd);
+            const metaText = new TextDecoder("utf-8").decode(metaBytes);
+            let metadata;
+            try {
+                metadata = JSON.parse(metaText);
+            }
+            catch (e) {
+                metadata = { parse_error: String(e) };
+            }
+            const imageBytes = u8.slice(metaEnd);
+            const type = (metadata && metadata.image_type) || "image/jpeg";
+            const blob = new Blob([imageBytes], { type });
+            return { blob, metadata };
+        }
+        catch (e) {
+            this.log("_decodePreviewWithMetadata", "Failed to decode", e);
+            return null;
+        }
+    }
+    /**
      * High-level sugar: run a Workflow or PromptBuilder directly.
      * Accepts experimental Workflow abstraction or a raw PromptBuilder-like object with setInputNode/output mappings already applied.
      */
@@ -610,6 +664,11 @@ export class ComfyApi extends TypedEventTarget {
                 else {
                     this.dispatchEvent(new CustomEvent("connected"));
                 }
+                // Announce feature flags (configurable via constructor option)
+                this.socket?.send(JSON.stringify({
+                    type: "feature_flags",
+                    data: this.announcedFeatureFlags
+                }));
             };
         }
         catch (error) {
@@ -646,21 +705,25 @@ export class ComfyApi extends TypedEventTarget {
                         const eventType = view.getUint32(0); // protocol: first 4 bytes event kind
                         switch (eventType) {
                             case 1: {
-                                // preview image
-                                // second 4 bytes = image type (1=jpeg,2=png). Previously we mistakenly re-read offset 0.
-                                const imageType = view.getUint32(4);
-                                let imageMime;
-                                switch (imageType) {
-                                    case 2:
-                                        imageMime = "image/png";
-                                        break;
-                                    case 1:
-                                    default:
-                                        imageMime = "image/jpeg";
-                                        break;
-                                }
+                                // Legacy: preview image without metadata
+                                const imageType = view.getUint32(4); // 1=jpeg, 2=png
+                                const imageMime = imageType === 2 ? "image/png" : "image/jpeg";
                                 const imageBlob = new Blob([u8.slice(8)], { type: imageMime });
                                 this.dispatchEvent(new CustomEvent("b_preview", { detail: imageBlob }));
+                                break;
+                            }
+                            case 4: {
+                                // Preview image WITH metadata (supports_preview_metadata)
+                                try {
+                                    const decoded = this._decodePreviewWithMetadata(u8, 4 /*payloadOffset*/);
+                                    if (decoded) {
+                                        this.dispatchEvent(new CustomEvent("b_preview", { detail: decoded.blob }));
+                                        this.dispatchEvent(new CustomEvent("b_preview_meta", { detail: { blob: decoded.blob, metadata: decoded.metadata } }));
+                                    }
+                                }
+                                catch (e) {
+                                    this.log("socket", "Failed to decode preview with metadata", e);
+                                }
                                 break;
                             }
                             default:

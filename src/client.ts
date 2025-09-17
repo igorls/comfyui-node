@@ -34,6 +34,13 @@ interface FetchOptions extends RequestInit {
   };
 }
 
+type FeatureFlagsAnnouncement = {
+  /** Whether client supports decoding preview frames with metadata (default: true) */
+  supports_preview_metadata: boolean;
+  /** Client-advertised max upload size in bytes (default: 200MB) */
+  max_upload_size: number;
+};
+
 /**
  * Primary client for interacting with a ComfyUI server.
  *
@@ -79,6 +86,11 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   private readonly credentials: BasicCredentials | BearerTokenCredentials | CustomCredentials | null = null;
 
   private headers: Record<string, string> = {};
+  /** Feature flags we announce to the server upon socket open */
+  private announcedFeatureFlags: FeatureFlagsAnnouncement = {
+    supports_preview_metadata: true,
+    max_upload_size: 50 * 1024 * 1024
+  };
 
   /** Modular feature namespaces (tree intentionally flat & dependency‑free) */
   public ext = {
@@ -187,6 +199,8 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       listenTerminal?: boolean;
       /** Authentication credentials (basic / bearer / custom headers). */
       credentials?: BasicCredentials | BearerTokenCredentials | CustomCredentials;
+      /** Optional feature flags to announce on WebSocket open (merged with defaults). */
+      announceFeatureFlags?: Partial<FeatureFlagsAnnouncement>;
       /** WebSocket reconnection tuning */
       reconnect?: {
         /** Max reconnection attempts before giving up (default 10). */
@@ -227,6 +241,14 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
 
     if (opts?.headers) {
       this.headers = opts.headers;
+    }
+
+    // Merge announced feature flags overrides
+    if (opts?.announceFeatureFlags) {
+      this.announcedFeatureFlags = {
+        ...this.announcedFeatureFlags,
+        ...opts.announceFeatureFlags
+      };
     }
 
     this.log("constructor", "Initialized", {
@@ -554,7 +576,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       // Avoid stacking multiple controllers concurrently
       try {
         (this as any)._reconnectController.abort();
-      } catch {}
+      } catch { }
     }
     (this as any)._reconnectController = runWebSocketReconnect(this, () => this.createSocket(true), {
       triggerEvents: !!triggerEvent,
@@ -571,7 +593,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   public abortReconnect() {
     try {
       (this as any)._reconnectController?.abort();
-    } catch {}
+    } catch { }
   }
 
   private resetLastActivity() {
@@ -585,6 +607,44 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       await this.waitForReady();
     }
     return this;
+  }
+
+  /**
+   * Decode a preview-with-metadata binary frame.
+   * Layout after the 4-byte event type header:
+   *   [0..3]   eventType (already consumed by caller)
+   *   [4..7]   big-endian uint32: metadata JSON byte length (N)
+   *   [8..8+N) metadata JSON (utf-8)
+   *   [8+N..]  image bytes (png/jpeg as declared in metadata.image_type)
+   * Returns null if parsing fails.
+   */
+  private _decodePreviewWithMetadata(u8: Uint8Array, payloadOffset: number): { blob: Blob; metadata: any } | null {
+    try {
+      if (u8.byteLength < payloadOffset + 4) return null;
+    } catch { }
+    // Re-parse with explicit big-endian
+    try {
+      const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+      const metaLen = view.getUint32(payloadOffset, false /* big-endian */);
+      const metaStart = payloadOffset + 4;
+      const metaEnd = metaStart + metaLen;
+      if (metaEnd > u8.byteLength) return null;
+      const metaBytes = u8.slice(metaStart, metaEnd);
+      const metaText = new TextDecoder("utf-8").decode(metaBytes);
+      let metadata: any;
+      try {
+        metadata = JSON.parse(metaText);
+      } catch (e) {
+        metadata = { parse_error: String(e) };
+      }
+      const imageBytes = u8.slice(metaEnd);
+      const type = (metadata && metadata.image_type) || "image/jpeg";
+      const blob = new Blob([imageBytes], { type });
+      return { blob, metadata };
+    } catch (e) {
+      this.log("_decodePreviewWithMetadata", "Failed to decode", e);
+      return null;
+    }
   }
 
   /**
@@ -639,7 +699,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         (listeners[evt] || []).forEach((fn) => {
           try {
             fn(...args);
-          } catch {}
+          } catch { }
         });
       // Attempt to tap into resolution
       job.then(
@@ -709,6 +769,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
 
     // Try to create WebSocket connection
     try {
+
       this.socket = new WebSocket(wsUrl, {
         headers: headers
       });
@@ -730,7 +791,16 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         } else {
           this.dispatchEvent(new CustomEvent("connected"));
         }
+
+        // Announce feature flags (configurable via constructor option)
+        this.socket?.send(
+          JSON.stringify({
+            type: "feature_flags",
+            data: this.announcedFeatureFlags
+          })
+        );
       };
+
     } catch (error) {
       this.log("socket", "WebSocket creation failed, falling back to polling", error);
       this.socket = null;
@@ -746,6 +816,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       this.socket.onmessage = (event) => {
         this.resetLastActivity();
         try {
+
           // Unified binary handling: Buffer (ws), ArrayBuffer (WHATWG / Node >= 22), or typed array view
           let u8: Uint8Array | null = null;
           if (event.data instanceof Buffer) {
@@ -766,21 +837,24 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
             const eventType = view.getUint32(0); // protocol: first 4 bytes event kind
             switch (eventType) {
               case 1: {
-                // preview image
-                // second 4 bytes = image type (1=jpeg,2=png). Previously we mistakenly re-read offset 0.
-                const imageType = view.getUint32(4);
-                let imageMime: string;
-                switch (imageType) {
-                  case 2:
-                    imageMime = "image/png";
-                    break;
-                  case 1:
-                  default:
-                    imageMime = "image/jpeg";
-                    break;
-                }
+                // Legacy: preview image without metadata
+                const imageType = view.getUint32(4); // 1=jpeg, 2=png
+                const imageMime = imageType === 2 ? "image/png" : "image/jpeg";
                 const imageBlob = new Blob([u8.slice(8)], { type: imageMime });
                 this.dispatchEvent(new CustomEvent("b_preview", { detail: imageBlob }));
+                break;
+              }
+              case 4: {
+                // Preview image WITH metadata (supports_preview_metadata)
+                try {
+                  const decoded = this._decodePreviewWithMetadata(u8, 4 /*payloadOffset*/);
+                  if (decoded) {
+                    this.dispatchEvent(new CustomEvent("b_preview", { detail: decoded.blob }));
+                    this.dispatchEvent(new CustomEvent("b_preview_meta", { detail: { blob: decoded.blob, metadata: decoded.metadata } }));
+                  }
+                } catch (e) {
+                  this.log("socket", "Failed to decode preview with metadata", e);
+                }
                 break;
               }
               default:
