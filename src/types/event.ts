@@ -152,7 +152,11 @@ export type ComfyApiEventKey =
   | "terminal"
   | "reconnecting"
   | "b_preview"
-  | "b_preview_meta";
+  | "b_preview_meta"
+  | "b_text"
+  | "b_text_meta"
+  | "b_preview_raw"
+  | "node_text_update";
 
 /**
  * Type mapping ComfyUI API event keys to their respective CustomEvent types
@@ -206,6 +210,32 @@ export type TComfyAPIEventMap = {
    * Binary preview image event with metadata (emitted when server supports metadata previews)
    */
   b_preview_meta: CustomEvent<{ blob: Blob; metadata: any }>;
+  /**
+   * Binary text frame event (protocol 3)
+   */
+  b_text: CustomEvent<string>;
+  /**
+   * Binary text frame event with metadata (protocol 3)
+   */
+  b_text_meta: CustomEvent<{ channel: number; text: string }>;
+  /**
+   * Raw image bytes (protocol 2). Consumers can interpret according to their needs.
+   */
+  b_preview_raw: CustomEvent<Uint8Array>;
+  /**
+   * Normalized text update parsed from TEXT frames with optional node correlation
+   */
+  node_text_update: CustomEvent<{
+    channel: number;
+    text: string;
+    kind: "progress" | "result" | "message";
+    progressSeconds?: number;
+    resultUrl?: string;
+    nodeHint?: string; // parsed from text prefix if present
+    executingNode?: string | null; // latest executing node id observed by client
+    promptIdHint?: string | null; // latest prompt_id observed in executing
+    cleanText?: string; // original text with leading node prefix removed when recognized
+  }>;
   /**
    * Log message event
    */

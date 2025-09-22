@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.3.0
+
+Features (API Nodes / Paid Nodes):
+
+* Added first‑class support for custom/paid API nodes via `comfyOrgApiKey`.
+  * Pass it when constructing `ComfyApi(host, id?, { comfyOrgApiKey })` and it will be included in `/prompt` submissions under `extra_data.api_key_comfy_org`.
+* Implemented full handling of ComfyUI binary WebSocket frames:
+  * 1 PREVIEW_IMAGE → `b_preview` (Blob)
+  * 2 UNENCODED_PREVIEW_IMAGE → `b_preview_raw` (Uint8Array)
+  * 3 TEXT → `b_text` (string) and `b_text_meta` ({ channel, text })
+  * 4 PREVIEW_IMAGE_WITH_METADATA → `b_preview` + `b_preview_meta` ({ blob, metadata })
+* Added a normalized high‑level event `node_text_update` for TEXT frames emitted by API nodes (e.g. comfy_api_nodes PollingOperation):
+  * `detail = { channel, text, cleanText?, kind: 'progress' | 'result' | 'message', progressSeconds?, resultUrl?, nodeHint?, executingNode?, promptIdHint? }`
+  * Added `cleanText` (prefix‑stripped message). Normalization now simply starts from the first known phrase ("Task in progress:" | "Result URL:"), removing any preceding node label (e.g. numeric id or "NODE_LABEL"). Falls back to the last `executing` node when a hint isn't present in text.
+
+DX & Diagnostics:
+
+* New optional `debug` flag (or `COMFY_DEBUG=1`) prints structured logs for socket lifecycle and messages; sensitive headers are redacted.
+* More resilient output mapping in `Workflow.output(...)`: calls like `output('2','images')` are auto‑corrected to `('images','2')` with a console warning.
+* New high‑level helpers to simplify image inputs:
+  * `Workflow.attachImage(nodeId, inputName, data, fileName, opts?)` – uploads a single image buffer/blob before run() and sets the input to the filename.
+  * `Workflow.attachFolderFiles(subfolder, files[], opts?)` – uploads multiple files into a server subfolder (useful for `LoadImageSetFromFolderNode`).
+  * Example script added: `scripts/image-loading-demo.ts` – demonstrates mixed loaders (single images + folder import) powered by the new helpers.
+
+Notes:
+
+* `node_text_update` is best‑effort normalization based on upstream conventions; for full fidelity keep listening to `b_text` / `b_text_meta`.
+* This is additive and backward‑compatible.
+
 ## 1.2.0
 
 Features:

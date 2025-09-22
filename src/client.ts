@@ -83,7 +83,13 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     options?: AddEventListenerOptions | boolean;
     handler: (event: TComfyAPIEventMap[keyof TComfyAPIEventMap]) => void;
   }> = [];
+
+
   private readonly credentials: BasicCredentials | BearerTokenCredentials | CustomCredentials | null = null;
+
+  comfyOrgApiKey?: string;
+  /** Debug flag to emit verbose console logs for instrumentation */
+  private _debug: boolean = false;
 
   private headers: Record<string, string> = {};
   /** Feature flags we announce to the server upon socket open */
@@ -216,6 +222,10 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         /** Custom delay fn if strategy === 'custom'. Receives attempt (1-based). */
         customDelayFn?: (attempt: number, opts: { baseDelayMs: number; maxDelayMs: number }) => number;
       };
+      /** Optional Comfy-Org API key for paid API nodes. */
+      comfyOrgApiKey?: string;
+      /** Enable verbose debug logging to console (also emits 'log' events). */
+      debug?: boolean;
     }
   ) {
     super();
@@ -242,6 +252,16 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     if (opts?.headers) {
       this.headers = opts.headers;
     }
+
+    if (opts?.comfyOrgApiKey) {
+      this.comfyOrgApiKey = opts.comfyOrgApiKey;
+    }
+
+    // Debug flag (env COMFY_DEBUG=1 also enables it)
+    try {
+      const envDebug = typeof process !== "undefined" && (process as any)?.env?.COMFY_DEBUG;
+      this._debug = Boolean(opts?.debug ?? (envDebug === "1" || envDebug === "true"));
+    } catch { /* ignore env access in non-node runtimes */ }
 
     // Merge announced feature flags overrides
     if (opts?.announceFeatureFlags) {
@@ -331,6 +351,16 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
 
   private log(fnName: string, message: string, data?: any) {
     this.dispatchEvent(new CustomEvent("log", { detail: { fnName, message, data } }));
+    if (this._debug) {
+      try {
+        const ts = new Date().toISOString();
+        const id = this.clientId || this.apiBase;
+        // Avoid noisy large binary/object logs
+        const safeData = data && typeof data === "object" ? sanitizeForLog(data) : data;
+        // eslint-disable-next-line no-console
+        console.debug(`[ComfyApi ${id}] ${ts} :: ${fnName} -> ${message}`, safeData ?? "");
+      } catch { /* no-op */ }
+    }
   }
 
   /**
@@ -733,7 +763,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   public async runWorkflow(
     wf: any,
     opts?: { pool?: any; autoDestroy?: boolean; includeOutputs?: string[] }
-  ): Promise<import("./workflow.js").WorkflowJob<import("./workflow.js").WorkflowResult>> {
+  ): Promise<WorkflowJob<WorkflowResult>> {
     return this.run(wf, opts);
   }
 
@@ -741,7 +771,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   public async runAndWait(
     wf: any,
     opts?: { pool?: any; includeOutputs?: string[] }
-  ): Promise<import("./workflow.js").WorkflowResult> {
+  ): Promise<WorkflowResult> {
     const job = await this.run(wf, { pool: opts?.pool, includeOutputs: opts?.includeOutputs });
     return (job as any).done();
   }
@@ -753,6 +783,9 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   private createSocket(isReconnect: boolean = false) {
     let reconnecting = false;
     let usePolling = false;
+    // Track last seen executing node + prompt id for correlation
+    let lastExecutingNode: string | null = null;
+    let lastPromptId: string | null = null;
 
     if (this.socket) {
       this.log("socket", "Socket already exists, skipping creation.");
@@ -766,6 +799,11 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
 
     const existingSession = `?clientId=${this.clientId}`;
     const wsUrl = `ws${this.apiHost.includes("https:") ? "s" : ""}://${this.apiBase}/ws${existingSession}`;
+    this.log("socket", "Preparing to open WebSocket", {
+      url: wsUrl,
+      // Only include header keys to avoid leaking secrets in logs
+      header_keys: Object.keys(headers)
+    });
 
     // Try to create WebSocket connection
     try {
@@ -841,7 +879,63 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
                 const imageType = view.getUint32(4); // 1=jpeg, 2=png
                 const imageMime = imageType === 2 ? "image/png" : "image/jpeg";
                 const imageBlob = new Blob([u8.slice(8)], { type: imageMime });
+                this.log("socket", "b_preview (binary) received", { size: u8.byteLength, mime: imageMime });
                 this.dispatchEvent(new CustomEvent("b_preview", { detail: imageBlob }));
+                break;
+              }
+              case 2: {
+                // Unencoded preview image (raw). Forward bytes to consumers.
+                const bytes = u8.slice(4);
+                this.log("socket", "b_preview_raw (binary) received", { size: bytes.byteLength });
+                this.dispatchEvent(new CustomEvent("b_preview_raw", { detail: bytes } as any));
+                break;
+              }
+              case 3: {
+                // Text payload (utf-8) with 4-byte channel preceding text
+                try {
+                  if (u8.byteLength < 8) {
+                    this.log("socket", "b_text frame too small", { size: u8.byteLength });
+                    break;
+                  }
+                  const view2 = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+                  const channel = view2.getUint32(4, false /* big-endian */);
+                  const text = new TextDecoder("utf-8").decode(u8.slice(8));
+                  this.log("socket", "b_text (binary) received", { size: u8.byteLength, channel, preview: text.slice(0, 120) });
+                  this.dispatchEvent(new CustomEvent("b_text", { detail: text }));
+                  this.dispatchEvent(new CustomEvent("b_text_meta", { detail: { channel, text } } as any));
+                  // Emit normalized node_text_update for consumers
+                  const norm: any = { channel, text, kind: "message", executingNode: lastExecutingNode, promptIdHint: lastPromptId };
+                  // Simplify: find the first occurrence of a known phrase and drop everything before it (prefix agnostic)
+                  // This covers prefixes like "LUMA", numeric IDs ("2"), mixed case, etc.
+                  const lower = text.toLowerCase();
+                  const phrases = ["task in progress:", "result url:"];
+                  let start = -1;
+                  for (const p of phrases) {
+                    const idx = lower.indexOf(p);
+                    if (idx !== -1) start = start === -1 ? idx : Math.min(start, idx);
+                  }
+                  let body = start !== -1 ? text.slice(start).trimStart() : text;
+                  norm.cleanText = body;
+                  const mProg = body.match(/^(?:([A-Z0-9_\-]+))?Task in progress: ([0-9]+(?:\.[0-9]+)?)s/i);
+                  if (mProg) {
+                    norm.kind = "progress";
+                    norm.nodeHint = mProg[1] || undefined;
+                    norm.progressSeconds = Number(mProg[2]);
+                  }
+                  const mUrl = body.match(/^(?:([A-Z0-9_\-]+))?Result URL:\s*(https?:[^\s]+)\s*$/i);
+                  if (mUrl) {
+                    norm.kind = "result";
+                    norm.nodeHint = mUrl[1] || undefined;
+                    norm.resultUrl = mUrl[2];
+                  }
+                  // Fallback: if we couldn't extract a node hint from the text, use the last executing node
+                  if (!norm.nodeHint && lastExecutingNode) {
+                    norm.nodeHint = lastExecutingNode;
+                  }
+                  this.dispatchEvent(new CustomEvent("node_text_update", { detail: norm }));
+                } catch (e) {
+                  this.log("socket", "Failed to decode b_text", e);
+                }
                 break;
               }
               case 4: {
@@ -849,6 +943,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
                 try {
                   const decoded = this._decodePreviewWithMetadata(u8, 4 /*payloadOffset*/);
                   if (decoded) {
+                    this.log("socket", "b_preview_meta (binary) received", { size: u8.byteLength });
                     this.dispatchEvent(new CustomEvent("b_preview", { detail: decoded.blob }));
                     this.dispatchEvent(new CustomEvent("b_preview_meta", { detail: { blob: decoded.blob, metadata: decoded.metadata } }));
                   }
@@ -865,9 +960,10 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
             return; // handled binary branch
           }
 
-          if (typeof event.data === "string") {
+            if (typeof event.data === "string") {
             const msg = JSON.parse(event.data);
             if (!msg.data || !msg.type) return;
+            this.log("socket-msg", `type=${msg.type}`, { prompt_id: msg.data?.prompt_id, node: msg.data?.node, keys: Object.keys(msg.data || {}) });
             this.dispatchEvent(new CustomEvent("all", { detail: msg }));
             if (msg.type === "logs") {
               this.dispatchEvent(new CustomEvent("terminal", { detail: msg.data.entries?.[0] || null }));
@@ -877,6 +973,11 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
             if (msg.data.sid) {
               this.clientId = msg.data.sid;
             }
+              // Correlate execution context for text parsing later
+              if (msg.type === "executing") {
+                lastExecutingNode = msg.data?.node ?? null;
+                lastPromptId = msg.data?.prompt_id ?? null;
+              }
           } else {
             this.log("socket", "Unhandled message", { kind: typeof event.data });
           }
@@ -899,9 +1000,10 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       if (!isReconnect) {
         this.wsTimer = setInterval(() => {
           if (reconnecting) return;
-          if (Date.now() - this.lastActivity > this.wsTimeout) {
+          const idleFor = Date.now() - this.lastActivity;
+          if (idleFor > this.wsTimeout) {
             reconnecting = true;
-            this.log("socket", "Connection timed out, reconnecting...");
+            this.log("socket", "Connection timed out, reconnecting...", { idleMs: idleFor, wsTimeout: this.wsTimeout });
             this.reconnectWs(true);
           }
         }, this.wsTimeout / 2);
@@ -927,12 +1029,15 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     }
 
     // Poll every 2 seconds
-    const POLLING_INTERVAL = 2000;
+  const POLLING_INTERVAL = 2000;
 
     const pollFn = async () => {
       try {
         // Poll execution status
-        const status = await this.pollStatus();
+  const status = await this.pollStatus();
+  const anyStatus: any = status as any;
+  const queueRem = anyStatus?.status?.exec_info?.queue_remaining ?? anyStatus?.exec_info?.queue_remaining;
+  this.log("polling", "status snapshot", { queue_remaining: queueRem });
 
         // Simulate an event dispatch similar to WebSocket
         this.dispatchEvent(new CustomEvent("status", { detail: status }));
@@ -1051,5 +1156,32 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     return this.apiURL(
       `/experiment/models/preview/${encodeURIComponent(folder)}/${pathIndex}/${encodeURIComponent(filename)}`
     );
+  }
+}
+
+/**
+ * Remove large / sensitive fields before logging objects to console in debug mode.
+ */
+function sanitizeForLog(input: any) {
+  try {
+    if (!input || typeof input !== "object") return input;
+    const clone: any = Array.isArray(input) ? [] : {};
+    const SENSITIVE_KEYS = new Set(["api_key", "api_key_comfy_org", "Authorization", "headers"]);
+    for (const [k, v] of Object.entries(input)) {
+      if (SENSITIVE_KEYS.has(k)) {
+        clone[k] = "<redacted>";
+        continue;
+      }
+      if (v && typeof v === "object") {
+        clone[k] = sanitizeForLog(v);
+      } else if (typeof v === "string" && v.length > 500) {
+        clone[k] = `${v.slice(0, 497)}...`;
+      } else {
+        clone[k] = v;
+      }
+    }
+    return clone;
+  } catch {
+    return input;
   }
 }

@@ -1,0 +1,32 @@
+{
+  "1": {
+    "inputs": {
+      "model": "seedream-4-0-250828",
+      "prompt": "",
+      "size_preset": "2048x2048 (1:1)",
+      "width": 2048,
+      "height": 2048,
+      "sequential_image_generation": "disabled",
+      "max_images": 1,
+      "seed": 0,
+      "watermark": false
+    },
+    "class_type": "ByteDanceSeedreamNode",
+    "_meta": {
+      "title": "ByteDance Seedream 4"
+    }
+  },
+  "2": {
+    "inputs": {
+      "filename_prefix": "seedream/output",
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

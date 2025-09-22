@@ -1,0 +1,28 @@
+{
+  "LUMA": {
+    "inputs": {
+      "prompt": "Old photograph of the Guanabara Bay in Rio de Janeiro, aerial view",
+      "model": "photon-flash-1",
+      "aspect_ratio": "16:9",
+      "seed": 281461062747463,
+      "style_image_weight": 1
+    },
+    "class_type": "LumaImageNode",
+    "_meta": {
+      "title": "Luma Text to Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "filename_prefix": "luma-photon-flash/output",
+      "images": [
+        "LUMA",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

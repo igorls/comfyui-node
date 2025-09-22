@@ -50,6 +50,66 @@
 				"$tsc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build",
+			"args": [],
+			"group": "build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build",
+			"args": [],
+			"group": "build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build",
+			"args": [],
+			"group": "build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build",
+			"args": [],
+			"group": "build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build",
+			"args": [],
+			"group": "build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build"
+		},
+		{
+			"label": "build-typescript",
+			"type": "shell",
+			"command": "bun run build"
 		}
 	]
 }

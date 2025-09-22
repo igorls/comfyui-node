@@ -62,6 +62,9 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     private socket;
     private listeners;
     private readonly credentials;
+    comfyOrgApiKey?: string;
+    /** Debug flag to emit verbose console logs for instrumentation */
+    private _debug;
     private headers;
     /** Feature flags we announce to the server upon socket open */
     private announcedFeatureFlags;
@@ -136,6 +139,10 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
                 maxDelayMs: number;
             }) => number;
         };
+        /** Optional Comfy-Org API key for paid API nodes. */
+        comfyOrgApiKey?: string;
+        /** Enable verbose debug logging to console (also emits 'log' events). */
+        debug?: boolean;
     });
     /**
      * Destroys the client instance.
@@ -232,12 +239,12 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         pool?: any;
         autoDestroy?: boolean;
         includeOutputs?: string[];
-    }): Promise<import("./workflow.js").WorkflowJob<import("./workflow.js").WorkflowResult>>;
+    }): Promise<WorkflowJob<WorkflowResult>>;
     /** Convenience helper: run + wait for completion results in one call. */
     runAndWait(wf: any, opts?: {
         pool?: any;
         includeOutputs?: string[];
-    }): Promise<import("./workflow.js").WorkflowResult>;
+    }): Promise<WorkflowResult>;
     /**
      * Establish a WebSocket connection for real‑time events; installs polling fallback on failure.
      * @param isReconnect internal flag indicating this creation follows a reconnect attempt

@@ -122,7 +122,7 @@ export type TExecutionInterrupted = TExecution & {
 /**
  * Union type of all ComfyUI API event keys
  */
-export type ComfyApiEventKey = "all" | "auth_error" | "connection_error" | "auth_success" | "status" | "progress" | "executing" | "executed" | "disconnected" | "execution_success" | "execution_start" | "execution_error" | "execution_cached" | "queue_error" | "reconnected" | "connected" | "log" | "terminal" | "reconnecting" | "b_preview" | "b_preview_meta";
+export type ComfyApiEventKey = "all" | "auth_error" | "connection_error" | "auth_success" | "status" | "progress" | "executing" | "executed" | "disconnected" | "execution_success" | "execution_start" | "execution_error" | "execution_cached" | "queue_error" | "reconnected" | "connected" | "log" | "terminal" | "reconnecting" | "b_preview" | "b_preview_meta" | "b_text" | "b_text_meta" | "b_preview_raw" | "node_text_update";
 /**
  * Type mapping ComfyUI API event keys to their respective CustomEvent types
  */
@@ -180,6 +180,35 @@ export type TComfyAPIEventMap = {
     b_preview_meta: CustomEvent<{
         blob: Blob;
         metadata: any;
+    }>;
+    /**
+     * Binary text frame event (protocol 3)
+     */
+    b_text: CustomEvent<string>;
+    /**
+     * Binary text frame event with metadata (protocol 3)
+     */
+    b_text_meta: CustomEvent<{
+        channel: number;
+        text: string;
+    }>;
+    /**
+     * Raw image bytes (protocol 2). Consumers can interpret according to their needs.
+     */
+    b_preview_raw: CustomEvent<Uint8Array>;
+    /**
+     * Normalized text update parsed from TEXT frames with optional node correlation
+     */
+    node_text_update: CustomEvent<{
+        channel: number;
+        text: string;
+        kind: "progress" | "result" | "message";
+        progressSeconds?: number;
+        resultUrl?: string;
+        nodeHint?: string;
+        executingNode?: string | null;
+        promptIdHint?: string | null;
+        cleanText?: string;
     }>;
     /**
      * Log message event

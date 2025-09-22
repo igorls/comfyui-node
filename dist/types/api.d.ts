@@ -87,8 +87,14 @@ export interface QueuePromptResponse {
 export interface SystemStatsResponse {
     system: {
         os: OSType;
+        ram_total: number;
+        ram_free: number;
+        comfyui_version: string;
+        required_frontend_version: string;
         python_version: string;
+        pytorch_version: string;
         embedded_python: boolean;
+        argv: string[];
     };
     devices: DeviceStats[];
 }

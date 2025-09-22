@@ -65,6 +65,8 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     private outputNodeIds;
     private outputAliases;
     private inputPaths;
+    private _pendingImageInputs;
+    private _pendingFolderFiles;
     static from<TD extends WorkflowJSON>(data: TD): Workflow<TD, {}>;
     static from(data: string): Workflow;
     constructor(json: T);
@@ -75,6 +77,18 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     static fromAugmented<TD extends WorkflowJSON>(data: TD): Workflow<AugmentNodes<TD>, {}>;
     /** Set a nested input path on a node e.g. set('9.inputs.text','hello') */
     set(path: string, value: any): this;
+    /** Attach a single image buffer to a node input (e.g., LoadImage.image). Will upload on run() then set the input to the filename. */
+    attachImage(nodeId: keyof T & string, inputName: string, data: Blob | Buffer | ArrayBuffer | Uint8Array, fileName: string, opts?: {
+        subfolder?: string;
+        override?: boolean;
+    }): this;
+    /** Attach multiple files into a server subfolder (useful for LoadImageSetFromFolderNode). */
+    attachFolderFiles(subfolder: string, files: Array<{
+        data: Blob | Buffer | ArrayBuffer | Uint8Array;
+        fileName: string;
+    }>, opts?: {
+        override?: boolean;
+    }): this;
     /**
      * Sugar for setting a node's input: wf.input('SAMPLER','steps',30)
      * Equivalent to set('SAMPLER.inputs.steps', 30).

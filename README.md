@@ -25,6 +25,8 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 - [Modular Features (`api.ext`)](#modular-features-apiext)
 - [Events](#events)
 - [Preview Metadata](#preview-metadata)
+- [API Nodes (Comfy.org paid)](#api-nodes-comfyorg-paid)
+- [Image Inputs: Attach Files (DX)](#image-inputs-attach-files-dx)
 - [1.0 Migration](#10-migration)
 - [Reference Overview](#reference-overview)
 - [Examples](#examples)
@@ -65,7 +67,7 @@ npm install comfyui-node
 pnpm add comfyui-node
 # or
 bun add comfyui-node
-```ts
+```
 
 TypeScript types are bundled; no extra install needed.
 
@@ -87,7 +89,7 @@ async function main() {
   }
 }
 main();
-```ts
+```
 
 ## Cheat Sheet
 
@@ -613,8 +615,6 @@ Auto‑generated metadata keys:
 
 ---
 
-```
-
 ### Job Weighting
 
 Jobs are inserted into an internal priority queue ordered by ascending weight. Lower weight runs earlier. By default the weight is set to the queue length at insertion (FIFO). You can override:
@@ -875,6 +875,128 @@ Backwards compatibility:
 Troubleshooting:
 
 - Ensure your ComfyUI build supports `PREVIEW_IMAGE_WITH_METADATA` and that the feature flag is enabled. The SDK announces support via WebSocket on connect.
+
+---
+
+## API Nodes (Comfy.org paid)
+
+Some workflows use paid API nodes (for example, Luma/Photon) that communicate progress and results via additional binary WebSocket frames. This SDK supports those nodes by:
+
+- Allowing you to pass your Comfy.org API key to the server with each job
+- Emitting low-level events for binary/text frames so you can surface progress and result URLs
+
+### Enabling API-node runs
+
+Provide your key through the `comfyOrgApiKey` client option (recommended to source it from an environment variable):
+
+```ts
+import { ComfyApi, Workflow } from 'comfyui-node';
+import LumaPhoton from './your-luma-photon-workflow.json';
+
+const api = await new ComfyApi(
+  process.env.COMFY_HOST || 'http://127.0.0.1:8188',
+  undefined,
+  {
+    comfyOrgApiKey: process.env.COMFY_ORG_API_KEY,
+    wsTimeout: 30000, // API nodes may take longer; increase if needed
+    debug: true       // optional: structured socket + polling logs
+  }
+).ready();
+
+// Minimal example: set prompt/seed, declare output, observe events
+const wf = Workflow.fromAugmented(LumaPhoton)
+  .input('LUMA', 'prompt', 'Old photograph of the Guanabara Bay in Rio de Janeiro, aerial view')
+  .input('LUMA', 'seed', -1) // -1 => randomized; see _autoSeeds in result
+  .output('final_images', '2'); // alias, nodeId (auto-corrects if swapped)
+
+// Low-level API-node events (binary channel text + raw preview bytes)
+api.on('b_text', (ev) => {
+  const text = (ev as any).detail as string;
+  if (typeof text === 'string') console.log('[api-node text]', text.slice(0, 200));
+});
+api.on('b_text_meta', (ev) => {
+  // { channel: number, text: string }
+  console.log('[api-node text meta]', (ev as any).detail);
+});
+api.on('b_preview_raw', (ev) => {
+  const bytes = (ev as any).detail as Uint8Array;
+  console.log('[api-node preview raw bytes]', bytes?.byteLength);
+});
+
+const job = await api.run(wf, { autoDestroy: true });
+
+job
+  .on('start', (id) => console.log('[start]', id))
+  .on('progress_pct', (p) => process.stdout.write(`\rprogress ${p}%   `))
+  .on('preview', (blob) => console.log('\npreview bytes=', blob.size))
+  .on('failed', (e) => console.error('\nfailed', e));
+
+const result = await job.done();
+console.log('\nPrompt ID:', result._promptId);
+for (const img of (result.final_images?.images || [])) {
+  console.log('image path:', api.ext.file.getPathImage(img));
+}
+```
+
+Notes:
+
+- API-node text frames often include human-readable progress and a final “Result URL:” line. The SDK exposes the raw text via `b_text` and `{ channel, text }` via `b_text_meta` so you can parse or display them as desired.
+- For long-running API calls, increase `wsTimeout` and consider enabling `debug` or setting `COMFY_DEBUG=1` to troubleshoot reconnection/polling.
+- Output declaration accepts any of: `'alias:NodeId'`, `('alias','NodeId')`, or `'NodeId'`. If you accidentally swap the alias/id parameters, the SDK will auto-correct and warn.
+
+Security tip: Never print your API key. The built-in debug logger redacts common key/authorization fields automatically.
+
+---
+
+## Image Inputs: Attach Files (DX)
+
+When a workflow references images (e.g., `LoadImage.image = "IMAGE_A.png"` or folder loaders such as `LoadImageSetFromFolderNode`), you can attach local buffers directly to the `Workflow` and let the SDK handle uploads before execution.
+
+Helpers:
+
+- `wf.attachImage(nodeId, inputName, data, fileName, opts?)`
+  - Uploads `data` (Blob/Buffer/ArrayBuffer/Uint8Array) and sets the node input to `fileName` automatically.
+  - Options: `{ subfolder?: string; override?: boolean }`.
+- `wf.attachFolderFiles(subfolder, files[], opts?)`
+  - Upload multiple files into a server subfolder; ideal for folder‑based loaders.
+
+Example (see `scripts/image-loading-demo.ts`):
+
+```ts
+import { ComfyApi, Workflow } from 'comfyui-node';
+import Graph from './ImageLoading.json';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+
+const api = await new ComfyApi(process.env.COMFY_HOST || 'http://127.0.0.1:8188').ready();
+const wf = Workflow.from(Graph);
+
+// Attach two individual images for LoadImage nodes 2 and 4
+const dir = path.resolve(process.cwd(), 'scripts', 'example_images');
+const a = await fs.readFile(path.join(dir, 'IMAGE_A.png'));
+const b = await fs.readFile(path.join(dir, 'IMAGE_B.png'));
+wf.attachImage('2', 'image', a, 'IMAGE_A.png', { override: true })
+  .attachImage('4', 'image', b, 'IMAGE_B.png', { override: true });
+
+// Attach an entire folder for node 5 (LoadImageSetFromFolderNode)
+const files = (await fs.readdir(dir))
+  .filter(f => /\.(png|jpe?g|webp)$/i.test(f))
+  .map(async f => ({ fileName: f, data: await fs.readFile(path.join(dir, f)) }));
+wf.attachFolderFiles('EXAMPLE_IMAGES', await Promise.all(files), { override: true });
+wf.set('5.inputs.folder', 'EXAMPLE_IMAGES');
+
+// Collect a simple output target for demonstration
+wf.output('1');
+
+const job = await api.run(wf, { autoDestroy: true });
+job.on('progress_pct', p => process.stdout.write(`\rprogress ${p}%   `));
+await job.done();
+```
+
+Notes:
+
+- The inputs are updated to point at the uploaded filenames; subfolders are handled server‑side.
+- Use `override: true` to replace existing files with the same name if needed.
 
 ---
 

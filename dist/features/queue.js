@@ -16,8 +16,12 @@ export class QueueFeature extends FeatureBase {
     async queuePrompt(number, workflow) {
         const body = {
             client_id: this.client.id,
-            prompt: workflow
+            prompt: workflow,
+            extra_data: {}
         };
+        if (this.client.comfyOrgApiKey) {
+            body.extra_data["api_key_comfy_org"] = this.client.comfyOrgApiKey;
+        }
         if (number !== null) {
             if (number === -1) {
                 body["front"] = true;

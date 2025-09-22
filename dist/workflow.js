@@ -37,6 +37,9 @@ export class Workflow {
     outputNodeIds = [];
     outputAliases = {}; // nodeId -> alias
     inputPaths = []; // retained for compatibility with PromptBuilder signature
+    // Pending assets to upload before execution
+    _pendingImageInputs = [];
+    _pendingFolderFiles = [];
     static from(data) {
         if (typeof data === 'string') {
             try {
@@ -69,6 +72,20 @@ export class Workflow {
             cur = cur[keys[i]];
         }
         cur[keys.at(-1)] = value;
+        return this;
+    }
+    /** Attach a single image buffer to a node input (e.g., LoadImage.image). Will upload on run() then set the input to the filename. */
+    attachImage(nodeId, inputName, data, fileName, opts) {
+        const blob = toBlob(data, fileName);
+        this._pendingImageInputs.push({ nodeId: String(nodeId), inputName, blob, fileName, subfolder: opts?.subfolder, override: opts?.override });
+        return this;
+    }
+    /** Attach multiple files into a server subfolder (useful for LoadImageSetFromFolderNode). */
+    attachFolderFiles(subfolder, files, opts) {
+        for (const f of files) {
+            const blob = toBlob(f.data, f.fileName);
+            this._pendingFolderFiles.push({ subfolder, blob, fileName: f.fileName, override: opts?.override });
+        }
         return this;
     }
     /**
@@ -128,8 +145,21 @@ export class Workflow {
         let alias;
         let nodeId;
         if (b) {
-            alias = a;
-            nodeId = b;
+            // Heuristic: if first arg looks like a node id and second arg looks like an alias, swap
+            // Node ids are often numeric strings (e.g., '2'); aliases are non-numeric labels.
+            const looksLikeNodeId = (s) => /^\d+$/.test(s) || this.json[s];
+            if (looksLikeNodeId(String(a)) && !looksLikeNodeId(String(b))) {
+                nodeId = String(a);
+                alias = String(b);
+                try {
+                    console.warn(`Workflow.output called as output(nodeId, alias). Interpreting as output(alias,nodeId): '${alias}:${nodeId}'`);
+                }
+                catch { }
+            }
+            else {
+                alias = String(a);
+                nodeId = String(b);
+            }
         }
         else {
             // single param variant: maybe "alias:node" or just node
@@ -163,6 +193,22 @@ export class Workflow {
         }
     }
     async run(api, opts = {}) {
+        // Upload any pending assets first, then patch JSON inputs
+        if (this._pendingFolderFiles.length || this._pendingImageInputs.length) {
+            // Upload folder files
+            for (const f of this._pendingFolderFiles) {
+                await api.ext.file.uploadImage(f.blob, f.fileName, { subfolder: f.subfolder, override: f.override });
+            }
+            // Upload and set single-image inputs
+            for (const it of this._pendingImageInputs) {
+                await api.ext.file.uploadImage(it.blob, it.fileName, { subfolder: it.subfolder, override: it.override });
+                // Prefer just the filename; many LoadImage nodes look up by filename (subfolder managed server-side)
+                this.input(it.nodeId, it.inputName, it.fileName);
+            }
+            // Clear pending once applied
+            this._pendingFolderFiles = [];
+            this._pendingImageInputs = [];
+        }
         this.inferDefaultOutputs();
         if (opts.includeOutputs) {
             for (const id of opts.includeOutputs)
@@ -262,5 +308,40 @@ export class Workflow {
     }
     /** IDE helper returning empty object typed as final result (aliases + metadata). */
     typedResult() { return {}; }
+}
+// Helper: normalize to Blob for upload
+function toBlob(src, fileName) {
+    if (src instanceof Blob)
+        return src;
+    // Normalize everything to a plain ArrayBuffer for reliable BlobPart typing
+    let ab;
+    if (typeof Buffer !== 'undefined' && src instanceof Buffer) {
+        const u8 = new Uint8Array(src);
+        ab = u8.slice(0).buffer;
+    }
+    else if (src instanceof Uint8Array) {
+        const u8 = new Uint8Array(src.byteLength);
+        u8.set(src);
+        ab = u8.buffer;
+    }
+    else if (src instanceof ArrayBuffer) {
+        ab = src;
+    }
+    else {
+        ab = new ArrayBuffer(0);
+    }
+    return new Blob([ab], { type: mimeFromName(fileName) });
+}
+function mimeFromName(name) {
+    if (!name)
+        return undefined;
+    const n = name.toLowerCase();
+    if (n.endsWith('.png'))
+        return 'image/png';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg'))
+        return 'image/jpeg';
+    if (n.endsWith('.webp'))
+        return 'image/webp';
+    return undefined;
 }
 //# sourceMappingURL=workflow.js.map

@@ -1,0 +1,128 @@
+{
+  "1": {
+    "inputs": {
+      "model": "seedream-4-0-250828",
+      "prompt": "Change her hair to bright blue and add stylish sunglasses",
+      "size_preset": "Custom",
+      "width": [
+        "8",
+        0
+      ],
+      "height": [
+        "9",
+        0
+      ],
+      "sequential_image_generation": "disabled",
+      "max_images": 1,
+      "seed": 1557205649,
+      "watermark": false,
+      "image": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "ByteDanceSeedreamNode",
+    "_meta": {
+      "title": "ByteDance Seedream 4"
+    }
+  },
+  "2": {
+    "inputs": {
+      "filename_prefix": "seedream/output",
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": "fast_00240_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "4": {
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "5": {
+    "inputs": {
+      "input1": [
+        "4",
+        0
+      ],
+      "input2": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "MultiplyNode",
+    "_meta": {
+      "title": "Multiply"
+    }
+  },
+  "6": {
+    "inputs": {
+      "value": 2
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float"
+    }
+  },
+  "7": {
+    "inputs": {
+      "input1": [
+        "4",
+        1
+      ],
+      "input2": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "MultiplyNode",
+    "_meta": {
+      "title": "Multiply"
+    }
+  },
+  "8": {
+    "inputs": {
+      "input1": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "FloorNode",
+    "_meta": {
+      "title": "Floor"
+    }
+  },
+  "9": {
+    "inputs": {
+      "input1": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "FloorNode",
+    "_meta": {
+      "title": "Floor"
+    }
+  }
+}

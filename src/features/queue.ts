@@ -18,10 +18,16 @@ export class QueueFeature extends FeatureBase {
    * @param workflow Serialized workflow / graph JSON.
    */
   async queuePrompt(number: number | null, workflow: object): Promise<QueuePromptResponse> {
+
     const body = {
       client_id: this.client.id,
-      prompt: workflow
+      prompt: workflow,
+      extra_data: {}
     } as any;
+
+    if (this.client.comfyOrgApiKey) {
+      body.extra_data["api_key_comfy_org"] = this.client.comfyOrgApiKey;
+    }
 
     if (number !== null) {
       if (number === -1) {

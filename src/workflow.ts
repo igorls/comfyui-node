@@ -93,6 +93,9 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
     private outputNodeIds: string[] = [];
     private outputAliases: Record<string, string> = {}; // nodeId -> alias
     private inputPaths: string[] = []; // retained for compatibility with PromptBuilder signature
+    // Pending assets to upload before execution
+    private _pendingImageInputs: Array<{ nodeId: string; inputName: string; blob: Blob; fileName: string; subfolder?: string; override?: boolean }> = [];
+    private _pendingFolderFiles: Array<{ subfolder: string; blob: Blob; fileName: string; override?: boolean }> = [];
 
     // Overloads to preserve literal type inference when passing an object
     static from<TD extends WorkflowJSON>(data: TD): Workflow<TD, {}>;
@@ -130,6 +133,22 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
             cur = cur[keys[i]];
         }
         cur[keys.at(-1)!] = value;
+        return this;
+    }
+
+    /** Attach a single image buffer to a node input (e.g., LoadImage.image). Will upload on run() then set the input to the filename. */
+    attachImage(nodeId: keyof T & string, inputName: string, data: Blob | Buffer | ArrayBuffer | Uint8Array, fileName: string, opts?: { subfolder?: string; override?: boolean }) {
+        const blob = toBlob(data, fileName);
+        this._pendingImageInputs.push({ nodeId: String(nodeId), inputName, blob, fileName, subfolder: opts?.subfolder, override: opts?.override });
+        return this;
+    }
+
+    /** Attach multiple files into a server subfolder (useful for LoadImageSetFromFolderNode). */
+    attachFolderFiles(subfolder: string, files: Array<{ data: Blob | Buffer | ArrayBuffer | Uint8Array; fileName: string }>, opts?: { override?: boolean }) {
+        for (const f of files) {
+            const blob = toBlob(f.data, f.fileName);
+            this._pendingFolderFiles.push({ subfolder, blob, fileName: f.fileName, override: opts?.override });
+        }
         return this;
     }
 
@@ -197,7 +216,17 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
         let alias: string | undefined;
         let nodeId: string;
         if (b) {
-            alias = a; nodeId = b;
+            // Heuristic: if first arg looks like a node id and second arg looks like an alias, swap
+            // Node ids are often numeric strings (e.g., '2'); aliases are non-numeric labels.
+            const looksLikeNodeId = (s: string) => /^\d+$/.test(s) || (this.json as any)[s];
+            if (looksLikeNodeId(String(a)) && !looksLikeNodeId(String(b))) {
+                nodeId = String(a);
+                alias = String(b);
+                try { console.warn(`Workflow.output called as output(nodeId, alias). Interpreting as output(alias,nodeId): '${alias}:${nodeId}'`); } catch { }
+            } else {
+                alias = String(a);
+                nodeId = String(b);
+            }
         } else {
             // single param variant: maybe "alias:node" or just node
             if (a.includes(':')) {
@@ -222,6 +251,22 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
     }
 
     async run(api: ComfyApi, opts: WorkflowRunOptions = {}): Promise<WorkflowJob<WorkflowResult & O>> {
+        // Upload any pending assets first, then patch JSON inputs
+        if (this._pendingFolderFiles.length || this._pendingImageInputs.length) {
+            // Upload folder files
+            for (const f of this._pendingFolderFiles) {
+                await api.ext.file.uploadImage(f.blob, f.fileName, { subfolder: f.subfolder, override: f.override });
+            }
+            // Upload and set single-image inputs
+            for (const it of this._pendingImageInputs) {
+                await api.ext.file.uploadImage(it.blob, it.fileName, { subfolder: it.subfolder, override: it.override });
+                // Prefer just the filename; many LoadImage nodes look up by filename (subfolder managed server-side)
+                this.input(it.nodeId as any, it.inputName as any, it.fileName as any);
+            }
+            // Clear pending once applied
+            this._pendingFolderFiles = [];
+            this._pendingImageInputs = [];
+        }
         this.inferDefaultOutputs();
         if (opts.includeOutputs) {
             for (const id of opts.includeOutputs) this.outputNodeIds.push(id);
@@ -248,7 +293,7 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
         for (const nodeId of this.outputNodeIds) {
             pb = (pb as any).setOutputNode(nodeId as any, nodeId) as any; // reassign clone with relaxed typing
         }
-        const wrapper = new CallWrapper(api as any, pb)
+        const wrapper = new CallWrapper(api, pb)
             .onPending(pid => job._emit('pending', pid!))
             .onStart(pid => job._emit('start', pid!))
             .onProgress((info) => {
@@ -326,4 +371,33 @@ export interface Workflow<T extends WorkflowJSON = WorkflowJSON, O extends Outpu
     // Fallback (keeps previous permissive behavior)
     output<A extends string>(single: A): Workflow<T, O & Record<A, any>>;
     output<Alias extends string, NodeId extends string>(alias: Alias, nodeId: NodeId): Workflow<T, O & Record<Alias, any>>;
+}
+
+// Helper: normalize to Blob for upload
+function toBlob(src: Blob | Buffer | ArrayBuffer | Uint8Array, fileName?: string): Blob {
+    if (src instanceof Blob) return src;
+    // Normalize everything to a plain ArrayBuffer for reliable BlobPart typing
+    let ab: ArrayBuffer;
+    if (typeof Buffer !== 'undefined' && src instanceof Buffer) {
+        const u8 = new Uint8Array(src);
+        ab = u8.slice(0).buffer;
+    } else if (src instanceof Uint8Array) {
+        const u8 = new Uint8Array(src.byteLength);
+        u8.set(src);
+        ab = u8.buffer;
+    } else if (src instanceof ArrayBuffer) {
+        ab = src;
+    } else {
+        ab = new ArrayBuffer(0);
+    }
+    return new Blob([ab], { type: mimeFromName(fileName) });
+}
+
+function mimeFromName(name?: string): string | undefined {
+    if (!name) return undefined;
+    const n = name.toLowerCase();
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.webp')) return 'image/webp';
+    return undefined;
 }
