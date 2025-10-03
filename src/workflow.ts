@@ -93,6 +93,7 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
     private outputNodeIds: string[] = [];
     private outputAliases: Record<string, string> = {}; // nodeId -> alias
     private inputPaths: string[] = []; // retained for compatibility with PromptBuilder signature
+    private bypassedNodes: (keyof T)[] = []; // nodes to bypass during execution
     // Pending assets to upload before execution
     private _pendingImageInputs: Array<{ nodeId: string; inputName: string; blob: Blob; fileName: string; subfolder?: string; override?: boolean }> = [];
     private _pendingFolderFiles: Array<{ subfolder: string; blob: Blob; fileName: string; override?: boolean }> = [];
@@ -241,6 +242,64 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
         return this as any; // typed refinement handled via declaration merging below
     }
 
+    /**
+     * Mark a node to be bypassed during execution.
+     * The node will be removed and its connections automatically rewired.
+     * 
+     * @param node - Node ID to bypass
+     * @returns This workflow instance for chaining
+     */
+    bypass(node: keyof T & string): this;
+    
+    /**
+     * Mark multiple nodes to be bypassed during execution.
+     * 
+     * @param nodes - Array of node IDs to bypass
+     * @returns This workflow instance for chaining
+     */
+    bypass(nodes: (keyof T & string)[]): this;
+    
+    bypass(nodes: (keyof T & string) | (keyof T & string)[]): this {
+        if (!Array.isArray(nodes)) {
+            nodes = [nodes];
+        }
+        for (const node of nodes) {
+            if (!this.bypassedNodes.includes(node)) {
+                this.bypassedNodes.push(node);
+            }
+        }
+        return this;
+    }
+
+    /**
+     * Remove a node from the bypass list, re-enabling it.
+     * 
+     * @param node - Node ID to reinstate
+     * @returns This workflow instance for chaining
+     */
+    reinstate(node: keyof T & string): this;
+    
+    /**
+     * Remove multiple nodes from the bypass list.
+     * 
+     * @param nodes - Array of node IDs to reinstate
+     * @returns This workflow instance for chaining
+     */
+    reinstate(nodes: (keyof T & string)[]): this;
+    
+    reinstate(nodes: (keyof T & string) | (keyof T & string)[]): this {
+        if (!Array.isArray(nodes)) {
+            nodes = [nodes];
+        }
+        for (const node of nodes) {
+            const idx = this.bypassedNodes.indexOf(node);
+            if (idx !== -1) {
+                this.bypassedNodes.splice(idx, 1);
+            }
+        }
+        return this;
+    }
+
     private inferDefaultOutputs() {
         if (this.outputNodeIds.length === 0) {
             // naive heuristic: collect SaveImage nodes
@@ -292,6 +351,10 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
         // map outputs
         for (const nodeId of this.outputNodeIds) {
             pb = (pb as any).setOutputNode(nodeId as any, nodeId) as any; // reassign clone with relaxed typing
+        }
+        // apply bypassed nodes
+        if (this.bypassedNodes.length > 0) {
+            pb = pb.bypass(this.bypassedNodes as any);
         }
         const wrapper = new CallWrapper(api, pb)
             .onPending(pid => job._emit('pending', pid!))

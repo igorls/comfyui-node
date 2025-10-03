@@ -37,6 +37,7 @@ export class Workflow {
     outputNodeIds = [];
     outputAliases = {}; // nodeId -> alias
     inputPaths = []; // retained for compatibility with PromptBuilder signature
+    bypassedNodes = []; // nodes to bypass during execution
     // Pending assets to upload before execution
     _pendingImageInputs = [];
     _pendingFolderFiles = [];
@@ -183,6 +184,29 @@ export class Workflow {
             this.outputAliases[nodeId] = alias;
         return this; // typed refinement handled via declaration merging below
     }
+    bypass(nodes) {
+        if (!Array.isArray(nodes)) {
+            nodes = [nodes];
+        }
+        for (const node of nodes) {
+            if (!this.bypassedNodes.includes(node)) {
+                this.bypassedNodes.push(node);
+            }
+        }
+        return this;
+    }
+    reinstate(nodes) {
+        if (!Array.isArray(nodes)) {
+            nodes = [nodes];
+        }
+        for (const node of nodes) {
+            const idx = this.bypassedNodes.indexOf(node);
+            if (idx !== -1) {
+                this.bypassedNodes.splice(idx, 1);
+            }
+        }
+        return this;
+    }
     inferDefaultOutputs() {
         if (this.outputNodeIds.length === 0) {
             // naive heuristic: collect SaveImage nodes
@@ -234,6 +258,10 @@ export class Workflow {
         // map outputs
         for (const nodeId of this.outputNodeIds) {
             pb = pb.setOutputNode(nodeId, nodeId); // reassign clone with relaxed typing
+        }
+        // apply bypassed nodes
+        if (this.bypassedNodes.length > 0) {
+            pb = pb.bypass(this.bypassedNodes);
         }
         const wrapper = new CallWrapper(api, pb)
             .onPending(pid => job._emit('pending', pid))

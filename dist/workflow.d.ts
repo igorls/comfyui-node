@@ -65,6 +65,7 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     private outputNodeIds;
     private outputAliases;
     private inputPaths;
+    private bypassedNodes;
     private _pendingImageInputs;
     private _pendingFolderFiles;
     static from<TD extends WorkflowJSON>(data: TD): Workflow<TD, {}>;
@@ -111,6 +112,35 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     }>(batch: M, opts?: {
         strict?: boolean;
     }): this;
+    /**
+     * Mark a node to be bypassed during execution.
+     * The node will be removed and its connections automatically rewired.
+     *
+     * @param node - Node ID to bypass
+     * @returns This workflow instance for chaining
+     */
+    bypass(node: keyof T & string): this;
+    /**
+     * Mark multiple nodes to be bypassed during execution.
+     *
+     * @param nodes - Array of node IDs to bypass
+     * @returns This workflow instance for chaining
+     */
+    bypass(nodes: (keyof T & string)[]): this;
+    /**
+     * Remove a node from the bypass list, re-enabling it.
+     *
+     * @param node - Node ID to reinstate
+     * @returns This workflow instance for chaining
+     */
+    reinstate(node: keyof T & string): this;
+    /**
+     * Remove multiple nodes from the bypass list.
+     *
+     * @param nodes - Array of node IDs to reinstate
+     * @returns This workflow instance for chaining
+     */
+    reinstate(nodes: (keyof T & string)[]): this;
     private inferDefaultOutputs;
     run(api: ComfyApi, opts?: WorkflowRunOptions): Promise<WorkflowJob<WorkflowResult & O>>;
     /** IDE helper returning empty object typed as final result (aliases + metadata). */

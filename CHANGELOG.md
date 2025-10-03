@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.3.1
+
+Features:
+
+* Added `.bypass()` and `.reinstate()` methods to the `Workflow` class for high-level node bypassing.
+  * `workflow.bypass('NODE_NAME')` – marks a node to be bypassed during execution
+  * `workflow.bypass(['NODE_1', 'NODE_2'])` – bypass multiple nodes at once
+  * `workflow.reinstate('NODE_NAME')` – removes a node from the bypass list
+  * Methods are immutable (return new Workflow instance) and chainable
+  * Bypassed nodes are automatically removed and connections rewired when `.run()` is called
+  * Leverages existing `PromptBuilder.bypass()` and `CallWrapper.bypassWorkflowNodes()` implementation
+  * Fully type-safe with compile-time validation of node names
+
+Notes:
+
+* This brings the high-level `Workflow` API to feature parity with `PromptBuilder` for node bypassing.
+* Bypass functionality was already available in `PromptBuilder` (since earlier versions); this release extends it to `Workflow`.
+* This is additive and backward-compatible.
+
 ## 1.3.0
 
 Features (API Nodes / Paid Nodes):
