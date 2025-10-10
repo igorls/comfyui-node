@@ -1,5 +1,5 @@
+import { ManagedClient } from "../client/ClientManager.js";
 import type { JobRecord } from "../types/job.js";
-import type { ManagedClient } from "../client/ClientManager.js";
 export interface FailoverStrategy {
     shouldSkipClient(client: ManagedClient, job: JobRecord): boolean;
     recordFailure(client: ManagedClient, job: JobRecord, error: unknown): void;

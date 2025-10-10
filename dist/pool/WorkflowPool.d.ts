@@ -28,6 +28,7 @@ export declare class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap>
     private generateJobId;
     private static fallbackId;
     private scheduleProcess;
+    private applyAutoSeed;
     private processQueue;
     private runJob;
 }

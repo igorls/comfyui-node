@@ -176,6 +176,21 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     }, wait);
   }
 
+  private applyAutoSeed(workflow: Record<string, any>): Record<string, number> {
+    const autoSeeds: Record<string, number> = {};
+    for (const [nodeId, nodeValue] of Object.entries(workflow)) {
+      if (!nodeValue || typeof nodeValue !== "object") continue;
+      const inputs = (nodeValue as any).inputs;
+      if (!inputs || typeof inputs !== "object") continue;
+      if (typeof inputs.seed === "number" && inputs.seed === -1) {
+        const val = Math.floor(Math.random() * 2_147_483_647);
+        inputs.seed = val;
+        autoSeeds[nodeId] = val;
+      }
+    }
+    return autoSeeds;
+  }
+
   private async processQueue(): Promise<void> {
     if (this.processing) {
       return;
@@ -223,7 +238,9 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     job.startedAt = Date.now();
     this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
 
-    let wfInstance = Workflow.from(cloneDeep(reservation.payload.workflow));
+  const workflowPayload = cloneDeep(reservation.payload.workflow) as Record<string, any>;
+  const autoSeeds = this.applyAutoSeed(workflowPayload);
+  let wfInstance = Workflow.from(workflowPayload);
     if (job.options.includeOutputs?.length) {
       for (const nodeId of job.options.includeOutputs) {
         if (nodeId) {
@@ -232,11 +249,16 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       }
     }
     (wfInstance as any).inferDefaultOutputs?.();
-    const promptBuilder = new PromptBuilder<any, any, any>(
+    const outputNodeIds: string[] = (wfInstance as any).outputNodeIds ?? [];
+    const outputAliases: Record<string, string> = (wfInstance as any).outputAliases ?? {};
+    let promptBuilder = new PromptBuilder<any, any, any>(
       (wfInstance as any).json,
       (wfInstance as any).inputPaths ?? [],
-      (wfInstance as any).outputNodeIds ?? []
+      outputNodeIds as any
     );
+    for (const nodeId of outputNodeIds) {
+      promptBuilder = promptBuilder.setOutputNode(nodeId as any, nodeId as any);
+    }
     const wrapper = new CallWrapper(client, promptBuilder);
 
     let pendingSettled = false;
@@ -328,7 +350,20 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       }
       job.status = "completed";
       job.lastError = undefined;
-      job.result = data;
+      const resultPayload: Record<string, unknown> = {};
+      for (const nodeId of outputNodeIds) {
+        const alias = outputAliases[nodeId] ?? nodeId;
+        resultPayload[alias] = (data as any)[nodeId];
+      }
+      resultPayload._nodes = [...outputNodeIds];
+      resultPayload._aliases = { ...outputAliases };
+      if (job.promptId) {
+        resultPayload._promptId = job.promptId;
+      }
+      if (Object.keys(autoSeeds).length) {
+        resultPayload._autoSeeds = { ...autoSeeds };
+      }
+      job.result = resultPayload;
       job.completedAt = Date.now();
       this.dispatchEvent(new CustomEvent("job:completed", { detail: { job } }));
       resolveCompletion?.();
