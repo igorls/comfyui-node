@@ -58,11 +58,16 @@ const outputs = Array.isArray(result.SAVE_IMAGE) ? result.SAVE_IMAGE : [result.S
 
 console.log("\noutputs:");
 for (const output of outputs) {
-  if (output?.filename) {
-    console.log(` - ${output.filename}`);
-  } else {
-    console.dir(output, { depth: 1 });
+  const records = Array.isArray(output?.images) ? output.images : [output];
+  for (const record of records) {
+    if (record?.filename) {
+      const folder = record.subfolder ? `${record.subfolder}/` : "";
+      console.log(` - ${folder}${record.filename}`);
+    } else {
+      console.dir(record, { depth: 1 });
+    }
   }
 }
 
 console.log("\nDone. Images saved to your ComfyUI output directory.");
+process.exit(0);
