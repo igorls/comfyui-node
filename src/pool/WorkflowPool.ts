@@ -380,6 +380,9 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
     try {
       const exec = wrapper.run();
+      exec.catch(() => {
+        /* Swallow to avoid unhandled rejection; outer flow handles via pending/completion promises. */
+      });
       await pendingPromise;
       this.activeJobs.set(job.jobId, {
         reservation,

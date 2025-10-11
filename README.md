@@ -1104,7 +1104,7 @@ If you only need generation progress & previews you do NOT need the Crystools ex
 
 ## Examples
 
-See the `examples` directory for text‑to‑image, image‑to‑image, upscaling and pool orchestration patterns.
+See the `examples` directory for text-to-image, image-to-image, upscaling and pool orchestration patterns. For an end-to-end WorkflowPool + WebSocket demo, open `demos/recursive-edit/` and run the recursive image editing server + web client.
 
 ## Errors & Diagnostics
 
