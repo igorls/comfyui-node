@@ -1,0 +1,8 @@
+export { WorkflowPool } from "./WorkflowPool.js";
+export type { WorkflowPoolEventMap } from "./types/events.js";
+export type { JobRecord, JobStatus, WorkflowJobOptions } from "./types/job.js";
+export type { QueueAdapter, QueueReservation, QueueStats } from "./queue/QueueAdapter.js";
+export { MemoryQueueAdapter } from "./queue/adapters/memory.js";
+export type { FailoverStrategy } from "./failover/Strategy.js";
+export { SmartFailoverStrategy } from "./failover/SmartFailoverStrategy.js";
+//# sourceMappingURL=index.d.ts.map

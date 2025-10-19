@@ -379,24 +379,27 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       }
     }
 
-    const job = await this.client.ext.queue.appendPrompt(workflow).catch(async (e) => {
+  let job: any;
+    try {
+      job = await this.client.ext.queue.appendPrompt(workflow);
+    } catch (e: any) {
       try {
         if (e instanceof EnqueueFailedError) {
           this.onFailedFn?.(e);
         } else if (e instanceof Response) {
           const err = await buildEnqueueFailedError(e);
           this.onFailedFn?.(err);
-        } else if (e && typeof e === 'object' && 'response' in e && e.response instanceof Response) {
+        } else if (e && typeof e === "object" && "response" in e && e.response instanceof Response) {
           const err = await buildEnqueueFailedError(e.response);
           this.onFailedFn?.(err);
         } else {
-          this.onFailedFn?.(new EnqueueFailedError("Failed to queue prompt", { cause: e, reason: e?.message }));
+          this.onFailedFn?.(new EnqueueFailedError("Failed to queue prompt", { cause: e, reason: (e as Error)?.message }));
         }
       } catch (inner) {
         this.onFailedFn?.(new EnqueueFailedError("Failed to queue prompt", { cause: inner }));
       }
-      return null;
-    });
+      job = null;
+    }
     if (!job) {
       return;
     }

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+Features:
+
+* Introduced `WorkflowPool`, a new event-driven pooling API with pluggable queue adapters and smarter failover heuristics. Jobs receive stable ids, WebSocket events carry the id, and backends such as Redis/BullMQ/RabbitMQ can be integrated by implementing `QueueAdapter`.
+* Added `SmartFailoverStrategy` and `MemoryQueueAdapter` reference implementations plus a typed event map covering `job:*` and `client:*` lifecycle notifications.
+* Published `docs/workflow-pool.md` with architecture overview, adapter contract, and event reference. Updated README multi-instance section to compare `WorkflowPool` with the legacy `ComfyPool`.
+* New demo: `demos/recursive-edit/` showcases a `WorkflowPool`-powered WebSocket server and browser UI that repeatedly applies a Qwen image edit workflow, useful for multi-session stress tests.
+
+Breaking:
+
+* None – `ComfyPool` remains unchanged and continues to be exported for existing consumers.
+
 ## 1.3.1
 
 Features:

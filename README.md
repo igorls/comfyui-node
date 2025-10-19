@@ -452,50 +452,52 @@ Changing outputs later? Re‑generate the type after adding the new `.output()` 
 
 ## Multi-Instance Pool
 
-`ComfyPool` provides weighted job scheduling & automatic client selection across multiple ComfyUI instances. It is transport‑agnostic and only relies on the standard `ComfyApi` event surface.
+The SDK ships two pooling layers:
 
-### Modes
+- **`WorkflowPool` (new, event-driven)** – Manages its own queue (pluggable adapters), emits per-job events with consistent job ids, and handles smart failover / retry without depending on the ComfyUI server queue depth. Ideal for multi-tenant services or when integrating with Redis/BullMQ/RabbitMQ backends.
+- **`ComfyPool` (legacy)** – Weighted, in-memory scheduler that delegates most coordination to the ComfyUI queue. Useful for lightweight scripts or when you need backwards compatibility with earlier SDK versions.
+
+### WorkflowPool Snapshot
+
+```ts
+import { ComfyApi, WorkflowPool, MemoryQueueAdapter } from "comfyui-node";
+import WorkflowJson from "./example-txt2img-workflow.json";
+
+const clients = [
+  new ComfyApi("http://localhost:8188"),
+  new ComfyApi("http://localhost:8189")
+];
+
+const pool = new WorkflowPool(clients, {
+  queueAdapter: new MemoryQueueAdapter()
+});
+
+pool.on("job:progress", (ev) => {
+  console.log(`job ${ev.detail.jobId} -> ${ev.detail.progress.value}/${ev.detail.progress.max}`);
+});
+
+pool.on("client:blocked_workflow", (ev) => {
+  console.warn(`client ${ev.detail.clientId} cooling off for workflow ${ev.detail.workflowHash.slice(0, 8)}`);
+});
+
+const jobId = await pool.enqueue(WorkflowJson, {
+  metadata: { tenant: "alpha" },
+  includeOutputs: ["9"],
+  priority: 10
+});
+
+console.log("queued", jobId);
+```
+
+See `docs/workflow-pool.md` for full API and event reference.
+
+### ComfyPool Modes
 
 | Mode | Enum | Behavior | When to use |
 | ---- | ---- | -------- | ----------- |
-| Pick zero queue | `EQueueMode.PICK_ZERO` (default) | Choose any online client whose reported `queue_remaining` is 0 (prefers idle machines). Locks a client until it emits an execution event. | Co‑existence with the ComfyUI web UI where queue spikes are common. |
+| Pick zero queue | `EQueueMode.PICK_ZERO` (default) | Choose any online client whose reported `queue_remaining` is 0 (prefers idle machines). Locks a client until it emits an execution event. | Co-existence with the ComfyUI web UI where queue spikes are common. |
 | Lowest queue | `EQueueMode.PICK_LOWEST` | Choose the online client with the smallest `queue_remaining` (may still be busy). | High throughput batch ingestion; keeps all nodes saturated. |
-| Round‑robin | `EQueueMode.PICK_ROUTINE` | Simple rotation through available online clients irrespective of queue depth. | Latency balancing; predictable distribution. |
-
-### Basic Example
-
-```ts
-import { ComfyApi, ComfyPool, EQueueMode, CallWrapper, PromptBuilder, seed } from "comfyui-node";
-import ExampleTxt2ImgWorkflow from "./example-txt2img-workflow.json";
-// ... pool basic example content (see earlier dedicated Workflow section for high-level abstraction)
-```
-
-Pool variant (experimental):
-
-```ts
-import { ComfyApi, ComfyPool, Workflow } from 'comfyui-node';
-import BaseWorkflow from './example-txt2img-workflow.json';
-
-const pool = new ComfyPool([
-  new ComfyApi('http://localhost:8188'),
-  new ComfyApi('http://localhost:8189')
-]);
-
-const wf = Workflow.from(BaseWorkflow)
-  .set('6.inputs.text', 'A macro photo of a dewdrop on a leaf')
-  .output('9');
-
-// Run using one specific API (pool provided for scheduling context)
-const api = pool.clients[0];
-const job = await api.run(wf, { pool });
-await job.done();
-```
-
-Notes:
-
-- Experimental surface: event names / helpers may refine before a stable minor release.
-- Falls back to `SaveImage` detection if you omit `output(...)`.
-- For advanced validation, serialization, or complex key mapping prefer `PromptBuilder`.
+| Round-robin | `EQueueMode.PICK_ROUTINE` | Simple rotation through available online clients irrespective of queue depth. | Latency balancing; predictable distribution. |
 
 ---
 
@@ -1102,7 +1104,7 @@ If you only need generation progress & previews you do NOT need the Crystools ex
 
 ## Examples
 
-See the `examples` directory for text‑to‑image, image‑to‑image, upscaling and pool orchestration patterns.
+See the `examples` directory for text-to-image, image-to-image, upscaling and pool orchestration patterns. For an end-to-end WorkflowPool + WebSocket demo, open `demos/recursive-edit/` and run the recursive image editing server + web client.
 
 ## Errors & Diagnostics
 

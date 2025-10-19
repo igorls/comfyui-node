@@ -1,0 +1,134 @@
+import type { ComfyApi } from "../../client.js";
+import { TypedEventTarget } from "../../typed-event-target.js";
+import type { JobRecord } from "../types/job.js";
+import type { FailoverStrategy } from "../failover/Strategy.js";
+import type { WorkflowPoolEventMap } from "../types/events.js";
+
+export interface ManagedClient {
+  client: ComfyApi;
+  id: string;
+  online: boolean;
+  busy: boolean;
+  lastError?: unknown;
+  lastSeenAt: number;
+  supportedWorkflows: Set<string>;
+}
+
+interface ClientLease {
+  client: ComfyApi;
+  clientId: string;
+  release: (opts?: { success?: boolean }) => void;
+}
+
+export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
+  private clients: ManagedClient[] = [];
+  private strategy: FailoverStrategy;
+
+  constructor(strategy: FailoverStrategy) {
+    super();
+    this.strategy = strategy;
+  }
+
+  private emitBlocked(clientId: string, workflowHash: string) {
+    this.dispatchEvent(new CustomEvent("client:blocked_workflow", { detail: { clientId, workflowHash } }));
+  }
+
+  private emitUnblocked(clientId: string, workflowHash: string) {
+    this.dispatchEvent(new CustomEvent("client:unblocked_workflow", { detail: { clientId, workflowHash } }));
+  }
+
+  async initialize(clients: ComfyApi[]): Promise<void> {
+    for (const client of clients) {
+      await this.addClient(client);
+    }
+  }
+
+  async addClient(client: ComfyApi): Promise<void> {
+    await client.init();
+    const managed: ManagedClient = {
+      client,
+      id: client.id,
+      online: true,
+      busy: false,
+      lastSeenAt: Date.now(),
+      supportedWorkflows: new Set()
+    };
+    this.clients.push(managed);
+
+    client.on("disconnected", () => {
+      managed.online = false;
+      managed.busy = false;
+      managed.lastSeenAt = Date.now();
+      this.dispatchEvent(new CustomEvent("client:state", {
+        detail: { clientId: managed.id, online: false, busy: false, lastError: managed.lastError }
+      }));
+    });
+    client.on("reconnected", () => {
+      managed.online = true;
+      managed.lastSeenAt = Date.now();
+      this.dispatchEvent(new CustomEvent("client:state", {
+        detail: { clientId: managed.id, online: true, busy: managed.busy }
+      }));
+    });
+  }
+
+  list(): ManagedClient[] {
+    return [...this.clients];
+  }
+
+  getClient(clientId: string): ManagedClient | undefined {
+    return this.clients.find((c) => c.id === clientId);
+  }
+
+  claim(job: JobRecord): ClientLease | null {
+    const candidates = this.clients.filter((c) => c.online && !c.busy);
+    const preferred = job.options.preferredClientIds?.length
+      ? candidates.filter((c) => job.options.preferredClientIds?.includes(c.id))
+      : candidates;
+    const filtered = preferred
+      .filter((client) => !job.options.excludeClientIds?.includes(client.id))
+      .filter((client) => !this.strategy.shouldSkipClient(client, job));
+    const chosen = filtered[0];
+    if (!chosen) {
+      return null;
+    }
+    chosen.busy = true;
+    chosen.lastSeenAt = Date.now();
+    return {
+      client: chosen.client,
+      clientId: chosen.id,
+      release: (opts?: { success?: boolean }) => {
+        chosen.busy = false;
+        if (opts?.success) {
+          const wasBlocked = this.strategy.isWorkflowBlocked?.(chosen, job.workflowHash) ?? false;
+          this.strategy.recordSuccess(chosen, job);
+          const stillBlocked = this.strategy.isWorkflowBlocked?.(chosen, job.workflowHash) ?? false;
+          if (wasBlocked && !stillBlocked) {
+            this.emitUnblocked(chosen.id, job.workflowHash);
+          }
+        }
+        this.dispatchEvent(new CustomEvent("client:state", {
+          detail: { clientId: chosen.id, online: chosen.online, busy: chosen.busy }
+        }));
+      }
+    };
+  }
+
+  recordFailure(clientId: string, job: JobRecord, error: unknown) {
+    const client = this.clients.find((c) => c.id === clientId);
+    if (!client) {
+      return;
+    }
+    client.lastError = error;
+    client.busy = false;
+    const wasBlocked = this.strategy.isWorkflowBlocked?.(client, job.workflowHash) ?? false;
+    this.strategy.recordFailure(client, job, error);
+    const isBlocked = this.strategy.isWorkflowBlocked?.(client, job.workflowHash) ?? false;
+    if (!wasBlocked && isBlocked) {
+      this.emitBlocked(client.id, job.workflowHash);
+    }
+    this.dispatchEvent(new CustomEvent("client:state", {
+      detail: { clientId: client.id, online: client.online, busy: client.busy, lastError: error }
+    }));
+  }
+}
