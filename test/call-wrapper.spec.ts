@@ -126,6 +126,24 @@ describe("CallWrapper branches", () => {
     expect(finished.out.data).toBe(42);
   });
 
+  it("handles execution events emitted immediately after queueing", async () => {
+    const history: Record<string, any> = {};
+    const api = new FakeApi(history);
+    let jobId: string | undefined;
+    const builder = baseBuilder();
+    const wrapper = new CallWrapper(api as any, builder).onPending((id) => {
+      jobId = id;
+      setTimeout(() => {
+        api.emit("executing", { prompt_id: jobId, node: "B" });
+        api.emit("executed", { prompt_id: jobId, node: "B", output: { value: 7 } });
+        api.emit("execution_success", { prompt_id: jobId });
+      }, 0);
+    });
+
+    const result = (await wrapper.run()) as any;
+    expect(result?.out?.value).toBe(7);
+  });
+
   it("execution_success without executed nodes triggers ExecutionFailedError", async () => {
     const history: Record<string, any> = {};
     const api = new FakeApi(history);

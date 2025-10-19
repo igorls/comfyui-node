@@ -269,6 +269,9 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
 
     this.statusHandlerOffFn = this.client.on("status", statusHandler);
 
+    // Attach execution listeners immediately so fast jobs cannot finish before we subscribe
+    this.handleJobExecution(job.prompt_id, jobDoneTrigger);
+
     await promptLoadCached;
 
     if (wentMissing) {
@@ -293,7 +296,6 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     }
 
     (this.client as any).dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.run", message: "no cached output -> proceed with execution listeners" } }));
-    this.handleJobExecution(job.prompt_id, jobDoneTrigger);
 
     return jobDonePromise;
   }
@@ -447,6 +449,10 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     promptId: string,
     jobDoneTrigger: (value: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false) => void
   ): void {
+
+    if (this.executionHandlerOffFn) {
+      return;
+    }
 
     const reverseOutputMapped = this.reverseMapOutputKeys();
 
