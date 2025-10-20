@@ -180,8 +180,9 @@ export class Workflow {
         }
         if (!this.outputNodeIds.includes(nodeId))
             this.outputNodeIds.push(nodeId);
-        if (alias)
+        if (alias) {
             this.outputAliases[nodeId] = alias;
+        }
         return this; // typed refinement handled via declaration merging below
     }
     bypass(nodes) {

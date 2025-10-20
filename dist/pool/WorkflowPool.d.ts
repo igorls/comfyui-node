@@ -1,6 +1,6 @@
 import { TypedEventTarget } from "../typed-event-target.js";
 import type { ComfyApi } from "../client.js";
-import type { QueueAdapter } from "./queue/QueueAdapter.js";
+import type { QueueAdapter, QueueStats } from "./queue/QueueAdapter.js";
 import type { FailoverStrategy } from "./failover/Strategy.js";
 import type { JobRecord, WorkflowInput, WorkflowJobOptions, JobId } from "./types/job.js";
 import type { WorkflowPoolEventMap } from "./types/events.js";
@@ -24,6 +24,7 @@ export declare class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap>
     getJob(jobId: string): JobRecord | undefined;
     cancel(jobId: string): Promise<boolean>;
     shutdown(): Promise<void>;
+    getQueueStats(): Promise<QueueStats>;
     private normalizeWorkflow;
     private generateJobId;
     private static fallbackId;

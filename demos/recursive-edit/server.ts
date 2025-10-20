@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { ComfyApi, Workflow, WorkflowPool } from "../../src/index.js";
-import BaseWorkflow from "../QwenImageEdit2509.json" assert { type: "json" };
+import BaseWorkflow from "../QwenImageEdit2509V2.json" assert { type: "json" };
 
 interface ClientMessage {
     type: string;
@@ -34,7 +34,6 @@ const COMFY_HOSTS: string[] = [];
 const DEMO_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 COMFY_HOSTS.push("http://127.0.0.1:8188");
-// COMFY_HOSTS.push("http://192.168.1.3:10888");
 
 async function loadClients() {
     const clients: ComfyApi[] = [];
@@ -53,6 +52,217 @@ const jobToSession = new Map<string, string>();
 
 let pool: WorkflowPool;
 const clientMap = new Map<string, ComfyApi>();
+
+interface HostStats {
+    host: string;
+    dispatched: number;
+    running: number;
+    completed: number;
+    failed: number;
+    totalQueueMs: number;
+    totalRunMs: number;
+    queueSamples: number;
+    runSamples: number;
+    lastQueueMs?: number;
+    lastRunMs?: number;
+}
+
+const clientStats = new Map<string, HostStats>();
+const completionTimestamps: number[] = [];
+const STATS_LOG_INTERVAL_MS = 10_000;
+let lastStatsLog = 0;
+
+type StatsTrigger = "started" | "completed" | "failed" | "interval";
+
+interface QueueState {
+    waiting: number;
+    active: number;
+    totalQueued: number;
+}
+
+const queueState: QueueState = {
+    waiting: 0,
+    active: 0,
+    totalQueued: 0
+};
+
+function formatDuration(ms?: number) {
+    if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return undefined;
+    return ms;
+}
+
+function formatDurationDisplay(ms?: number | null) {
+    if (ms == null) return "n/a";
+    if (!Number.isFinite(ms) || ms < 0) return "n/a";
+    if (ms >= 10_000) return `${Math.round(ms / 1000)}s`;
+    if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${Math.round(ms)}ms`;
+}
+
+function pruneCompletionHistory(now: number) {
+    const cutoff = now - 60_000;
+    while (completionTimestamps.length && completionTimestamps[0] < cutoff) {
+        completionTimestamps.shift();
+    }
+}
+
+function computeThroughput(now: number): number {
+    pruneCompletionHistory(now);
+    return completionTimestamps.length;
+}
+
+function formatHostLabel(raw: string): string {
+    if (!raw) return "unknown";
+    try {
+        const parsed = new URL(raw);
+        return parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
+    } catch {
+        return raw;
+    }
+}
+
+function getStatsSnapshot() {
+    const snapshot = [] as Array<{
+        clientId: string;
+        host: string;
+        dispatched: number;
+        running: number;
+        completed: number;
+        failed: number;
+        avgQueueMs: number | null;
+        avgRunMs: number | null;
+        lastQueueMs: number | null;
+        lastRunMs: number | null;
+    }>;
+    for (const [clientId, stats] of clientStats.entries()) {
+        const avgQueueMs = stats.queueSamples ? stats.totalQueueMs / stats.queueSamples : null;
+        const avgRunMs = stats.runSamples ? stats.totalRunMs / stats.runSamples : null;
+        snapshot.push({
+            clientId,
+            host: stats.host,
+            dispatched: stats.dispatched,
+            running: stats.running,
+            completed: stats.completed,
+            failed: stats.failed,
+            avgQueueMs,
+            avgRunMs,
+            lastQueueMs: stats.lastQueueMs ?? null,
+            lastRunMs: stats.lastRunMs ?? null
+        });
+    }
+    snapshot.sort((a, b) => a.host.localeCompare(b.host));
+    return snapshot;
+}
+
+function getQueueSnapshot() {
+    return {
+        waiting: Math.max(0, queueState.waiting),
+        active: Math.max(0, queueState.active),
+        totalQueued: Math.max(0, queueState.totalQueued)
+    };
+}
+
+function broadcastStats() {
+    if (sessions.size === 0) return;
+    const payload = JSON.stringify({ type: "stats", hosts: getStatsSnapshot(), queue: getQueueSnapshot() });
+    for (const session of sessions.values()) {
+        if (session.socket.readyState === 1) {
+            session.socket.send(payload);
+        }
+    }
+}
+
+function recordJobStarted(job: any) {
+    const clientId = job?.clientId;
+    if (!clientId) return;
+    const stats = clientStats.get(clientId);
+    if (!stats) return;
+    stats.dispatched += 1;
+    stats.running += 1;
+    if (queueState.waiting > 0) {
+        queueState.waiting -= 1;
+    }
+    queueState.active += 1;
+    const startedAt = typeof job?.startedAt === "number" ? job.startedAt : undefined;
+    const enqueuedAt = typeof job?.enqueuedAt === "number" ? job.enqueuedAt : undefined;
+    if (startedAt != null && enqueuedAt != null) {
+        const waitMs = formatDuration(startedAt - enqueuedAt);
+        if (waitMs != null) {
+            stats.queueSamples += 1;
+            stats.totalQueueMs += waitMs;
+            stats.lastQueueMs = waitMs;
+        }
+    }
+    broadcastStats();
+    maybeLogOverallStats("started", { force: true });
+}
+
+function recordJobFinished(job: any, outcome: "completed" | "failed") {
+    const clientId = job?.clientId;
+    if (!clientId) return;
+    const stats = clientStats.get(clientId);
+    if (!stats) return;
+    stats.running = Math.max(0, stats.running - 1);
+    queueState.active = Math.max(0, queueState.active - 1);
+    if (outcome === "completed") {
+        stats.completed += 1;
+        const now = Date.now();
+        completionTimestamps.push(now);
+        pruneCompletionHistory(now);
+    } else {
+        stats.failed += 1;
+    }
+    const now = Date.now();
+    const startedAt = typeof job?.startedAt === "number" ? job.startedAt : undefined;
+    const completedAt = typeof job?.completedAt === "number" ? job.completedAt : undefined;
+    const duration = startedAt != null ? (completedAt != null ? completedAt - startedAt : now - startedAt) : undefined;
+    const runMs = formatDuration(duration);
+    if (runMs != null) {
+        stats.runSamples += 1;
+        stats.totalRunMs += runMs;
+        stats.lastRunMs = runMs;
+    }
+    broadcastStats();
+    maybeLogOverallStats(outcome, { force: outcome === "failed" });
+}
+
+function recordJobQueued(job: any) {
+    queueState.waiting += 1;
+    queueState.totalQueued += 1;
+    broadcastStats();
+}
+
+function logOverallStats(trigger: StatsTrigger = "interval") {
+    const now = Date.now();
+    const throughput = computeThroughput(now);
+    const snapshot = getStatsSnapshot();
+    const queue = getQueueSnapshot();
+    let totalRunning = 0;
+    let totalCompleted = 0;
+    let totalFailed = 0;
+    for (const host of snapshot) {
+        totalRunning += host.running || 0;
+        totalCompleted += host.completed || 0;
+        totalFailed += host.failed || 0;
+    }
+    const hostLines = snapshot
+        .map((host) => `${formatHostLabel(host.host)} · active ${host.running} · done ${host.completed} · fail ${host.failed} · avg ${formatDurationDisplay(host.avgRunMs)}`)
+        .join(" | ");
+    console.log(
+        `[stats] ${trigger} → throughput ${throughput.toFixed(1)} img/min · queue ${queue.waiting} · active ${totalRunning} · completed ${totalCompleted} · failed ${totalFailed}`
+    );
+    if (hostLines) {
+        console.log(`        hosts: ${hostLines}`);
+    }
+    lastStatsLog = now;
+}
+
+function maybeLogOverallStats(trigger: StatsTrigger, opts: { force?: boolean } = {}) {
+    const now = Date.now();
+    if (opts.force || lastStatsLog === 0 || now - lastStatsLog >= STATS_LOG_INTERVAL_MS) {
+        logOverallStats(trigger);
+    }
+}
 
 function serveStatic(req: any, res: any) {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -90,16 +300,16 @@ function broadcastProgress(jobId: string, value: number, max: number) {
     session.socket.send(JSON.stringify({ type: "progress", jobId, value, max }));
 }
 
-async function fetchImageBuffer(client: ComfyApi | undefined, filename: string, subfolder?: string) {
+async function fetchImageBuffer(client: ComfyApi | undefined, filename: string, subfolder?: string, type: string = "output") {
     if (!client) {
         throw new Error("Client not available for image fetch");
     }
-    const params = new URLSearchParams({ filename, type: "output" });
+    const params = new URLSearchParams({ filename, type });
     if (subfolder) params.set("subfolder", subfolder);
-    const url = new URL(`/view?${params.toString()}`, client.apiHost);
+    const url = new URL(`/api/view?${params.toString()}`, client.apiHost);
     const response = await fetch(url);
     if (!response.ok) {
-        throw new Error(`Failed to fetch image ${response.status}`);
+        throw new Error(`Failed to fetch image ${response.status}: ${response.statusText}`);
     }
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
@@ -126,30 +336,25 @@ async function scheduleJob(session: SessionState) {
     session.awaitingJob = true;
     try {
         const wf = Workflow.from(BaseWorkflow)
-            .set("3.inputs.prompt", session.prompt || BaseWorkflow["3"].inputs.prompt)
-            .output("images", "9");
-
-        const filename = `${session.id}-${Date.now()}.png`;
-        const blob = new Blob([new Uint8Array(session.latestImage)], {
-            type: session.latestMimeType || "image/png"
-        });
-
-        await Promise.all(
-            Array.from(clientMap.values()).map((client) =>
-                client.ext.file.uploadImage(blob, filename, { override: true })
-            )
-        );
-
-        wf.set("4.inputs.image", filename);
+            .set("11.inputs.text", session.prompt || BaseWorkflow["11"].inputs.text)
+            .set("2.inputs.seed", -1)
+            .output("images", "12");
 
         const jobId = await pool.enqueue(wf, {
-            includeOutputs: ["9"],
-            metadata: { sessionId: session.id }
+            includeOutputs: ["12"],
+            metadata: { sessionId: session.id },
+            attachments: [
+                {
+                    nodeId: "4",
+                    inputName: "image",
+                    file: session.latestImage,
+                },
+            ],
         });
 
         session.currentJobId = jobId;
         jobToSession.set(jobId, session.id);
-        session.socket.send(JSON.stringify({ type: "queued", jobId }));
+    session.socket.send(JSON.stringify({ type: "queued", jobId }));
     } catch (error) {
         session.awaitingJob = false;
         sendError(session, "Failed to enqueue job", (error as Error).message);
@@ -164,28 +369,78 @@ async function handleCompleted(jobId: string, job: any) {
     session.awaitingJob = false;
     session.currentJobId = undefined;
     jobToSession.delete(jobId);
+    
     if (!job.result?.images) {
+        console.error("[handleCompleted] Missing images in result. Available keys:", Object.keys(job.result || {}));
         sendError(session, "Job completed without images");
         return;
     }
 
-    const imagesPayload = Array.isArray(job.result.images) ? job.result.images : [job.result.images];
-    const first = imagesPayload[0];
     let buffer: Buffer | undefined;
     let mimeType = session.latestMimeType || "image/png";
+    const images = job.result.images;
 
-    if (first?.images?.[0]?.image) {
-        const inner = first.images[0];
-        const base64 = inner.image;
-        buffer = Buffer.from(base64, "base64");
-        mimeType = inner.mime_type || mimeType;
-    } else if (first?.image) {
-        buffer = Buffer.from(first.image, "base64");
-        mimeType = first.mime_type || mimeType;
-    } else if (first?.filename) {
-        const client = job.clientId ? clientMap.get(job.clientId) : clientMap.values().next().value;
-        buffer = await fetchImageBuffer(client, first.filename, first.subfolder);
+    // PreviewImage format: { images: [{ filename, subfolder, type }] }
+    if (images && typeof images === "object" && !Buffer.isBuffer(images) && !Array.isArray(images)) {
+        const nestedImages = (images as any).images;
+        if (Array.isArray(nestedImages) && nestedImages.length > 0) {
+            const imageInfo = nestedImages[0];
+            
+            if (imageInfo?.filename) {
+                const client = job.clientId ? clientMap.get(job.clientId) : clientMap.values().next().value;
+                if (!client) {
+                    sendError(session, "No client available to fetch image");
+                    return;
+                }
+                
+                try {
+                    buffer = await fetchImageBuffer(client, imageInfo.filename, imageInfo.subfolder, imageInfo.type);
+                    mimeType = "image/png";
+                } catch (error) {
+                    console.error("[handleCompleted] Failed to fetch image:", (error as Error).message);
+                    sendError(session, "Failed to fetch image from server", (error as Error).message);
+                    return;
+                }
+            }
+        }
+    } else if (Array.isArray(images) && images.length > 0) {
+        const first = images[0];
+        
+        // PreviewImage format: { filename: "ComfyUI_temp_xxx.png", subfolder: "", type: "temp" }
+        if (first?.filename) {
+            const client = job.clientId ? clientMap.get(job.clientId) : clientMap.values().next().value;
+            if (!client) {
+                sendError(session, "No client available to fetch image");
+                return;
+            }
+            
+            try {
+                buffer = await fetchImageBuffer(client, first.filename, first.subfolder, first.type);
+                mimeType = "image/png";
+            } catch (error) {
+                console.error("[handleCompleted] Failed to fetch image:", error);
+                sendError(session, "Failed to fetch image from server", (error as Error).message);
+                return;
+            }
+        } else if (first?.images?.[0]?.filename) {
+            // SaveImage nested format
+            const imageInfo = first.images[0];
+            const client = job.clientId ? clientMap.get(job.clientId) : clientMap.values().next().value;
+            buffer = await fetchImageBuffer(client, imageInfo.filename, imageInfo.subfolder, imageInfo.type);
+            mimeType = "image/png";
+        } else if (first?.image) {
+            // Direct base64 preview format
+            buffer = Buffer.from(first.image, "base64");
+            mimeType = first.mime_type || mimeType;
+        }
+    } else if (Buffer.isBuffer(images)) {
+        buffer = images;
         mimeType = "image/png";
+    } else if (typeof images === "string") {
+        // Base64 encoded image
+        const { buffer: buf, mimeType: mime } = decodeImagePayload(images);
+        buffer = buf;
+        mimeType = mime;
     }
 
     if (!buffer) {
@@ -197,11 +452,14 @@ async function handleCompleted(jobId: string, job: any) {
     session.latestMimeType = mimeType;
 
     const base64 = buffer.toString("base64");
+    const autoSeeds = job?.result?._autoSeeds;
+    const seedValue = typeof autoSeeds?.["2"] === "number" ? autoSeeds["2"] : undefined;
     session.socket.send(
         JSON.stringify({
             type: "image",
             jobId,
             prompt: session.prompt,
+            seed: seedValue,
             dataUrl: `data:${mimeType};base64,${base64}`
         })
     );
@@ -219,6 +477,14 @@ function handleFailed(jobId: string, job: any, willRetry: boolean) {
     session.awaitingJob = false;
     session.currentJobId = undefined;
     jobToSession.delete(jobId);
+    
+    console.error("[handleFailed] Job failed:", {
+        jobId,
+        willRetry,
+        error: job.lastError,
+        attempts: job.attempts
+    });
+    
     sendError(session, "Job failed", job.lastError);
     if (!willRetry && !session.paused) {
         setTimeout(() => {
@@ -231,20 +497,61 @@ async function main() {
     const clients = await loadClients();
     for (const client of clients) {
         clientMap.set(client.id, client);
+        clientStats.set(client.id, {
+            host: client.apiHost,
+            dispatched: 0,
+            running: 0,
+            completed: 0,
+            failed: 0,
+            totalQueueMs: 0,
+            totalRunMs: 0,
+            queueSamples: 0,
+            runSamples: 0
+        });
     }
     pool = new WorkflowPool(clients);
     await pool.ready();
+    broadcastStats();
+    const statsInterval = setInterval(() => {
+        maybeLogOverallStats("interval", { force: true });
+    }, STATS_LOG_INTERVAL_MS);
+    (statsInterval as any)?.unref?.();
 
+    pool.on("job:queued", (ev) => {
+        recordJobQueued(ev.detail.job);
+    });
+    pool.on("job:started", (ev) => {
+        recordJobStarted(ev.detail.job);
+    });
     pool.on("job:progress", (ev) => {
         broadcastProgress(ev.detail.jobId, ev.detail.progress.value, ev.detail.progress.max);
     });
 
+    pool.on("job:preview", async (ev) => {
+        const sessionId = jobToSession.get(ev.detail.jobId);
+        if (!sessionId) return;
+        const session = sessions.get(sessionId);
+        if (!session) return;
+
+        const blob = ev.detail.blob;
+        const buffer = Buffer.from(await blob.arrayBuffer());
+        const base64 = buffer.toString("base64");
+        
+        session.socket.send(JSON.stringify({
+            type: "image_preview",
+            jobId: ev.detail.jobId,
+            dataUrl: `data:image/png;base64,${base64}`
+        }));
+    });
+
     pool.on("job:completed", (ev) => {
+        recordJobFinished(ev.detail.job, "completed");
         handleCompleted(ev.detail.job.jobId, ev.detail.job).catch((error) => {
             console.error("Failed processing completed job", error);
         });
     });
     pool.on("job:failed", (ev) => {
+        recordJobFinished(ev.detail.job, "failed");
         handleFailed(ev.detail.job.jobId, ev.detail.job, ev.detail.willRetry);
     });
 
@@ -263,6 +570,7 @@ async function main() {
         sessions.set(sessionId, session);
 
         socket.send(JSON.stringify({ type: "ready", sessionId }));
+        socket.send(JSON.stringify({ type: "stats", hosts: getStatsSnapshot(), queue: getQueueSnapshot() }));
 
         socket.on("message", async (data) => {
             try {

@@ -5,28 +5,89 @@
     <title>Recursive Qwen Image Edit Demo</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
       body {
-        font-family: system-ui, sans-serif;
         margin: 0;
-        padding: 1.5rem;
-        background: #0f172a;
+        min-height: 100vh;
+        padding: 2.5rem 1.5rem;
+        background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 50%),
+          radial-gradient(circle at bottom right, rgba(168, 85, 247, 0.12), transparent 45%),
+          #0f172a;
         color: #e2e8f0;
       }
       h1 {
-        margin-top: 0;
-        font-size: 1.6rem;
+        margin: 0 0 0.75rem;
+        font-size: clamp(1.75rem, 2.2vw, 2.2rem);
+        font-weight: 700;
+      }
+      p.lead {
+        margin: 0 0 2rem;
+        max-width: 720px;
+        color: rgba(226, 232, 240, 0.85);
+        line-height: 1.6;
+      }
+      .kpi-header {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 1rem;
+        max-width: 1080px;
+        margin: 0 auto 2rem;
+        padding: 0 1rem;
+      }
+      @media (max-width: 960px) {
+        .kpi-header {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1.2rem;
+        }
+      }
+      @media (max-width: 600px) {
+        .kpi-header {
+          grid-template-columns: 1fr;
+          gap: 1rem;
+        }
+      }
+      .layout {
+        display: grid;
+        gap: 1.5rem;
+        grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+      @media (max-width: 960px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
       }
       .panel {
-        background: rgba(15, 23, 42, 0.7);
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 12px;
-        padding: 1rem;
-        margin-bottom: 1rem;
+        background: rgba(15, 23, 42, 0.82);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        backdrop-filter: blur(18px);
+        border-radius: 16px;
+        padding: 1.25rem 1.5rem;
+        box-shadow: 0 18px 50px -30px rgba(15, 23, 42, 0.9);
+      }
+      .panel h2 {
+        margin: 0 0 1rem;
+        font-size: 1.05rem;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: rgba(148, 163, 184, 0.9);
+      }
+      .panel:nth-child(1) {
+        display: flex;
+        flex-direction: column;
+      }
+      .panel:nth-child(1) .stats-block {
+        display: none;
       }
       label {
         display: block;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.35rem;
         font-weight: 600;
+        font-size: 0.95rem;
       }
       input[type="file"],
       textarea {
@@ -34,56 +95,170 @@
         box-sizing: border-box;
         margin-bottom: 1rem;
       }
+      input[type="file"] {
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(15, 23, 42, 0.4);
+        color: inherit;
+      }
       textarea {
-        min-height: 120px;
-        padding: 0.75rem;
-        border-radius: 8px;
+        min-height: 140px;
+        padding: 0.9rem;
+        border-radius: 12px;
         border: 1px solid rgba(148, 163, 184, 0.3);
-        background: rgba(15, 23, 42, 0.3);
+        background: rgba(15, 23, 42, 0.35);
         color: inherit;
         resize: vertical;
+        line-height: 1.5;
       }
-      button {
-        background: #38bdf8;
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        margin-bottom: 0.75rem;
+      }
+      button:not(.filmstrip-item) {
+        background: linear-gradient(135deg, #38bdf8, #22d3ee);
         border: none;
         border-radius: 999px;
-        padding: 0.6rem 1.5rem;
-        margin-right: 0.5rem;
+        padding: 0.6rem 1.6rem;
         color: #0f172a;
         font-weight: 600;
         cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
       }
-      button.secondary {
+      button:not(.filmstrip-item):hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 25px rgba(34, 211, 238, 0.25);
+      }
+      button:not(.filmstrip-item).secondary {
         background: rgba(148, 163, 184, 0.2);
         color: #e2e8f0;
       }
-      button:disabled {
-        opacity: 0.5;
+      button:not(.filmstrip-item).small {
+        padding: 0.4rem 1.1rem;
+        font-size: 0.85rem;
+      }
+      button:not(.filmstrip-item):disabled {
+        opacity: 0.55;
         cursor: not-allowed;
-      }
-      #current-image {
-        width: 100%;
-        max-width: 512px;
-        border-radius: 12px;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
-        display: block;
-        margin: 1rem auto;
-      }
-      #log {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        background: rgba(15, 23, 42, 0.4);
-        border-radius: 8px;
-        padding: 0.75rem;
-        height: 160px;
-        overflow-y: auto;
-        border: 1px solid rgba(148, 163, 184, 0.2);
+        transform: none;
+        box-shadow: none;
       }
       .status-bar {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        font-size: 0.92rem;
+        margin-top: 0.75rem;
+        gap: 1rem;
+      }
+      @media (max-width: 960px) {
+        .status-bar { flex-wrap: wrap; gap: 0.5rem 1rem; }
+      }
+      .kpi-row {
+        display: none;
+      }
+      .kpi {
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(15, 23, 42, 0.7);
+        backdrop-filter: blur(12px);
+        border-radius: 14px;
+        padding: 1rem 1rem;
+        box-shadow: 0 12px 32px rgba(2, 6, 23, 0.4);
+        text-align: center;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      .kpi:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 40px rgba(56, 189, 248, 0.15);
+      }
+      .kpi .label {
+        display: block;
+        font-size: 0.75rem;
+        color: rgba(148, 163, 184, 0.75);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 600;
+        margin-bottom: 0.4rem;
+      }
+      .kpi .value {
+        font-weight: 700;
+        font-size: 1.4rem;
+        color: #38bdf8;
+        display: block;
+        word-break: break-word;
+      }
+      .stats-block {
+        margin-top: 2rem;
+        background: rgba(15, 23, 42, 0.82);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        backdrop-filter: blur(18px);
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 18px 50px -30px rgba(15, 23, 42, 0.9);
+        max-width: 1080px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+        margin: 0 0 0.8rem;
         font-size: 0.9rem;
-        margin-top: 0.5rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        font-weight: 700;
+        color: rgba(148, 163, 184, 0.95);
+      }
+      .stats-summary {
+        display: block;
+        font-size: 0.8rem;
+        color: rgba(148, 163, 184, 0.8);
+        margin-bottom: 0.75rem;
+        line-height: 1.5;
+      }
+      .stats-table {
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.5);
+        overflow-x: auto;
+      }
+      .stats-table table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+      .stats-table th,
+      .stats-table td {
+        padding: 0.75rem 1rem;
+        text-align: left;
+      }
+      .stats-table th {
+        font-weight: 700;
+        color: rgba(148, 163, 184, 0.9);
+        border-bottom: 2px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.6);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.8rem;
+      }
+      .stats-table td {
+        color: rgba(226, 232, 240, 0.92);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+      }
+      .stats-table tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .stats-table tbody tr:hover { background: rgba(56, 189, 248, 0.08); }
+      .stats-empty {
+        margin: 0;
+        padding: 1rem;
+        font-size: 0.85rem;
+        color: rgba(148, 163, 184, 0.8);
+      }
+      .status-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
       }
       .status-dot {
         width: 10px;
@@ -91,47 +266,143 @@
         border-radius: 50%;
         background: #22c55e;
         display: inline-block;
-        margin-right: 0.5rem;
+        box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.18);
       }
       .status-dot.paused {
         background: #f97316;
+        box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.18);
       }
       .status-dot.error {
         background: #ef4444;
+        box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.18);
+      }
+      #current-image {
+        width: 100%;
+        max-width: 540px;
+        border-radius: 14px;
+        box-shadow: 0 16px 60px rgba(15, 23, 42, 0.55);
+        display: block;
+        margin: 0 auto 1.25rem;
+      }
+      .log-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.75rem;
+      }
+      .log-header span {
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: rgba(226, 232, 240, 0.8);
+      }
+      .filmstrip {
+        display: flex;
+        gap: 0.75rem;
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      .filmstrip::-webkit-scrollbar {
+        height: 8px;
+      }
+      .filmstrip::-webkit-scrollbar-thumb {
+        background: rgba(148, 163, 184, 0.35);
+        border-radius: 999px;
+      }
+      .filmstrip-item {
+        flex: 0 0 auto;
+        width: 96px;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.4);
+        transition: transform 0.18s ease;
+        cursor: pointer;
+        background: rgba(15, 23, 42, 0.55);
+        padding: 0;
+      }
+      .filmstrip-item:focus-visible {
+        outline: 2px solid #38bdf8;
+        outline-offset: 2px;
+      }
+      .filmstrip-item img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .filmstrip-item:hover {
+        transform: translateY(-3px);
+      }
+      #log {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        background: rgba(10, 17, 30, 0.55);
+        border-radius: 12px;
+        padding: 0.85rem;
+        height: 200px;
+        overflow-y: auto;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        line-height: 1.55;
       }
     </style>
   </head>
   <body>
     <h1>Recursive Qwen Image Edit</h1>
-    <p>
-      Upload a base image, provide an instruction prompt, and this demo will continuously
-      reapply the edit using your local ComfyUI node. Open multiple tabs to stress test the
-      WorkflowPool scheduler.
+    <p class="lead">
+      Upload a base image, provide an instruction prompt, and the demo will continuously reapply
+      the edit against your local ComfyUI node. Open multiple tabs to stress test the
+      <code>WorkflowPool</code> scheduler.
     </p>
 
-    <div class="panel">
-      <label for="image-input">Initial image</label>
-      <input type="file" id="image-input" accept="image/*" />
+    <section class="kpi-header" aria-live="polite">
+      <div class="kpi"><span class="label">Throughput</span><span id="kpi-throughput" class="value">0.0/min</span></div>
+      <div class="kpi"><span class="label">Queue</span><span id="kpi-waiting" class="value">0</span></div>
+      <div class="kpi"><span class="label">Running</span><span id="kpi-running" class="value">0</span></div>
+      <div class="kpi"><span class="label">Completed</span><span id="kpi-completed" class="value">0</span></div>
+      <div class="kpi"><span class="label">Failed</span><span id="kpi-failed" class="value">0</span></div>
+    </section>
 
-      <label for="prompt-input">Instruction prompt</label>
-      <textarea id="prompt-input">change her t-shirt color to red</textarea>
+    <main class="layout">
+      <section class="panel">
+        <h2>Session Controls</h2>
+        <label for="image-input">Initial image</label>
+        <input type="file" id="image-input" accept="image/*" />
 
-      <div>
-        <button id="start-btn">Start Loop</button>
-        <button id="pause-btn" class="secondary" disabled>Pause</button>
-        <button id="resume-btn" class="secondary" disabled>Resume</button>
+        <label for="prompt-input">Instruction prompt</label>
+        <textarea id="prompt-input">change the color of her clothes and her hair to something unique</textarea>
+
+        <div class="button-row">
+          <button id="start-btn">Start Loop</button>
+          <button id="pause-btn" class="secondary" disabled>Pause</button>
+          <button id="resume-btn" class="secondary" disabled>Resume</button>
+        </div>
+
+        <div class="status-bar">
+          <span class="status-indicator"><span id="status-dot" class="status-dot paused"></span><span id="status-text">Idle</span></span>
+          <span id="progress-text">progress: 0 / 0</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Live Output</h2>
+        <img id="current-image" src="" alt="Current result" hidden />
+        <div id="filmstrip" class="filmstrip" aria-live="polite"></div>
+        <div class="log-header">
+          <span>Activity log</span>
+          <button id="clear-log" class="secondary small" type="button">Clear</button>
+        </div>
+        <div id="log"></div>
+      </section>
+    </main>
+
+    <section class="stats-block">
+      <h3>Node Performance</h3>
+      <span id="stats-summary" class="stats-summary">Waiting for activity…</span>
+      <div id="stats-table" class="stats-table" aria-live="polite" aria-busy="false">
+        <p class="stats-empty">Waiting for activity…</p>
       </div>
-
-      <div class="status-bar">
-        <span><span id="status-dot" class="status-dot paused"></span><span id="status-text">Idle</span></span>
-        <span id="progress-text">progress: 0 / 0</span>
-      </div>
-    </div>
-
-    <div class="panel">
-      <img id="current-image" src="" alt="Current result" hidden />
-      <div id="log"></div>
-    </div>
+    </section>
 
     <script type="module" src="./client.js"></script>
   </body>

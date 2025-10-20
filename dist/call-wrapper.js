@@ -176,9 +176,16 @@ export class CallWrapper {
         this.checkExecutedOffFn = this.client.on("execution_cached", checkExecutionCachedFn);
         // race condition handling
         let wentMissing = false;
+        let wentMissingAt = null;
         let cachedOutputDone = false;
         let cachedOutputPromise = Promise.resolve(null);
+        let missingCheckInFlight = false;
+        let missingCheckTimer;
+        const missingTimeoutMs = 60_000;
         const statusHandler = async () => {
+            if (missingCheckInFlight) {
+                return;
+            }
             const queue = await this.client.getQueue();
             const queueItems = [...queue.queue_pending, ...queue.queue_running];
             this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "queue snapshot", data: { running: queue.queue_running.length, pending: queue.queue_pending.length } } }));
@@ -192,21 +199,61 @@ export class CallWrapper {
                 this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "cached output already handled" } }));
                 return;
             }
-            const output = await this.handleCachedOutput(job.prompt_id);
             wentMissing = true;
-            if (output) {
-                this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "output from history after missing", data: { prompt_id: job.prompt_id } } }));
-                jobDoneTrigger(output);
-                this.cleanupListeners();
+            if (!wentMissingAt) {
+                wentMissingAt = Date.now();
+            }
+            missingCheckInFlight = true;
+            try {
+                // Poll for history with retries similar to executedEnd
+                for (let i = 0; i < 10; i++) {
+                    const output = await this.handleCachedOutput(job.prompt_id);
+                    if (output) {
+                        if (missingCheckTimer) {
+                            clearTimeout(missingCheckTimer);
+                            missingCheckTimer = undefined;
+                        }
+                        cachedOutputDone = true;
+                        this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "output from history after missing", data: { prompt_id: job.prompt_id, attempt: i + 1 } } }));
+                        jobDoneTrigger(output);
+                        this.cleanupListeners("status handler resolved from history");
+                        return;
+                    }
+                    if (i < 9) {
+                        await new Promise((resolve) => setTimeout(resolve, 1000));
+                    }
+                }
+            }
+            finally {
+                missingCheckInFlight = false;
+            }
+            const elapsed = wentMissingAt ? Date.now() - wentMissingAt : missingTimeoutMs;
+            if (elapsed < missingTimeoutMs) {
+                if (!missingCheckTimer) {
+                    missingCheckTimer = setTimeout(() => {
+                        missingCheckTimer = undefined;
+                        if (!cachedOutputDone) {
+                            void statusHandler();
+                        }
+                    }, 1000);
+                }
+                this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "job missing, retry scheduled", data: { prompt_id: job.prompt_id, elapsed } } }));
                 return;
             }
-            this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "job missing -> failure", data: { prompt_id: job.prompt_id } } }));
+            if (missingCheckTimer) {
+                clearTimeout(missingCheckTimer);
+                missingCheckTimer = undefined;
+            }
+            cachedOutputDone = true;
+            this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "job missing -> failure after retries", data: { prompt_id: job.prompt_id, elapsed } } }));
             promptLoadTrigger(false);
             jobDoneTrigger(false);
-            this.cleanupListeners();
+            this.cleanupListeners("status handler missing timeout");
             this.onFailedFn?.(new WentMissingError("The job went missing!"), job.prompt_id);
         };
         this.statusHandlerOffFn = this.client.on("status", statusHandler);
+        // Attach execution listeners immediately so fast jobs cannot finish before we subscribe
+        this.handleJobExecution(job.prompt_id, jobDoneTrigger);
         await promptLoadCached;
         if (wentMissing) {
             return jobDonePromise;
@@ -215,19 +262,18 @@ export class CallWrapper {
         const output = await cachedOutputPromise;
         if (output) {
             cachedOutputDone = true;
-            this.cleanupListeners();
+            this.cleanupListeners("no cached output values returned");
             jobDoneTrigger(output);
             return output;
         }
         if (output === false) {
             cachedOutputDone = true;
-            this.cleanupListeners();
+            this.cleanupListeners("cached output ready before execution listeners");
             this.onFailedFn?.(new FailedCacheError("Failed to get cached output"), this.promptId);
             jobDoneTrigger(false);
             return false;
         }
         this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.run", message: "no cached output -> proceed with execution listeners" } }));
-        this.handleJobExecution(job.prompt_id, jobDoneTrigger);
         return jobDonePromise;
     }
     async bypassWorkflowNodes(workflow) {
@@ -298,7 +344,11 @@ export class CallWrapper {
                 return null;
             }
         }
-        const job = await this.client.ext.queue.appendPrompt(workflow).catch(async (e) => {
+        let job;
+        try {
+            job = await this.client.ext.queue.appendPrompt(workflow);
+        }
+        catch (e) {
             try {
                 if (e instanceof EnqueueFailedError) {
                     this.onFailedFn?.(e);
@@ -307,7 +357,7 @@ export class CallWrapper {
                     const err = await buildEnqueueFailedError(e);
                     this.onFailedFn?.(err);
                 }
-                else if (e && typeof e === 'object' && 'response' in e && e.response instanceof Response) {
+                else if (e && typeof e === "object" && "response" in e && e.response instanceof Response) {
                     const err = await buildEnqueueFailedError(e.response);
                     this.onFailedFn?.(err);
                 }
@@ -318,8 +368,8 @@ export class CallWrapper {
             catch (inner) {
                 this.onFailedFn?.(new EnqueueFailedError("Failed to queue prompt", { cause: inner }));
             }
-            return null;
-        });
+            job = null;
+        }
         if (!job) {
             return;
         }
@@ -331,15 +381,68 @@ export class CallWrapper {
     }
     async handleCachedOutput(promptId) {
         const hisData = await this.client.ext.history.getHistory(promptId);
-        if (hisData?.status?.completed) {
+        this.client.dispatchEvent?.(new CustomEvent("log", {
+            detail: {
+                fnName: "CallWrapper.handleCachedOutput",
+                message: "history fetched",
+                data: {
+                    promptId,
+                    status: hisData?.status?.status_str,
+                    completed: hisData?.status?.completed,
+                    outputKeys: hisData?.outputs ? Object.keys(hisData.outputs) : [],
+                    hasOutputs: !!(hisData && hisData.outputs && Object.keys(hisData.outputs).length > 0)
+                }
+            }
+        }));
+        // Only return outputs if execution is actually completed
+        if (hisData && hisData.status?.completed && hisData.outputs && Object.keys(hisData.outputs).length > 0) {
             const output = this.mapOutput(hisData.outputs);
-            if (Object.values(output).some((v) => v !== undefined)) {
+            const hasDefinedValue = Object.entries(output).some(([key, value]) => {
+                if (key === "_raw") {
+                    return value !== undefined && value !== null && Object.keys(value).length > 0;
+                }
+                return value !== undefined;
+            });
+            if (hasDefinedValue) {
+                this.client.dispatchEvent?.(new CustomEvent("log", {
+                    detail: {
+                        fnName: "CallWrapper.handleCachedOutput",
+                        message: "returning completed outputs"
+                    }
+                }));
                 this.onFinishedFn?.(output, this.promptId);
                 return output;
             }
             else {
+                this.client.dispatchEvent?.(new CustomEvent("log", {
+                    detail: {
+                        fnName: "CallWrapper.handleCachedOutput",
+                        message: "cached output missing defined values",
+                        data: {
+                            promptId,
+                            outputKeys: Object.keys(hisData.outputs ?? {}),
+                            mappedKeys: this.prompt.mapOutputKeys
+                        }
+                    }
+                }));
                 return false;
             }
+        }
+        if (hisData && !hisData.status?.completed) {
+            this.client.dispatchEvent?.(new CustomEvent("log", {
+                detail: {
+                    fnName: "CallWrapper.handleCachedOutput",
+                    message: "history not completed yet"
+                }
+            }));
+        }
+        if (!hisData) {
+            this.client.dispatchEvent?.(new CustomEvent("log", {
+                detail: {
+                    fnName: "CallWrapper.handleCachedOutput",
+                    message: "history entry not available"
+                }
+            }));
         }
         return null;
     }
@@ -361,6 +464,9 @@ export class CallWrapper {
         return output;
     }
     handleJobExecution(promptId, jobDoneTrigger) {
+        if (this.executionHandlerOffFn) {
+            return;
+        }
         const reverseOutputMapped = this.reverseMapOutputKeys();
         this.progressHandlerOffFn = this.client.on("progress", (ev) => this.handleProgress(ev, promptId));
         this.previewHandlerOffFn = this.client.on("b_preview", (ev) => this.onPreviewFn?.(ev.detail, this.promptId));
@@ -377,6 +483,18 @@ export class CallWrapper {
             if (ev.detail.prompt_id !== promptId)
                 return;
             const outputKey = reverseOutputMapped[ev.detail.node];
+            this.client.dispatchEvent?.(new CustomEvent("log", {
+                detail: {
+                    fnName: "CallWrapper.executionHandler",
+                    message: "executed event received",
+                    data: {
+                        node: ev.detail.node,
+                        outputKey,
+                        remainingBefore: remainingOutput,
+                        isTrackedOutput: !!outputKey
+                    }
+                }
+            }));
             if (outputKey) {
                 this.output[outputKey] = ev.detail.output;
                 this.onOutputFn?.(outputKey, ev.detail.output, this.promptId);
@@ -387,29 +505,55 @@ export class CallWrapper {
                 this.output._raw[ev.detail.node] = ev.detail.output;
                 this.onOutputFn?.(ev.detail.node, ev.detail.output, this.promptId);
             }
+            this.client.dispatchEvent?.(new CustomEvent("log", {
+                detail: {
+                    fnName: "CallWrapper.executionHandler",
+                    message: "after processing executed event",
+                    data: {
+                        remainingAfter: remainingOutput,
+                        willTriggerCompletion: remainingOutput === 0
+                    }
+                }
+            }));
             if (remainingOutput === 0) {
                 this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.handleJobExecution", message: "all outputs collected" } }));
-                this.cleanupListeners();
+                this.cleanupListeners("all outputs collected");
                 this.onFinishedFn?.(this.output, this.promptId);
                 jobDoneTrigger(this.output);
             }
         };
         const executedEnd = async () => {
-            if (remainingOutput !== 0) {
-                // some cached output nodes might output after executedEnd, so check history data if an output is really missing
-                const hisData = await this.client.ext.history.getHistory(promptId);
-                if (hisData?.status?.completed) {
-                    const outputCount = Object.keys(hisData.outputs).length;
-                    if (outputCount > 0 && outputCount - totalOutput === 0) {
-                        this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.executedEnd", message: "outputs equal total after history check -> ignore false end" } }));
-                        return;
-                    }
+            this.client.dispatchEvent?.(new CustomEvent("log", {
+                detail: {
+                    fnName: "CallWrapper.executedEnd",
+                    message: "execution_success fired",
+                    data: { promptId, remainingOutput, totalOutput }
                 }
-                this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.executedEnd", message: "execution failed due to missing outputs", data: { remainingOutput, totalOutput } } }));
-                this.onFailedFn?.(new ExecutionFailedError("Execution failed"), this.promptId);
-                this.cleanupListeners();
-                jobDoneTrigger(false);
+            }));
+            if (remainingOutput === 0) {
+                this.client.dispatchEvent?.(new CustomEvent("log", {
+                    detail: {
+                        fnName: "CallWrapper.executedEnd",
+                        message: "all outputs already collected, nothing to do"
+                    }
+                }));
+                return;
             }
+            const output = await this.handleCachedOutput(promptId);
+            if (output) {
+                this.cleanupListeners("executedEnd history fetch");
+                jobDoneTrigger(output);
+                return;
+            }
+            if (output === false) {
+                this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.executedEnd", message: "history returned invalid outputs" } }));
+                this.onFailedFn?.(new ExecutionFailedError("Execution failed"), this.promptId);
+                this.cleanupListeners("executedEnd invalid outputs");
+                jobDoneTrigger(false);
+                return;
+            }
+            this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.executedEnd", message: "waiting for remaining outputs" } }));
+            // Do not fail here; rely on executed events or status handler to resolve/fail later.
         };
         this.executionEndSuccessOffFn = this.client.on("execution_success", executedEnd);
         this.executionHandlerOffFn = this.client.on("executed", executionHandler);
@@ -418,7 +562,7 @@ export class CallWrapper {
             if (ev.detail.prompt_id !== promptId)
                 return;
             this.onFailedFn?.(new ExecutionInterruptedError("The execution was interrupted!", { cause: ev.detail }), ev.detail.prompt_id);
-            this.cleanupListeners();
+            this.cleanupListeners("execution interrupted");
             jobDoneTrigger(false);
         });
     }
@@ -442,20 +586,32 @@ export class CallWrapper {
             return;
         this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.handleError", message: ev.detail.exception_type, data: { prompt_id: ev.detail.prompt_id, node_id: ev.detail?.node_id } } }));
         this.onFailedFn?.(new CustomEventError(ev.detail.exception_type, { cause: ev.detail }), ev.detail.prompt_id);
-        this.cleanupListeners();
+        this.cleanupListeners("execution_error received");
         resolve(false);
     }
-    cleanupListeners() {
+    cleanupListeners(reason) {
+        const debugPayload = { reason, promptId: this.promptId };
+        this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.cleanupListeners", message: "removing listeners", data: debugPayload } }));
         this.onDisconnectedHandlerOffFn?.();
+        this.onDisconnectedHandlerOffFn = undefined;
         this.checkExecutingOffFn?.();
+        this.checkExecutingOffFn = undefined;
         this.checkExecutedOffFn?.();
+        this.checkExecutedOffFn = undefined;
         this.progressHandlerOffFn?.();
+        this.progressHandlerOffFn = undefined;
         this.previewHandlerOffFn?.();
+        this.previewHandlerOffFn = undefined;
         this.executionHandlerOffFn?.();
+        this.executionHandlerOffFn = undefined;
         this.errorHandlerOffFn?.();
+        this.errorHandlerOffFn = undefined;
         this.executionEndSuccessOffFn?.();
+        this.executionEndSuccessOffFn = undefined;
         this.interruptionHandlerOffFn?.();
+        this.interruptionHandlerOffFn = undefined;
         this.statusHandlerOffFn?.();
+        this.statusHandlerOffFn = undefined;
     }
 }
 //# sourceMappingURL=call-wrapper.js.map

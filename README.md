@@ -454,7 +454,7 @@ Changing outputs later? Re‑generate the type after adding the new `.output()` 
 
 The SDK ships two pooling layers:
 
-- **`WorkflowPool` (new, event-driven)** – Manages its own queue (pluggable adapters), emits per-job events with consistent job ids, and handles smart failover / retry without depending on the ComfyUI server queue depth. Ideal for multi-tenant services or when integrating with Redis/BullMQ/RabbitMQ backends.
+- **`WorkflowPool` (new, recommended)** – Manages its own queue (pluggable adapters), emits per-job events with consistent job ids, and handles smart failover / retry without depending on the ComfyUI server queue depth. Ideal for multi-tenant services or when integrating with Redis/BullMQ/RabbitMQ backends.
 - **`ComfyPool` (legacy)** – Weighted, in-memory scheduler that delegates most coordination to the ComfyUI queue. Useful for lightweight scripts or when you need backwards compatibility with earlier SDK versions.
 
 ### WorkflowPool Snapshot
@@ -491,7 +491,11 @@ console.log("queued", jobId);
 
 See `docs/workflow-pool.md` for full API and event reference.
 
-### ComfyPool Modes
+### Legacy Pool (`ComfyPool`)
+
+The legacy `ComfyPool` is a simpler, in-memory scheduler that relies on the server's queue depth for load balancing.
+
+#### ComfyPool Modes
 
 | Mode | Enum | Behavior | When to use |
 | ---- | ---- | -------- | ----------- |

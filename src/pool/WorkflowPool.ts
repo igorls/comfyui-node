@@ -5,7 +5,7 @@ import { Workflow } from "../workflow.js";
 import { PromptBuilder } from "../prompt-builder.js";
 import { CallWrapper } from "../call-wrapper.js";
 import { MemoryQueueAdapter } from "./queue/adapters/memory.js";
-import type { QueueAdapter, QueueReservation } from "./queue/QueueAdapter.js";
+import type { QueueAdapter, QueueReservation, QueueStats } from "./queue/QueueAdapter.js";
 import type { FailoverStrategy } from "./failover/Strategy.js";
 import { SmartFailoverStrategy } from "./failover/SmartFailoverStrategy.js";
 import { ClientManager } from "./client/ClientManager.js";
@@ -77,12 +77,23 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     const workflowJson = this.normalizeWorkflow(workflowInput);
     const workflowHash = hashWorkflow(workflowJson);
     const jobId = options?.jobId ?? this.generateJobId();
+
+    // Extract workflow metadata (outputAliases, outputNodeIds, etc.) if input is a Workflow instance
+    let workflowMeta: { outputNodeIds?: string[]; outputAliases?: Record<string, string> } | undefined;
+    if (workflowInput instanceof Workflow) {
+      workflowMeta = {
+        outputNodeIds: (workflowInput as any).outputNodeIds ?? [],
+        outputAliases: (workflowInput as any).outputAliases ?? {}
+      };
+    }
+
     const payload: WorkflowJobPayload = {
       jobId,
       workflow: workflowJson,
       workflowHash,
       attempts: 0,
       enqueuedAt: Date.now(),
+      workflowMeta,
       options: {
         maxAttempts: options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
         retryDelayMs: options?.retryDelayMs ?? DEFAULT_RETRY_DELAY,
@@ -96,6 +107,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
     const record: JobRecord = {
       ...payload,
+      attachments: options?.attachments,
       status: "queued"
     };
     this.jobStore.set(jobId, record);
@@ -140,6 +152,10 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       ctx.release({ success: false });
     }
     this.activeJobs.clear();
+  }
+
+  async getQueueStats(): Promise<QueueStats> {
+    return this.queue.stats();
   }
 
   private normalizeWorkflow(input: WorkflowInput): object {
@@ -231,16 +247,30 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       release({ success: false });
       return;
     }
-  job.status = "running";
+    job.status = "running";
     job.clientId = clientId;
     job.attempts += 1;
-  reservation.payload.attempts = job.attempts;
+    reservation.payload.attempts = job.attempts;
     job.startedAt = Date.now();
     this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
 
-  const workflowPayload = cloneDeep(reservation.payload.workflow) as Record<string, any>;
-  const autoSeeds = this.applyAutoSeed(workflowPayload);
-  let wfInstance = Workflow.from(workflowPayload);
+    const workflowPayload = cloneDeep(reservation.payload.workflow) as Record<string, any>;
+
+    if (job.attachments?.length) {
+      for (const attachment of job.attachments) {
+        const filename = attachment.filename ?? `${job.jobId}-${attachment.nodeId}-${attachment.inputName}.bin`;
+        const blob = attachment.file instanceof Buffer ? new Blob([new Uint8Array(attachment.file)]) : attachment.file;
+        await client.ext.file.uploadImage(blob, filename, { override: true });
+
+        const node = workflowPayload[attachment.nodeId];
+        if (node?.inputs) {
+          node.inputs[attachment.inputName] = filename;
+        }
+      }
+    }
+
+    const autoSeeds = this.applyAutoSeed(workflowPayload);
+    let wfInstance = Workflow.from(workflowPayload);
     if (job.options.includeOutputs?.length) {
       for (const nodeId of job.options.includeOutputs) {
         if (nodeId) {
@@ -249,15 +279,22 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       }
     }
     (wfInstance as any).inferDefaultOutputs?.();
-    const outputNodeIds: string[] = (wfInstance as any).outputNodeIds ?? [];
-    const outputAliases: Record<string, string> = (wfInstance as any).outputAliases ?? {};
+
+    // Use stored metadata if available (from Workflow instance), otherwise extract from recreated instance
+    const outputNodeIds: string[] = reservation.payload.workflowMeta?.outputNodeIds ??
+      (wfInstance as any).outputNodeIds ??
+      job.options.includeOutputs ?? [];
+    const outputAliases: Record<string, string> = reservation.payload.workflowMeta?.outputAliases ??
+      (wfInstance as any).outputAliases ?? {};
+
     let promptBuilder = new PromptBuilder<any, any, any>(
       (wfInstance as any).json,
       (wfInstance as any).inputPaths ?? [],
       outputNodeIds as any
     );
     for (const nodeId of outputNodeIds) {
-      promptBuilder = promptBuilder.setOutputNode(nodeId as any, nodeId as any);
+      const alias = outputAliases[nodeId] ?? nodeId;
+      promptBuilder = promptBuilder.setOutputNode(alias as any, nodeId as any);
     }
     const wrapper = new CallWrapper(client, promptBuilder);
 
@@ -350,10 +387,16 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       }
       job.status = "completed";
       job.lastError = undefined;
+
       const resultPayload: Record<string, unknown> = {};
       for (const nodeId of outputNodeIds) {
         const alias = outputAliases[nodeId] ?? nodeId;
-        resultPayload[alias] = (data as any)[nodeId];
+        // CallWrapper uses alias keys when mapOutputKeys is configured, fallback to nodeId
+        const nodeResult = (data as any)[alias];
+        const fallbackResult = (data as any)[nodeId];
+        const finalResult = nodeResult !== undefined ? nodeResult : fallbackResult;
+
+        resultPayload[alias] = finalResult;
       }
       resultPayload._nodes = [...outputNodeIds];
       resultPayload._aliases = { ...outputAliases };

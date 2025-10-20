@@ -5,111 +5,32 @@
 			"label": "build-typescript",
 			"type": "shell",
 			"command": "bun run build",
-			"args": [],
 			"problemMatcher": [
 				"$tsc"
 			],
 			"group": "build"
 		},
 		{
-			"label": "build-typescript",
+			"label": "build-typescript-watch",
 			"type": "shell",
-			"command": "bun run build",
-			"args": [],
+			"command": "bun run build:watch",
+			"isBackground": true,
 			"problemMatcher": [
-				"$tsc"
+				"$tsc-watch"
 			],
 			"group": "build"
 		},
 		{
-			"label": "build-typescript",
+			"label": "demo-server-watch",
 			"type": "shell",
-			"command": "bun run build",
-			"args": [],
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build",
-			"args": [],
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build",
-			"args": [],
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build",
-			"args": [],
-			"group": "build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build",
-			"args": [],
-			"group": "build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build",
-			"args": [],
-			"group": "build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build",
-			"args": [],
-			"group": "build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build",
-			"args": [],
-			"group": "build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build"
-		},
-		{
-			"label": "build-typescript",
-			"type": "shell",
-			"command": "bun run build"
+			"command": "bun run --hot ./demos/recursive-edit/server.ts",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "none",
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared"
+			}
 		}
 	]
 }

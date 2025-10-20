@@ -238,7 +238,9 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
             }
         }
         if (!this.outputNodeIds.includes(nodeId)) this.outputNodeIds.push(nodeId);
-        if (alias) this.outputAliases[nodeId] = alias;
+        if (alias) {
+            this.outputAliases[nodeId] = alias;
+        }
         return this as any; // typed refinement handled via declaration merging below
     }
 
