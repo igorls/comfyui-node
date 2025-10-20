@@ -423,9 +423,6 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
     try {
       const exec = wrapper.run();
-      exec.catch(() => {
-        /* Swallow to avoid unhandled rejection; outer flow handles via pending/completion promises. */
-      });
       await pendingPromise;
       this.activeJobs.set(job.jobId, {
         reservation,
@@ -444,7 +441,16 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
           }
         }
       });
-      await exec;
+      const result = await exec;
+      if (result === false) {
+        // Execution failed - try to get the error from completionPromise rejection
+        try {
+          await completionPromise;
+        } catch (err) {
+          throw err;
+        }
+        throw job.lastError ?? new Error("Execution failed");
+      }
       await completionPromise;
       await this.queue.commit(reservation.reservationId);
       release({ success: true });

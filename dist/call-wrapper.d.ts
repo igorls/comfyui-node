@@ -29,7 +29,6 @@ export declare class CallWrapper<I extends string, O extends string, T extends N
     private executionEndSuccessOffFn;
     private statusHandlerOffFn;
     private interruptionHandlerOffFn;
-    private missingCheckTimer?;
     /**
      * Constructs a new CallWrapper instance.
      * @param client The ComfyApi client.
@@ -119,6 +118,7 @@ export declare class CallWrapper<I extends string, O extends string, T extends N
     private reverseMapOutputKeys;
     private handleProgress;
     private handleError;
+    private emitLog;
     private cleanupListeners;
 }
 //# sourceMappingURL=call-wrapper.d.ts.map

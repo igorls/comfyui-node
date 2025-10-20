@@ -239,7 +239,7 @@ export type TComfyAPIEventMap = {
   /**
    * Log message event
    */
-  log: CustomEvent<{ msg: string; data: any }>;
+  log: CustomEvent<{ fnName: string; message: string; data?: unknown }>;
   /**
    * Terminal log entry event
    */
