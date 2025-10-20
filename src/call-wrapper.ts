@@ -48,6 +48,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
   private executionEndSuccessOffFn: any;
   private statusHandlerOffFn: any;
   private interruptionHandlerOffFn: any;
+  private missingCheckTimer?: ReturnType<typeof setTimeout>;
 
   /**
    * Constructs a new CallWrapper instance.
@@ -234,7 +235,6 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       false | Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | null
     > = Promise.resolve(null);
     let missingCheckInFlight = false;
-    let missingCheckTimer: ReturnType<typeof setTimeout> | undefined;
     const missingTimeoutMs = 60_000;
 
     const statusHandler = async () => {
@@ -267,9 +267,9 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
         for (let i = 0; i < 10; i++) {
           const output = await this.handleCachedOutput(job.prompt_id);
           if (output) {
-            if (missingCheckTimer) {
-              clearTimeout(missingCheckTimer);
-              missingCheckTimer = undefined;
+            if (this.missingCheckTimer) {
+              clearTimeout(this.missingCheckTimer);
+              this.missingCheckTimer = undefined;
             }
             cachedOutputDone = true;
             (this.client as any).dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "output from history after missing", data: { prompt_id: job.prompt_id, attempt: i + 1 } } }));
@@ -287,9 +287,9 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
 
       const elapsed = wentMissingAt ? Date.now() - wentMissingAt : missingTimeoutMs;
       if (elapsed < missingTimeoutMs) {
-        if (!missingCheckTimer) {
-          missingCheckTimer = setTimeout(() => {
-            missingCheckTimer = undefined;
+        if (!this.missingCheckTimer) {
+          this.missingCheckTimer = setTimeout(() => {
+            this.missingCheckTimer = undefined;
             if (!cachedOutputDone) {
               void statusHandler();
             }
@@ -299,9 +299,9 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
         return;
       }
 
-      if (missingCheckTimer) {
-        clearTimeout(missingCheckTimer);
-        missingCheckTimer = undefined;
+      if (this.missingCheckTimer) {
+        clearTimeout(this.missingCheckTimer);
+        this.missingCheckTimer = undefined;
       }
 
       cachedOutputDone = true;
@@ -727,5 +727,9 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     this.interruptionHandlerOffFn = undefined;
     this.statusHandlerOffFn?.();
     this.statusHandlerOffFn = undefined;
+    if (this.missingCheckTimer) {
+      clearTimeout(this.missingCheckTimer);
+      this.missingCheckTimer = undefined;
+    }
   }
 }

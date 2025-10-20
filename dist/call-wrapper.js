@@ -28,6 +28,7 @@ export class CallWrapper {
     executionEndSuccessOffFn;
     statusHandlerOffFn;
     interruptionHandlerOffFn;
+    missingCheckTimer;
     /**
      * Constructs a new CallWrapper instance.
      * @param client The ComfyApi client.
@@ -180,7 +181,6 @@ export class CallWrapper {
         let cachedOutputDone = false;
         let cachedOutputPromise = Promise.resolve(null);
         let missingCheckInFlight = false;
-        let missingCheckTimer;
         const missingTimeoutMs = 60_000;
         const statusHandler = async () => {
             if (missingCheckInFlight) {
@@ -209,9 +209,9 @@ export class CallWrapper {
                 for (let i = 0; i < 10; i++) {
                     const output = await this.handleCachedOutput(job.prompt_id);
                     if (output) {
-                        if (missingCheckTimer) {
-                            clearTimeout(missingCheckTimer);
-                            missingCheckTimer = undefined;
+                        if (this.missingCheckTimer) {
+                            clearTimeout(this.missingCheckTimer);
+                            this.missingCheckTimer = undefined;
                         }
                         cachedOutputDone = true;
                         this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "output from history after missing", data: { prompt_id: job.prompt_id, attempt: i + 1 } } }));
@@ -229,9 +229,9 @@ export class CallWrapper {
             }
             const elapsed = wentMissingAt ? Date.now() - wentMissingAt : missingTimeoutMs;
             if (elapsed < missingTimeoutMs) {
-                if (!missingCheckTimer) {
-                    missingCheckTimer = setTimeout(() => {
-                        missingCheckTimer = undefined;
+                if (!this.missingCheckTimer) {
+                    this.missingCheckTimer = setTimeout(() => {
+                        this.missingCheckTimer = undefined;
                         if (!cachedOutputDone) {
                             void statusHandler();
                         }
@@ -240,9 +240,9 @@ export class CallWrapper {
                 this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "job missing, retry scheduled", data: { prompt_id: job.prompt_id, elapsed } } }));
                 return;
             }
-            if (missingCheckTimer) {
-                clearTimeout(missingCheckTimer);
-                missingCheckTimer = undefined;
+            if (this.missingCheckTimer) {
+                clearTimeout(this.missingCheckTimer);
+                this.missingCheckTimer = undefined;
             }
             cachedOutputDone = true;
             this.client.dispatchEvent?.(new CustomEvent("log", { detail: { fnName: "CallWrapper.status", message: "job missing -> failure after retries", data: { prompt_id: job.prompt_id, elapsed } } }));
@@ -612,6 +612,10 @@ export class CallWrapper {
         this.interruptionHandlerOffFn = undefined;
         this.statusHandlerOffFn?.();
         this.statusHandlerOffFn = undefined;
+        if (this.missingCheckTimer) {
+            clearTimeout(this.missingCheckTimer);
+            this.missingCheckTimer = undefined;
+        }
     }
 }
 //# sourceMappingURL=call-wrapper.js.map
