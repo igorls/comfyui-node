@@ -23,7 +23,9 @@ export class WorkflowPool extends TypedEventTarget {
         super();
         this.strategy = opts?.failoverStrategy ?? new SmartFailoverStrategy();
         this.queue = opts?.queueAdapter ?? new MemoryQueueAdapter();
-        this.clientManager = new ClientManager(this.strategy);
+        this.clientManager = new ClientManager(this.strategy, {
+            healthCheckIntervalMs: opts?.healthCheckIntervalMs ?? 30000
+        });
         this.opts = opts ?? {};
         this.clientManager.on("client:state", (ev) => {
             this.dispatchEvent(new CustomEvent("client:state", { detail: ev.detail }));
@@ -117,6 +119,7 @@ export class WorkflowPool extends TypedEventTarget {
         return false;
     }
     async shutdown() {
+        this.clientManager.destroy();
         await this.queue.shutdown();
         for (const [, ctx] of this.activeJobs) {
             ctx.release({ success: false });

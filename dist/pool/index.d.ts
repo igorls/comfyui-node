@@ -1,4 +1,5 @@
 export { WorkflowPool } from "./WorkflowPool.js";
+export type { WorkflowPoolOpts } from "./WorkflowPool.js";
 export type { WorkflowPoolEventMap } from "./types/events.js";
 export type { JobRecord, JobStatus, WorkflowJobOptions } from "./types/job.js";
 export type { QueueAdapter, QueueReservation, QueueStats } from "./queue/QueueAdapter.js";

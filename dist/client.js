@@ -43,7 +43,7 @@ export class ComfyApi extends TypedEventTarget {
     /** Monotonic timestamp of last socket activity (used for timeout detection) */
     lastActivity = Date.now();
     /** WebSocket inactivity timeout (ms) before attempting reconnection */
-    wsTimeout = 10000;
+    wsTimeout = 60000;
     wsTimer = null;
     _pollingTimer = null;
     /** Host sans protocol (used to compose ws:// / wss:// URL) */

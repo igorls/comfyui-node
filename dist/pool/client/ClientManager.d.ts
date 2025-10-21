@@ -22,7 +22,24 @@ interface ClientLease {
 export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
     private clients;
     private strategy;
-    constructor(strategy: FailoverStrategy);
+    private healthCheckInterval;
+    private readonly healthCheckIntervalMs;
+    /**
+     * Create a new ClientManager for managing ComfyUI client connections.
+     *
+     * @param strategy - Failover strategy for handling client failures
+     * @param opts - Configuration options
+     * @param opts.healthCheckIntervalMs - Interval (ms) for health check pings to keep connections alive.
+     *   Set to 0 to disable. Default: 30000 (30 seconds).
+     */
+    constructor(strategy: FailoverStrategy, opts?: {
+        /**
+         * Interval in milliseconds for health check pings.
+         * Health checks keep idle connections alive by periodically polling client status.
+         * @default 30000 (30 seconds)
+         */
+        healthCheckIntervalMs?: number;
+    });
     private emitBlocked;
     private emitUnblocked;
     initialize(clients: ComfyApi[]): Promise<void>;
@@ -31,6 +48,24 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
     getClient(clientId: string): ManagedClient | undefined;
     claim(job: JobRecord): ClientLease | null;
     recordFailure(clientId: string, job: JobRecord, error: unknown): void;
+    /**
+     * Start periodic health check to keep connections alive and detect issues early.
+     * Pings idle clients by polling their queue status.
+     */
+    private startHealthCheck;
+    /**
+     * Perform health check on all clients.
+     * For idle clients, polls queue status to keep WebSocket alive and detect connection issues.
+     */
+    private performHealthCheck;
+    /**
+     * Stop health check interval (called during shutdown).
+     */
+    stopHealthCheck(): void;
+    /**
+     * Cleanup resources when destroying the manager.
+     */
+    destroy(): void;
 }
 export {};
 //# sourceMappingURL=ClientManager.d.ts.map
