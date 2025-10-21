@@ -1,6 +1,6 @@
 {
   "name": "comfyui-node",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "ComfyUI Node.js Client",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -62,7 +62,7 @@
   "devDependencies": {
     "@types/bun": "^1.2.23",
     "@types/jest": "^30.0.0",
-    "@types/node": "24.8.1",
+    "@types/node": "24.9.1",
     "@types/ws": "^8.18.1",
     "cross-env": "^10.1.0",
     "@istanbuljs/schema": "^0.1.3",

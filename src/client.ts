@@ -70,7 +70,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   public lastActivity: number = Date.now();
 
   /** WebSocket inactivity timeout (ms) before attempting reconnection */
-  private readonly wsTimeout: number = 10000;
+  private readonly wsTimeout: number = 60000;
   private wsTimer: NodeJS.Timeout | null = null;
   private _pollingTimer: NodeJS.Timeout | number | null = null;
 

@@ -23,10 +23,28 @@ interface ClientLease {
 export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
   private clients: ManagedClient[] = [];
   private strategy: FailoverStrategy;
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  private readonly healthCheckIntervalMs: number;
 
-  constructor(strategy: FailoverStrategy) {
+  /**
+   * Create a new ClientManager for managing ComfyUI client connections.
+   * 
+   * @param strategy - Failover strategy for handling client failures
+   * @param opts - Configuration options
+   * @param opts.healthCheckIntervalMs - Interval (ms) for health check pings to keep connections alive.
+   *   Set to 0 to disable. Default: 30000 (30 seconds).
+   */
+  constructor(strategy: FailoverStrategy, opts?: { 
+    /**
+     * Interval in milliseconds for health check pings.
+     * Health checks keep idle connections alive by periodically polling client status.
+     * @default 30000 (30 seconds)
+     */
+    healthCheckIntervalMs?: number 
+  }) {
     super();
     this.strategy = strategy;
+    this.healthCheckIntervalMs = opts?.healthCheckIntervalMs ?? 30000; // Default: 30 seconds
   }
 
   private emitBlocked(clientId: string, workflowHash: string) {
@@ -41,6 +59,7 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
     for (const client of clients) {
       await this.addClient(client);
     }
+    this.startHealthCheck();
   }
 
   async addClient(client: ComfyApi): Promise<void> {
@@ -130,5 +149,60 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
     this.dispatchEvent(new CustomEvent("client:state", {
       detail: { clientId: client.id, online: client.online, busy: client.busy, lastError: error }
     }));
+  }
+
+  /**
+   * Start periodic health check to keep connections alive and detect issues early.
+   * Pings idle clients by polling their queue status.
+   */
+  private startHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      return; // Already running
+    }
+    
+    this.healthCheckInterval = setInterval(() => {
+      this.performHealthCheck().catch((error) => {
+        console.error("[ClientManager] Health check error:", error);
+      });
+    }, this.healthCheckIntervalMs);
+  }
+
+  /**
+   * Perform health check on all clients.
+   * For idle clients, polls queue status to keep WebSocket alive and detect connection issues.
+   */
+  private async performHealthCheck(): Promise<void> {
+    for (const managed of this.clients) {
+      // Only ping idle (non-busy) clients to avoid interfering with active operations
+      if (!managed.busy && managed.online) {
+        try {
+          // Lightweight ping: poll queue status (triggers WebSocket activity)
+          await managed.client.getQueue();
+          managed.lastSeenAt = Date.now();
+        } catch (error) {
+          // Health check failed - client may have connection issues
+          console.warn(`[ClientManager] Health check failed for client ${managed.id}:`, error);
+          // Don't mark as offline here - let the WebSocket disconnect event handle that
+          // This prevents false positives from temporary network hiccups
+        }
+      }
+    }
+  }
+
+  /**
+   * Stop health check interval (called during shutdown).
+   */
+  stopHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+  }
+
+  /**
+   * Cleanup resources when destroying the manager.
+   */
+  destroy(): void {
+    this.stopHealthCheck();
   }
 }

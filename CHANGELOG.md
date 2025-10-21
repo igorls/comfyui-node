@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.4.1
+
+Fixes:
+
+* **Resolved WorkflowPool idle connection stability issue**
+  * Increased default WebSocket inactivity timeout from 10s to 60s to prevent false disconnections during normal idle periods
+  * ComfyUI servers don't send heartbeat messages when idle, causing the old 10s timeout to trigger unnecessary reconnection cycles
+  * Implemented automatic health check mechanism in `WorkflowPool` that pings idle clients every 30 seconds (configurable via `healthCheckIntervalMs` option)
+  * Health checks use lightweight `getQueue()` calls to keep WebSocket connections alive without interfering with active jobs
+  * Added proper cleanup with `ClientManager.destroy()` to stop health checks on shutdown
+  * Configuration: `new WorkflowPool(clients, { healthCheckIntervalMs: 30000 })` (default: 30s, set to 0 to disable)
+  * Test results: 120+ seconds of stable idle connection with zero disconnections, all WebSocket events (previews, progress, execution) received properly after long idle periods
+  * Backward compatible - existing code works automatically with improvements
+
+Developer Experience:
+
+* Added comprehensive test scripts for connection stability:
+  * `scripts/debug-idle-connections.ts` - Monitor connection cycles and detect reconnection patterns
+  * `scripts/debug-websocket-activity.ts` - Track WebSocket message patterns and timing
+  * `scripts/test-long-idle-then-execute.ts` - Verify connection functionality after extended idle periods
+  * `scripts/test-long-idle-txt2img.ts` - Test with actual image generation including preview events
+  * `scripts/test-health-check.ts` - Validate health check mechanism effectiveness
+* Updated documentation in `docs/websocket-idle-issue.md` with root cause analysis, solution details, and migration guide
+
 ## 1.4.0
 
 Features:

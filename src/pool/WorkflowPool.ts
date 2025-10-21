@@ -14,10 +14,70 @@ import { cloneDeep } from "./utils/clone.js";
 import type { JobRecord, WorkflowInput, WorkflowJobOptions, WorkflowJobPayload, JobId } from "./types/job.js";
 import type { WorkflowPoolEventMap } from "./types/events.js";
 
-interface WorkflowPoolOpts {
+/**
+ * Configuration options for WorkflowPool.
+ */
+export interface WorkflowPoolOpts {
+  /**
+   * Queue adapter for managing job queue operations.
+   * 
+   * @default MemoryQueueAdapter (in-memory queue)
+   * @example
+   * ```ts
+   * import { WorkflowPool, MemoryQueueAdapter } from 'comfyui-node';
+   * const pool = new WorkflowPool(clients, {
+   *   queueAdapter: new MemoryQueueAdapter()
+   * });
+   * ```
+   */
   queueAdapter?: QueueAdapter;
+  
+  /**
+   * Failover strategy for handling client failures and workflow routing.
+   * 
+   * @default SmartFailoverStrategy (exponential backoff with workflow-specific cooldowns)
+   * @example
+   * ```ts
+   * import { WorkflowPool, SmartFailoverStrategy } from 'comfyui-node';
+   * const pool = new WorkflowPool(clients, {
+   *   failoverStrategy: new SmartFailoverStrategy()
+   * });
+   * ```
+   */
   failoverStrategy?: FailoverStrategy;
+  
+  /**
+   * Base retry backoff delay in milliseconds for failed jobs.
+   * Actual delay may be adjusted by the failover strategy.
+   * 
+   * @default 1000 (1 second)
+   */
   retryBackoffMs?: number;
+  
+  /**
+   * Interval in milliseconds for health check pings to keep WebSocket connections alive.
+   * 
+   * Health checks prevent idle connection timeouts by periodically pinging inactive clients
+   * with lightweight `getQueue()` calls. This maintains stable connections when the pool
+   * has no active jobs, avoiding false disconnection alerts.
+   * 
+   * Set to `0` to disable health checks (not recommended for production).
+   * 
+   * @default 30000 (30 seconds)
+   * @example
+   * ```ts
+   * const pool = new WorkflowPool(clients, {
+   *   healthCheckIntervalMs: 30000 // ping every 30 seconds
+   * });
+   * ```
+   * @remarks
+   * - Only pings idle (non-busy) clients to avoid interference with active jobs
+   * - Recommended for long-running services or when using persistent connections
+   * - Lower values increase network traffic but detect issues faster
+   * - Higher values reduce overhead but may miss connection issues sooner
+   * @since 1.4.1
+   */
+  healthCheckIntervalMs?: number;
 }
 
 interface ActiveJobContext {
@@ -45,7 +105,9 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     super();
     this.strategy = opts?.failoverStrategy ?? new SmartFailoverStrategy();
     this.queue = opts?.queueAdapter ?? new MemoryQueueAdapter();
-    this.clientManager = new ClientManager(this.strategy);
+    this.clientManager = new ClientManager(this.strategy, {
+      healthCheckIntervalMs: opts?.healthCheckIntervalMs ?? 30000
+    });
     this.opts = opts ?? {};
     this.clientManager.on("client:state", (ev) => {
       this.dispatchEvent(new CustomEvent("client:state", { detail: ev.detail }));
@@ -147,6 +209,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
   }
 
   async shutdown(): Promise<void> {
+    this.clientManager.destroy();
     await this.queue.shutdown();
     for (const [, ctx] of this.activeJobs) {
       ctx.release({ success: false });
