@@ -15,6 +15,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
   private client: ComfyApi;
   private prompt: PromptBuilder<I, O, T>;
   private started = false;
+  private isCompletingSuccessfully = false;
   private promptId?: string;
   private output: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> = {} as any;
 
@@ -422,9 +423,16 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     this.promptId = job.prompt_id;
     this.emitLog("CallWrapper.enqueueJob", "queued", { prompt_id: this.promptId });
     this.onPendingFn?.(this.promptId);
-    this.onDisconnectedHandlerOffFn = this.client.on("disconnected", () =>
-      this.onFailedFn?.(new DisconnectedError("Disconnected"), this.promptId)
-    );
+    this.onDisconnectedHandlerOffFn = this.client.on("disconnected", () => {
+      // Ignore disconnection if we are already successfully completing
+      // This prevents a race condition where outputs are collected successfully
+      // but the WebSocket disconnects before cleanupListeners() is called
+      if (this.isCompletingSuccessfully) {
+        this.emitLog("CallWrapper.enqueueJob", "disconnected during success completion -> ignored");
+        return;
+      }
+      this.onFailedFn?.(new DisconnectedError("Disconnected"), this.promptId);
+    });
     return job;
   }
 
@@ -552,6 +560,8 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
 
       if (remainingOutput === 0) {
         this.emitLog("CallWrapper.handleJobExecution", "all outputs collected");
+        // Mark as successfully completing BEFORE cleanup to prevent race condition with disconnection handler
+        this.isCompletingSuccessfully = true;
         this.cleanupListeners("all outputs collected");
         this.onFinishedFn?.(this.output, this.promptId);
         jobDoneTrigger(this.output);

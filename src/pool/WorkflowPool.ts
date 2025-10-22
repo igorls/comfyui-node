@@ -315,7 +315,8 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     job.attempts += 1;
     reservation.payload.attempts = job.attempts;
     job.startedAt = Date.now();
-    this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
+    // Don't dispatch job:started here - wait until we have promptId in onPending
+    // this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
 
     const workflowPayload = cloneDeep(reservation.payload.workflow) as Record<string, any>;
 
@@ -386,9 +387,16 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       rejectCompletion = reject;
     });
 
+    let jobStartedDispatched = false;
+
     wrapper.onProgress((progress, promptId) => {
       if (!job.promptId && promptId) {
         job.promptId = promptId;
+      }
+      // Dispatch job:started on first progress update with promptId
+      if (!jobStartedDispatched && job.promptId) {
+        jobStartedDispatched = true;
+        this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
       }
       this.dispatchEvent(
         new CustomEvent("job:progress", {
@@ -401,6 +409,11 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       if (!job.promptId && promptId) {
         job.promptId = promptId;
       }
+      // Dispatch job:started on first preview with promptId
+      if (!jobStartedDispatched && job.promptId) {
+        jobStartedDispatched = true;
+        this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
+      }
       this.dispatchEvent(
         new CustomEvent("job:preview", {
           detail: { jobId: job.jobId, clientId, blob }
@@ -411,6 +424,11 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     wrapper.onPreviewMeta((payload, promptId) => {
       if (!job.promptId && promptId) {
         job.promptId = promptId;
+      }
+      // Dispatch job:started on first preview_meta with promptId
+      if (!jobStartedDispatched && job.promptId) {
+        jobStartedDispatched = true;
+        this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
       }
       this.dispatchEvent(
         new CustomEvent("job:preview_meta", {
@@ -434,6 +452,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       if (!job.promptId && promptId) {
         job.promptId = promptId;
       }
+      // Don't dispatch job:started here - wait for first progress/preview with promptId
       this.dispatchEvent(new CustomEvent("job:accepted", { detail: { job } }));
       resolvePending?.();
     });

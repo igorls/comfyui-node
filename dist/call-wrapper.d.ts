@@ -9,6 +9,7 @@ export declare class CallWrapper<I extends string, O extends string, T extends N
     private client;
     private prompt;
     private started;
+    private isCompletingSuccessfully;
     private promptId?;
     private output;
     private onPreviewFn?;
