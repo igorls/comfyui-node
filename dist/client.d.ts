@@ -286,6 +286,12 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
      * @returns The URL string for the model preview.
      */
     getModelPreviewUrl(folder: string, pathIndex: number, filename: string): string;
+    /**
+     * Retrieves a list of available checkpoints from the ComfyUI server.
+     * @experimental API that may change in future versions
+     * @returns A promise that resolves to an array of checkpoint filenames.
+     */
+    getCheckpoints(): Promise<string[]>;
 }
 export {};
 //# sourceMappingURL=client.d.ts.map

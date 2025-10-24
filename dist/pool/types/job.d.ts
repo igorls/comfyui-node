@@ -22,6 +22,8 @@ export interface WorkflowJobOptions {
     preferredClientIds?: string[];
     /** Optional list of client ids to exclude. */
     excludeClientIds?: string[];
+    /** Optional list of required checkpoint filenames. Only clients with these checkpoints will be considered. */
+    requiredCheckpoints?: string[];
     /** Arbitrary user metadata persisted alongside the job. */
     metadata?: Record<string, unknown>;
     /** Include node ids when collecting outputs from the workflow. */

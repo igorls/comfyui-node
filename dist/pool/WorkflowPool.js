@@ -63,6 +63,24 @@ export class WorkflowPool extends TypedEventTarget {
                 outputAliases: workflowInput.outputAliases ?? {}
             };
         }
+        // Auto-detect required checkpoints if not explicitly provided
+        let requiredCheckpoints = options?.requiredCheckpoints;
+        if (!requiredCheckpoints || requiredCheckpoints.length === 0) {
+            try {
+                if (workflowInput instanceof Workflow) {
+                    requiredCheckpoints = workflowInput.extractCheckpoints();
+                }
+                else {
+                    // Try to detect checkpoints from raw JSON
+                    const tempWf = Workflow.from(workflowJson);
+                    requiredCheckpoints = tempWf.extractCheckpoints();
+                }
+            }
+            catch (e) {
+                // Non-fatal: proceed without checkpoint filtering
+                console.warn('[WorkflowPool] Failed to extract checkpoints from workflow:', e);
+            }
+        }
         const payload = {
             jobId,
             workflow: workflowJson,
@@ -76,6 +94,7 @@ export class WorkflowPool extends TypedEventTarget {
                 priority: options?.priority ?? 0,
                 preferredClientIds: options?.preferredClientIds ?? [],
                 excludeClientIds: options?.excludeClientIds ?? [],
+                requiredCheckpoints: requiredCheckpoints ?? [],
                 metadata: options?.metadata ?? {},
                 includeOutputs: options?.includeOutputs ?? []
             }
@@ -192,7 +211,7 @@ export class WorkflowPool extends TypedEventTarget {
                     await this.queue.commit(reservation.reservationId);
                     continue;
                 }
-                const lease = this.clientManager.claim(job);
+                const lease = await this.clientManager.claimAsync(job);
                 if (!lease) {
                     await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
                     this.scheduleProcess(job.options.retryDelayMs);

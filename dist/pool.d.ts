@@ -31,6 +31,12 @@ export declare class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
     private readonly maxQueueSize;
     private poolMonitoringInterval;
     private claimTimeoutMs;
+    /** Cache of available checkpoints per client (clientId -> checkpoint names) */
+    private checkpointCache;
+    /** Timestamp of last checkpoint cache refresh per client (for cache invalidation) */
+    private checkpointCacheTime;
+    /** How long to cache checkpoint lists (default: 5 minutes) */
+    private checkpointCacheTTL;
     constructor(clients: ComfyApi[], 
     /**
      * The mode for picking clients from the queue. Defaults to "PICK_ZERO".
@@ -64,6 +70,21 @@ export declare class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
      * Ensures all connections, timers and event listeners are properly closed.
      */
     destroy(): void;
+    /**
+     * Gets the list of available checkpoints for a specific client.
+     * Uses caching to avoid repeated API calls.
+     * @param client - The ComfyApi client to query
+     * @param forceRefresh - Force a cache refresh (default: false)
+     * @returns A Set of checkpoint filenames available on this client
+     */
+    private getClientCheckpoints;
+    /**
+     * Checks if a client has the required checkpoint(s).
+     * @param client - The ComfyApi client to check
+     * @param requiredCheckpoints - Array of checkpoint filenames that must be available
+     * @returns Promise<boolean> - true if client has all required checkpoints
+     */
+    private clientHasCheckpoints;
     /**
      * Removes a client from the pool.
      *
@@ -118,6 +139,11 @@ export declare class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
          * The following clientIds will be excluded from the picking list.
          */
         excludeIds?: string[];
+        /**
+         * Optional list of required checkpoint filenames.
+         * If specified, only clients that have these checkpoints will be considered.
+         */
+        requiredCheckpoints?: string[];
     }, options?: {
         /**
          * Whether to enable automatic failover to other clients when one fails.
@@ -153,11 +179,16 @@ export declare class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
          * The following clientIds will be excluded from the picking list.
          */
         excludeIds?: string[];
+        /**
+         * Optional list of required checkpoint filenames.
+         */
+        requiredCheckpoints?: string[];
     }): Promise<T[]>;
     /** Convenience: pick a client and run a Workflow / raw workflow JSON via its api.runWorkflow */
     runWorkflow(wf: any, weight?: number, clientFilter?: {
         includeIds?: string[];
         excludeIds?: string[];
+        requiredCheckpoints?: string[];
     }, options?: {
         enableFailover?: boolean;
         maxRetries?: number;

@@ -11,6 +11,8 @@ export interface ManagedClient {
     lastError?: unknown;
     lastSeenAt: number;
     supportedWorkflows: Set<string>;
+    availableCheckpoints?: Set<string>;
+    checkpointsCachedAt?: number;
 }
 interface ClientLease {
     client: ComfyApi;
@@ -24,6 +26,7 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
     private strategy;
     private healthCheckInterval;
     private readonly healthCheckIntervalMs;
+    private readonly checkpointCacheTTL;
     /**
      * Create a new ClientManager for managing ComfyUI client connections.
      *
@@ -47,6 +50,7 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
     list(): ManagedClient[];
     getClient(clientId: string): ManagedClient | undefined;
     claim(job: JobRecord): ClientLease | null;
+    claimAsync(job: JobRecord): Promise<ClientLease | null>;
     recordFailure(clientId: string, job: JobRecord, error: unknown): void;
     /**
      * Start periodic health check to keep connections alive and detect issues early.
@@ -62,6 +66,20 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
      * Stop health check interval (called during shutdown).
      */
     stopHealthCheck(): void;
+    /**
+     * Gets available checkpoints for a specific client, with caching.
+     * @param managed - The managed client to query
+     * @param forceRefresh - Force a cache refresh (default: false)
+     * @returns Promise<Set<string>> - Set of available checkpoint filenames
+     */
+    private getClientCheckpoints;
+    /**
+     * Checks if a client has the required checkpoints.
+     * @param managed - The managed client to check
+     * @param requiredCheckpoints - Array of checkpoint filenames that must be available
+     * @returns Promise<boolean> - true if client has all required checkpoints
+     */
+    private clientHasCheckpoints;
     /**
      * Cleanup resources when destroying the manager.
      */

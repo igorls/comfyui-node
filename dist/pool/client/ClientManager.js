@@ -4,6 +4,7 @@ export class ClientManager extends TypedEventTarget {
     strategy;
     healthCheckInterval = null;
     healthCheckIntervalMs;
+    checkpointCacheTTL = 5 * 60 * 1000; // 5 minutes
     /**
      * Create a new ClientManager for managing ComfyUI client connections.
      *
@@ -95,6 +96,50 @@ export class ClientManager extends TypedEventTarget {
             }
         };
     }
+    async claimAsync(job) {
+        const candidates = this.clients.filter((c) => c.online && !c.busy);
+        const preferred = job.options.preferredClientIds?.length
+            ? candidates.filter((c) => job.options.preferredClientIds?.includes(c.id))
+            : candidates;
+        let filtered = preferred
+            .filter((client) => !job.options.excludeClientIds?.includes(client.id))
+            .filter((client) => !this.strategy.shouldSkipClient(client, job));
+        // Filter by required checkpoints if specified
+        if (job.options.requiredCheckpoints && job.options.requiredCheckpoints.length > 0) {
+            const checkpointFilteredClients = [];
+            for (const client of filtered) {
+                const hasCheckpoints = await this.clientHasCheckpoints(client, job.options.requiredCheckpoints);
+                if (hasCheckpoints) {
+                    checkpointFilteredClients.push(client);
+                }
+            }
+            filtered = checkpointFilteredClients;
+        }
+        const chosen = filtered[0];
+        if (!chosen) {
+            return null;
+        }
+        chosen.busy = true;
+        chosen.lastSeenAt = Date.now();
+        return {
+            client: chosen.client,
+            clientId: chosen.id,
+            release: (opts) => {
+                chosen.busy = false;
+                if (opts?.success) {
+                    const wasBlocked = this.strategy.isWorkflowBlocked?.(chosen, job.workflowHash) ?? false;
+                    this.strategy.recordSuccess(chosen, job);
+                    const stillBlocked = this.strategy.isWorkflowBlocked?.(chosen, job.workflowHash) ?? false;
+                    if (wasBlocked && !stillBlocked) {
+                        this.emitUnblocked(chosen.id, job.workflowHash);
+                    }
+                }
+                this.dispatchEvent(new CustomEvent("client:state", {
+                    detail: { clientId: chosen.id, online: chosen.online, busy: chosen.busy }
+                }));
+            }
+        };
+    }
     recordFailure(clientId, job, error) {
         const client = this.clients.find((c) => c.id === clientId);
         if (!client) {
@@ -156,6 +201,44 @@ export class ClientManager extends TypedEventTarget {
             clearInterval(this.healthCheckInterval);
             this.healthCheckInterval = null;
         }
+    }
+    /**
+     * Gets available checkpoints for a specific client, with caching.
+     * @param managed - The managed client to query
+     * @param forceRefresh - Force a cache refresh (default: false)
+     * @returns Promise<Set<string>> - Set of available checkpoint filenames
+     */
+    async getClientCheckpoints(managed, forceRefresh = false) {
+        const now = Date.now();
+        const cachedTime = managed.checkpointsCachedAt || 0;
+        const isCacheValid = !forceRefresh && (now - cachedTime) < this.checkpointCacheTTL;
+        if (isCacheValid && managed.availableCheckpoints) {
+            return managed.availableCheckpoints;
+        }
+        try {
+            const checkpoints = await managed.client.getCheckpoints();
+            managed.availableCheckpoints = new Set(checkpoints);
+            managed.checkpointsCachedAt = now;
+            return managed.availableCheckpoints;
+        }
+        catch (error) {
+            console.error(`[ClientManager] Failed to fetch checkpoints for client ${managed.id}:`, error);
+            // Return empty set on error (will exclude this client from checkpoint-specific jobs)
+            return new Set();
+        }
+    }
+    /**
+     * Checks if a client has the required checkpoints.
+     * @param managed - The managed client to check
+     * @param requiredCheckpoints - Array of checkpoint filenames that must be available
+     * @returns Promise<boolean> - true if client has all required checkpoints
+     */
+    async clientHasCheckpoints(managed, requiredCheckpoints) {
+        if (!requiredCheckpoints || requiredCheckpoints.length === 0) {
+            return true; // No checkpoint requirement
+        }
+        const availableCheckpoints = await this.getClientCheckpoints(managed);
+        return requiredCheckpoints.every(ckpt => availableCheckpoints.has(ckpt));
     }
     /**
      * Cleanup resources when destroying the manager.

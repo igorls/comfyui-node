@@ -1009,6 +1009,27 @@ export class ComfyApi extends TypedEventTarget {
     getModelPreviewUrl(folder, pathIndex, filename) {
         return this.apiURL(`/experiment/models/preview/${encodeURIComponent(folder)}/${pathIndex}/${encodeURIComponent(filename)}`);
     }
+    /**
+     * Retrieves a list of available checkpoints from the ComfyUI server.
+     * @experimental API that may change in future versions
+     * @returns A promise that resolves to an array of checkpoint filenames.
+     */
+    async getCheckpoints() {
+        try {
+            const response = await this.fetchApi("/experiment/models/checkpoints");
+            if (!response.ok) {
+                this.log("getCheckpoints", "Failed to fetch checkpoints", response);
+                throw new Error(`Failed to fetch checkpoints: ${response.status} ${response.statusText}`);
+            }
+            const data = await response.json();
+            // The API returns an array of ModelFile objects with a 'name' property
+            return Array.isArray(data) ? data.map((item) => item.name || item) : [];
+        }
+        catch (error) {
+            this.log("getCheckpoints", "Error fetching checkpoints", error);
+            throw error;
+        }
+    }
 }
 /**
  * Remove large / sensitive fields before logging objects to console in debug mode.

@@ -145,6 +145,13 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     run(api: ComfyApi, opts?: WorkflowRunOptions): Promise<WorkflowJob<WorkflowResult & O>>;
     /** IDE helper returning empty object typed as final result (aliases + metadata). */
     typedResult(): WorkflowResult & O;
+    /**
+     * Extracts checkpoint names from the workflow JSON.
+     * Looks for common checkpoint loader nodes (CheckpointLoaderSimple, CheckpointLoader, etc.)
+     * and returns the checkpoint filenames they reference.
+     * @returns An array of checkpoint filenames used in this workflow
+     */
+    extractCheckpoints(): string[];
 }
 export interface Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap = {}> {
     output<NodeId extends keyof T & string>(nodeId: NodeId): Workflow<T, O & Record<NodeId, NodeOutputFor<T, NodeId>>>;

@@ -13,6 +13,11 @@ interface JobItem {
    * The following clientIds will be excluded from the picking list.
    */
   excludeClientIds?: string[];
+  /**
+   * Optional list of required checkpoint filenames.
+   * If specified, only clients that have these checkpoints will be considered.
+   */
+  requiredCheckpoints?: string[];
   fn: (api: ComfyApi, clientIdx?: number) => Promise<void>;
   /**
    * Optional error handler invoked if the job cannot be started (e.g. timeout acquiring client).
@@ -57,6 +62,13 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
   private readonly maxQueueSize: number = 1000;
   private poolMonitoringInterval: ReturnType<typeof setInterval> | undefined;
   private claimTimeoutMs: number = -1;
+  
+  /** Cache of available checkpoints per client (clientId -> checkpoint names) */
+  private checkpointCache: Map<string, Set<string>> = new Map();
+  /** Timestamp of last checkpoint cache refresh per client (for cache invalidation) */
+  private checkpointCacheTime: Map<string, number> = new Map();
+  /** How long to cache checkpoint lists (default: 5 minutes) */
+  private checkpointCacheTTL: number = 5 * 60 * 1000;
 
   constructor(
     clients: ComfyApi[],
@@ -166,6 +178,10 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
     this.clients = [];
     this.clientStates = [];
 
+    // Clear checkpoint cache
+    this.checkpointCache.clear();
+    this.checkpointCacheTime.clear();
+
     // Remove all event listeners
     this.removeAllListeners();
 
@@ -173,6 +189,50 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
       clearInterval(this.poolMonitoringInterval);
       this.poolMonitoringInterval = undefined;
     }
+  }
+
+  /**
+   * Gets the list of available checkpoints for a specific client.
+   * Uses caching to avoid repeated API calls.
+   * @param client - The ComfyApi client to query
+   * @param forceRefresh - Force a cache refresh (default: false)
+   * @returns A Set of checkpoint filenames available on this client
+   */
+  private async getClientCheckpoints(client: ComfyApi, forceRefresh = false): Promise<Set<string>> {
+    const now = Date.now();
+    const cachedTime = this.checkpointCacheTime.get(client.id) || 0;
+    const isCacheValid = !forceRefresh && (now - cachedTime) < this.checkpointCacheTTL;
+    
+    if (isCacheValid && this.checkpointCache.has(client.id)) {
+      return this.checkpointCache.get(client.id)!;
+    }
+    
+    try {
+      const checkpoints = await client.getCheckpoints();
+      const checkpointSet = new Set(checkpoints);
+      this.checkpointCache.set(client.id, checkpointSet);
+      this.checkpointCacheTime.set(client.id, now);
+      return checkpointSet;
+    } catch (error) {
+      console.error(`[ComfyPool] Failed to fetch checkpoints for client ${client.id}:`, error);
+      // Return empty set on error (will exclude this client from checkpoint-specific jobs)
+      return new Set();
+    }
+  }
+
+  /**
+   * Checks if a client has the required checkpoint(s).
+   * @param client - The ComfyApi client to check
+   * @param requiredCheckpoints - Array of checkpoint filenames that must be available
+   * @returns Promise<boolean> - true if client has all required checkpoints
+   */
+  private async clientHasCheckpoints(client: ComfyApi, requiredCheckpoints: string[]): Promise<boolean> {
+    if (!requiredCheckpoints || requiredCheckpoints.length === 0) {
+      return true; // No checkpoint requirement
+    }
+    
+    const availableCheckpoints = await this.getClientCheckpoints(client);
+    return requiredCheckpoints.every(ckpt => availableCheckpoints.has(ckpt));
   }
 
   /**
@@ -254,6 +314,11 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
        * The following clientIds will be excluded from the picking list.
        */
       excludeIds?: string[];
+      /**
+       * Optional list of required checkpoint filenames.
+       * If specified, only clients that have these checkpoints will be considered.
+       */
+      requiredCheckpoints?: string[];
     },
     options?: {
       /**
@@ -324,7 +389,8 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
         try {
           await this.claim(fn, weight, {
             includeIds: clientFilter?.includeIds,
-            excludeIds: excludedIds
+            excludeIds: excludedIds,
+            requiredCheckpoints: clientFilter?.requiredCheckpoints
           }, (err) => {
             // onError from claim (e.g. timeout acquiring client)
             lastError = err;
@@ -361,14 +427,46 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
        * The following clientIds will be excluded from the picking list.
        */
       excludeIds?: string[];
+      /**
+       * Optional list of required checkpoint filenames.
+       */
+      requiredCheckpoints?: string[];
     }
   ): Promise<T[]> {
     return Promise.all(jobs.map((task) => this.run(task, weight, clientFilter)));
   }
 
   /** Convenience: pick a client and run a Workflow / raw workflow JSON via its api.runWorkflow */
-  async runWorkflow(wf: any, weight?: number, clientFilter?: { includeIds?: string[]; excludeIds?: string[] }, options?: { enableFailover?: boolean; maxRetries?: number; retryDelay?: number; includeOutputs?: string[] }) {
-    return this.run(async (api) => api.runWorkflow(wf, { includeOutputs: options?.includeOutputs }), weight, clientFilter, options);
+  async runWorkflow(wf: any, weight?: number, clientFilter?: { includeIds?: string[]; excludeIds?: string[]; requiredCheckpoints?: string[] }, options?: { enableFailover?: boolean; maxRetries?: number; retryDelay?: number; includeOutputs?: string[] }) {
+    // Auto-detect checkpoints from workflow if not explicitly provided
+    let checkpoints = clientFilter?.requiredCheckpoints;
+    if (!checkpoints || checkpoints.length === 0) {
+      try {
+        // Try to extract checkpoints from the workflow
+        const workflowObj = typeof wf === 'object' && wf.extractCheckpoints ? wf : null;
+        if (workflowObj) {
+          checkpoints = workflowObj.extractCheckpoints();
+        } else if (typeof wf === 'object') {
+          // Try to detect checkpoints from raw JSON
+          const { Workflow } = await import('./workflow.js');
+          const tempWf = Workflow.from(wf);
+          checkpoints = tempWf.extractCheckpoints();
+        }
+      } catch (e) {
+        // Non-fatal: proceed without checkpoint filtering
+        console.warn('[ComfyPool] Failed to extract checkpoints from workflow:', e);
+      }
+    }
+    
+    return this.run(
+      async (api) => api.runWorkflow(wf, { includeOutputs: options?.includeOutputs }), 
+      weight, 
+      { 
+        ...clientFilter, 
+        requiredCheckpoints: checkpoints 
+      }, 
+      options
+    );
   }
 
   private async initializeClient(client: ComfyApi, index: number) {
@@ -521,6 +619,7 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
     clientFilter?: {
       includeIds?: string[];
       excludeIds?: string[];
+      requiredCheckpoints?: string[];
     },
     onError?: (err: unknown) => void
   ): Promise<void> {
@@ -533,6 +632,7 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
       fn,
       excludeClientIds: clientFilter?.excludeIds,
       includeClientIds: clientFilter?.includeIds,
+      requiredCheckpoints: clientFilter?.requiredCheckpoints,
       onError
     });
     this.dispatchEvent(
@@ -543,16 +643,21 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
     await this.processJobQueue();
   }
 
-  private async getAvailableClient(includeIds?: string[], excludeIds?: string[], timeout = -1): Promise<ComfyApi> {
+  private async getAvailableClient(includeIds?: string[], excludeIds?: string[], requiredCheckpoints?: string[], timeout = -1): Promise<ComfyApi> {
     let tries = 1;
     const start = Date.now();
     while (true) {
       if (timeout > 0 && Date.now() - start > timeout) {
-        throw new Error("Timeout waiting for an available client");
+        const msg = requiredCheckpoints && requiredCheckpoints.length > 0
+          ? `Timeout waiting for an available client with checkpoints: ${requiredCheckpoints.join(', ')}`
+          : `Timeout waiting for an available client`;
+        throw new Error(msg);
       }
       if (tries < 100) tries++;
       let index = -1;
-      const acceptedClients = this.clientStates.filter((c) => {
+      
+      // First, filter clients by online status, include/exclude lists
+      let acceptedClients = this.clientStates.filter((c) => {
         if (!c.online) return false;
         if (includeIds && includeIds.length > 0) {
           return includeIds.includes(c.id);
@@ -562,6 +667,30 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
         }
         return true;
       });
+      
+      // If checkpoint requirements exist, further filter by checkpoint availability
+      if (requiredCheckpoints && requiredCheckpoints.length > 0) {
+        const checkpointFilteredClients = [];
+        for (const clientState of acceptedClients) {
+          const client = this.clients.find(c => c.id === clientState.id);
+          if (!client) continue;
+          
+          const hasCheckpoints = await this.clientHasCheckpoints(client, requiredCheckpoints);
+          if (hasCheckpoints) {
+            checkpointFilteredClients.push(clientState);
+          }
+        }
+        
+        if (checkpointFilteredClients.length === 0) {
+          // No clients have the required checkpoints
+          await delay(Math.min(tries * 10));
+          continue;
+        }
+        
+        acceptedClients = checkpointFilteredClients;
+      }
+      
+      // Now pick from the filtered list based on mode
       switch (this.mode) {
         case EQueueMode.PICK_ZERO:
           index = acceptedClients.findIndex((c) => c.queueRemaining === 0 && !c.locked && c.id);
@@ -596,7 +725,12 @@ export class ComfyPool extends TypedEventTarget<TComfyPoolEventMap> {
       const job = this.jobQueue.shift();
       if (!job) continue;
       try {
-        const client = await this.getAvailableClient(job.includeClientIds, job.excludeClientIds, this.claimTimeoutMs);
+        const client = await this.getAvailableClient(
+          job.includeClientIds, 
+          job.excludeClientIds, 
+          job.requiredCheckpoints,
+          this.claimTimeoutMs
+        );
         const clientIdx = this.clients.indexOf(client);
         await job.fn(client, clientIdx);
       } catch (error) {

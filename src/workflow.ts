@@ -421,6 +421,44 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
 
     /** IDE helper returning empty object typed as final result (aliases + metadata). */
     typedResult(): WorkflowResult & O { return {} as any; }
+
+    /**
+     * Extracts checkpoint names from the workflow JSON.
+     * Looks for common checkpoint loader nodes (CheckpointLoaderSimple, CheckpointLoader, etc.)
+     * and returns the checkpoint filenames they reference.
+     * @returns An array of checkpoint filenames used in this workflow
+     */
+    extractCheckpoints(): string[] {
+        const checkpoints = new Set<string>();
+        const checkpointNodeTypes = [
+            'CheckpointLoaderSimple',
+            'CheckpointLoader',
+            'CheckpointLoaderNF4',
+            'unCLIPCheckpointLoader',
+            'DualCLIPLoader'
+        ];
+        
+        try {
+            for (const [, node] of Object.entries(this.json)) {
+                const n: any = node;
+                if (!n || !n.class_type || !n.inputs) continue;
+                
+                // Check if this is a checkpoint loader node
+                if (checkpointNodeTypes.includes(n.class_type)) {
+                    // Look for checkpoint name in common input field names
+                    const ckptName = n.inputs.ckpt_name || n.inputs.checkpoint_name || n.inputs.model_name;
+                    if (ckptName && typeof ckptName === 'string') {
+                        checkpoints.add(ckptName);
+                    }
+                }
+            }
+        } catch (e) {
+            // Non-fatal: return whatever we found so far
+            console.warn('Failed to extract checkpoints from workflow:', e);
+        }
+        
+        return Array.from(checkpoints);
+    }
 }
 
 // Augment the instance method type for output() with conditional return type.
