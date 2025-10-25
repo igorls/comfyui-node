@@ -432,6 +432,8 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       ...this.getCredentialHeaders()
     };
     options.mode = "cors";
+    // Update last activity timestamp to keep WebSocket alive during HTTP requests
+    this.resetLastActivity();
     return fetch(this.apiURL(route), options);
   }
 
