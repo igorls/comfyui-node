@@ -219,14 +219,15 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
 
   /**
    * Perform health check on all clients.
-   * For idle clients, polls queue status to keep WebSocket alive and detect connection issues.
+   * Polls queue status to keep WebSocket alive and detect connection issues.
+   * IMPORTANT: Pings ALL online clients (including busy ones) to prevent WebSocket timeout during heavy load.
    */
   private async performHealthCheck(): Promise<void> {
     for (const managed of this.clients) {
-      // Only ping idle (non-busy) clients to avoid interfering with active operations
-      if (!managed.busy && managed.online) {
+      // Ping ALL online clients (not just idle ones) to keep WebSocket alive during heavy load
+      if (managed.online) {
         try {
-          // Lightweight ping: poll queue status (triggers WebSocket activity)
+          // Lightweight ping: poll queue status (triggers WebSocket activity via fetchApi)
           await managed.client.getQueue();
           managed.lastSeenAt = Date.now();
         } catch (error) {

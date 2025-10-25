@@ -59,7 +59,8 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
     private startHealthCheck;
     /**
      * Perform health check on all clients.
-     * For idle clients, polls queue status to keep WebSocket alive and detect connection issues.
+     * Polls queue status to keep WebSocket alive and detect connection issues.
+     * IMPORTANT: Pings ALL online clients (including busy ones) to prevent WebSocket timeout during heavy load.
      */
     private performHealthCheck;
     /**
