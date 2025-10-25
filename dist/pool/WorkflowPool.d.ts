@@ -86,6 +86,11 @@ export declare class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap>
     private generateJobId;
     private static fallbackId;
     private scheduleProcess;
+    /**
+     * 🎯 Coleta todos os checkpoints disponíveis nos clientes online e livres.
+     * Isso permite que a fila reserve apenas jobs que PODEM ser processados AGORA.
+     */
+    private getAvailableCheckpoints;
     private applyAutoSeed;
     private processQueue;
     private runJob;

@@ -149,8 +149,11 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
     if (job.options.requiredCheckpoints && job.options.requiredCheckpoints.length > 0) {
       const checkpointFilteredClients = [];
       for (const client of filtered) {
-        const hasCheckpoints = await this.clientHasCheckpoints(client, job.options.requiredCheckpoints);
-        if (hasCheckpoints) {
+        const clientCheckpoints = await this.getClientCheckpoints(client.id);
+        const hasAllCheckpoints = job.options.requiredCheckpoints.every(ckpt => 
+          clientCheckpoints.includes(ckpt)
+        );
+        if (hasAllCheckpoints) {
           checkpointFilteredClients.push(client);
         }
       }
@@ -252,44 +255,31 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
 
   /**
    * Gets available checkpoints for a specific client, with caching.
-   * @param managed - The managed client to query
-   * @param forceRefresh - Force a cache refresh (default: false)
-   * @returns Promise<Set<string>> - Set of available checkpoint filenames
+   * @public Exposed para uso pelo WorkflowPool
    */
-  private async getClientCheckpoints(managed: ManagedClient, forceRefresh = false): Promise<Set<string>> {
+  async getClientCheckpoints(clientId: string): Promise<string[]> {
+    const managed = this.clients.find(c => c.id === clientId);
+    if (!managed) {
+      return [];
+    }
+    
     const now = Date.now();
     const cachedTime = managed.checkpointsCachedAt || 0;
-    const isCacheValid = !forceRefresh && (now - cachedTime) < this.checkpointCacheTTL;
+    const isCacheValid = (now - cachedTime) < this.checkpointCacheTTL;
     
     if (isCacheValid && managed.availableCheckpoints) {
-      return managed.availableCheckpoints;
+      return Array.from(managed.availableCheckpoints);
     }
     
     try {
       const checkpoints = await managed.client.getCheckpoints();
       managed.availableCheckpoints = new Set(checkpoints);
       managed.checkpointsCachedAt = now;
-      return managed.availableCheckpoints;
+      return checkpoints;
     } catch (error) {
-      console.error(`[ClientManager] Failed to fetch checkpoints for client ${managed.id}:`, error);
-      // Return empty set on error (will exclude this client from checkpoint-specific jobs)
-      return new Set();
+      console.error(`[ClientManager] Failed to fetch checkpoints for client ${clientId}:`, error);
+      return [];
     }
-  }
-
-  /**
-   * Checks if a client has the required checkpoints.
-   * @param managed - The managed client to check
-   * @param requiredCheckpoints - Array of checkpoint filenames that must be available
-   * @returns Promise<boolean> - true if client has all required checkpoints
-   */
-  private async clientHasCheckpoints(managed: ManagedClient, requiredCheckpoints: string[]): Promise<boolean> {
-    if (!requiredCheckpoints || requiredCheckpoints.length === 0) {
-      return true; // No checkpoint requirement
-    }
-    
-    const availableCheckpoints = await this.getClientCheckpoints(managed);
-    return requiredCheckpoints.every(ckpt => availableCheckpoints.has(ckpt));
   }
 
   /**

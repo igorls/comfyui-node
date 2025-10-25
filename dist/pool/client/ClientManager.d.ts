@@ -69,18 +69,9 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
     stopHealthCheck(): void;
     /**
      * Gets available checkpoints for a specific client, with caching.
-     * @param managed - The managed client to query
-     * @param forceRefresh - Force a cache refresh (default: false)
-     * @returns Promise<Set<string>> - Set of available checkpoint filenames
+     * @public Exposed para uso pelo WorkflowPool
      */
-    private getClientCheckpoints;
-    /**
-     * Checks if a client has the required checkpoints.
-     * @param managed - The managed client to check
-     * @param requiredCheckpoints - Array of checkpoint filenames that must be available
-     * @returns Promise<boolean> - true if client has all required checkpoints
-     */
-    private clientHasCheckpoints;
+    getClientCheckpoints(clientId: string): Promise<string[]>;
     /**
      * Cleanup resources when destroying the manager.
      */

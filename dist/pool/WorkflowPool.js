@@ -29,6 +29,11 @@ export class WorkflowPool extends TypedEventTarget {
         this.opts = opts ?? {};
         this.clientManager.on("client:state", (ev) => {
             this.dispatchEvent(new CustomEvent("client:state", { detail: ev.detail }));
+            // 🎯 Quando um cliente ficar livre, tenta processar fila novamente
+            // Isso garante que jobs esperando por checkpoints específicos sejam processados
+            if (!ev.detail.busy && ev.detail.online) {
+                this.scheduleProcess(10); // Pequeno delay para evitar loop tight
+            }
         });
         this.clientManager.on("client:blocked_workflow", (ev) => {
             this.dispatchEvent(new CustomEvent("client:blocked_workflow", { detail: ev.detail }));
@@ -179,6 +184,30 @@ export class WorkflowPool extends TypedEventTarget {
             void this.processQueue();
         }, wait);
     }
+    /**
+     * 🎯 Coleta todos os checkpoints disponíveis nos clientes online e livres.
+     * Isso permite que a fila reserve apenas jobs que PODEM ser processados AGORA.
+     */
+    async getAvailableCheckpoints() {
+        const allCheckpoints = new Set();
+        const clients = this.clientManager.list();
+        for (const managed of clients) {
+            // Só considera clientes online e livres
+            if (!managed.online || managed.busy) {
+                continue;
+            }
+            try {
+                // Busca checkpoints do cliente (com cache)
+                const checkpoints = await this.clientManager.getClientCheckpoints(managed.id);
+                checkpoints.forEach(ckpt => allCheckpoints.add(ckpt));
+            }
+            catch (error) {
+                // Ignora erros e continua com outros clientes
+                console.warn(`[WorkflowPool] Failed to get checkpoints for client ${managed.id}:`, error);
+            }
+        }
+        return Array.from(allCheckpoints);
+    }
     applyAutoSeed(workflow) {
         const autoSeeds = {};
         for (const [nodeId, nodeValue] of Object.entries(workflow)) {
@@ -202,8 +231,18 @@ export class WorkflowPool extends TypedEventTarget {
         this.processing = true;
         try {
             while (true) {
-                const reservation = await this.queue.reserve();
+                // 🎯 Coleta checkpoints disponíveis de TODOS os clientes online e livres
+                const availableCheckpoints = await this.getAvailableCheckpoints();
+                // Se NÃO HÁ clientes disponíveis, para o loop
+                const availableClients = this.clientManager.list().filter(c => c.online && !c.busy);
+                if (availableClients.length === 0) {
+                    break;
+                }
+                // Tenta reservar o PRIMEIRO job da fila se for compatível
+                const reservation = await this.queue.reserve({ availableCheckpoints });
                 if (!reservation) {
+                    // Nenhum job disponível OU primeiro job não é compatível com nodes disponíveis
+                    // Para o loop e aguarda mudanças (cliente ficar livre, etc)
                     break;
                 }
                 const job = this.jobStore.get(reservation.payload.jobId);
@@ -213,6 +252,7 @@ export class WorkflowPool extends TypedEventTarget {
                 }
                 const lease = await this.clientManager.claimAsync(job);
                 if (!lease) {
+                    // Não deveria acontecer (já filtramos por checkpoints), mas mantemos fallback
                     await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
                     this.scheduleProcess(job.options.retryDelayMs);
                     break;

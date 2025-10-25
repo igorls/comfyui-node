@@ -18,7 +18,9 @@ export interface QueueAdapter {
         priority?: number;
         delayMs?: number;
     }): Promise<void>;
-    reserve(): Promise<QueueReservation | null>;
+    reserve(opts?: {
+        availableCheckpoints?: string[];
+    }): Promise<QueueReservation | null>;
     commit(reservationId: string): Promise<void>;
     retry(reservationId: string, opts?: {
         delayMs?: number;
