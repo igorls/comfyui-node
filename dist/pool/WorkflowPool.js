@@ -240,7 +240,7 @@ export class WorkflowPool extends TypedEventTarget {
         job.attempts += 1;
         reservation.payload.attempts = job.attempts;
         job.startedAt = Date.now();
-        // Don't dispatch job:started here - wait until we have promptId in onPending
+        // Don't dispatch job:started here - will be dispatched in onPending when we have promptId
         // this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
         const workflowPayload = cloneDeep(reservation.payload.workflow);
         if (job.attachments?.length) {

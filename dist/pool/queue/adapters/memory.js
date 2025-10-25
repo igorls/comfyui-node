@@ -26,7 +26,16 @@ export class MemoryQueueAdapter {
     }
     async reserve() {
         const now = Date.now();
-        const idx = this.waiting.findIndex((entry) => entry.availableAt <= now);
+        // 🎯 FIFO: Encontra o job com menor availableAt (mais antigo) que está pronto
+        let idx = -1;
+        let oldestAvailableAt = Infinity;
+        for (let i = 0; i < this.waiting.length; i++) {
+            const entry = this.waiting[i];
+            if (entry.availableAt <= now && entry.availableAt < oldestAvailableAt) {
+                idx = i;
+                oldestAvailableAt = entry.availableAt;
+            }
+        }
         if (idx === -1) {
             return null;
         }
