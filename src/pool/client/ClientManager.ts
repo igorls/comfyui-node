@@ -12,6 +12,8 @@ export interface ManagedClient {
   lastError?: unknown;
   lastSeenAt: number;
   supportedWorkflows: Set<string>;
+  lastDisconnectedAt?: number; // Track when client went offline
+  reconnectionStableAt?: number; // Track when reconnection is considered stable
 }
 
 interface ClientLease {
@@ -25,6 +27,13 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
   private strategy: FailoverStrategy;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly healthCheckIntervalMs: number;
+  
+  /**
+   * Grace period after reconnection before client is considered stable (default: 10 seconds).
+   * ComfyUI sometimes quickly disconnects/reconnects after job execution.
+   * During this grace period, the client won't be used for new jobs.
+   */
+  private readonly reconnectionGracePeriodMs: number = 10000;
 
   /**
    * Create a new ClientManager for managing ComfyUI client connections.
@@ -78,13 +87,25 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
       managed.online = false;
       managed.busy = false;
       managed.lastSeenAt = Date.now();
+      managed.lastDisconnectedAt = Date.now();
       this.dispatchEvent(new CustomEvent("client:state", {
         detail: { clientId: managed.id, online: false, busy: false, lastError: managed.lastError }
       }));
     });
     client.on("reconnected", () => {
+      const now = Date.now();
       managed.online = true;
-      managed.lastSeenAt = Date.now();
+      managed.lastSeenAt = now;
+      managed.reconnectionStableAt = now + this.reconnectionGracePeriodMs;
+      
+      // Log if this is a quick reconnect (within 30 seconds of disconnect)
+      if (managed.lastDisconnectedAt && (now - managed.lastDisconnectedAt) < 30000) {
+        console.warn(
+          `[ClientManager] Client ${managed.id} reconnected ${((now - managed.lastDisconnectedAt) / 1000).toFixed(1)}s after disconnect. ` +
+          `Grace period active until ${new Date(managed.reconnectionStableAt).toISOString()}`
+        );
+      }
+      
       this.dispatchEvent(new CustomEvent("client:state", {
         detail: { clientId: managed.id, online: true, busy: managed.busy }
       }));
@@ -99,8 +120,25 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
     return this.clients.find((c) => c.id === clientId);
   }
 
+  /**
+   * Checks if a client is truly available for work.
+   * A client must be online, not busy, AND past the reconnection grace period.
+   */
+  private isClientStable(client: ManagedClient): boolean {
+    if (!client.online || client.busy) {
+      return false;
+    }
+    
+    // If client recently reconnected, wait for grace period
+    if (client.reconnectionStableAt && Date.now() < client.reconnectionStableAt) {
+      return false;
+    }
+    
+    return true;
+  }
+
   claim(job: JobRecord): ClientLease | null {
-    const candidates = this.clients.filter((c) => c.online && !c.busy);
+    const candidates = this.clients.filter((c) => this.isClientStable(c));
     const preferred = job.options.preferredClientIds?.length
       ? candidates.filter((c) => job.options.preferredClientIds?.includes(c.id))
       : candidates;

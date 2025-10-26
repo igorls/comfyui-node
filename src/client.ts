@@ -1159,6 +1159,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       `/experiment/models/preview/${encodeURIComponent(folder)}/${pathIndex}/${encodeURIComponent(filename)}`
     );
   }
+
 }
 
 /**
