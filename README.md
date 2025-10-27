@@ -63,6 +63,8 @@ for (const img of (result.images?.images || [])) {
 
 - **[WorkflowPool Documentation](./docs/workflow-pool.md)** – Production-ready pooling with health checks (v1.4.1+)
 - **[Connection Stability Guide](./docs/websocket-idle-issue.md)** – WebSocket health check implementation details
+- **[Hash-Based Routing Guide](./docs/hash-routing-guide.md)** – Workflow-level failure tracking and intelligent failover (v1.4.2+)
+- **[Hash-Routing Quick Start](./docs/hash-routing-quickstart.sh)** – Running the demos
 
 ### Advanced Features
 
@@ -99,16 +101,25 @@ See [comparison guide](./docs/workflow-guide.md#choosing-workflow-vs-promptbuild
 
 ### WorkflowPool (v1.4.1+)
 
-Production-ready multi-instance scheduling with automatic health checks:
+Production-ready multi-instance scheduling with automatic health checks and intelligent hash-based routing:
 
 ```ts
-import { WorkflowPool, MemoryQueueAdapter } from "comfyui-node";
+import { WorkflowPool, MemoryQueueAdapter, SmartFailoverStrategy } from "comfyui-node";
 
 const pool = new WorkflowPool([
   new ComfyApi("http://localhost:8188"),
   new ComfyApi("http://localhost:8189")
 ], {
+  failoverStrategy: new SmartFailoverStrategy({
+    cooldownMs: 60_000,           // Block workflow for 60s after failure
+    maxFailuresBeforeBlock: 1     // Block on first failure
+  }),
   healthCheckIntervalMs: 30000  // keeps connections alive
+});
+
+// Monitor workflow blocking
+pool.on("client:blocked_workflow", ev => {
+  console.log(`${ev.detail.clientId} blocked for workflow ${ev.detail.workflowHash.slice(0, 8)}`);
 });
 
 pool.on("job:progress", ev => console.log(ev.detail.jobId, ev.detail.progress));
@@ -116,7 +127,9 @@ pool.on("job:progress", ev => console.log(ev.detail.jobId, ev.detail.progress));
 const jobId = await pool.enqueue(workflow, { priority: 10 });
 ```
 
-**New in v1.4.1:** Automatic health checks prevent idle connection timeouts. See [WorkflowPool docs](./docs/workflow-pool.md).
+**New in v1.4.2:** Hash-based routing intelligently handles failures at the workflow level (not client level). When a workflow fails on one client, the pool routes it to others while keeping that client available for different workflows.
+
+See [Hash-Based Routing Guide](./docs/hash-routing-guide.md) for details and demos.
 
 ## What's New in v1.4.1
 
