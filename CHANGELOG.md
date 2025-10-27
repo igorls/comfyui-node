@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.4.2
+
+Features:
+
+* **Hash-Based Workflow Routing with SmartFailoverStrategy**
+  * Introduced deterministic SHA-256 hashing of workflow content to enable fine-grained failure tracking and intelligent routing
+  * Failures are now tracked per (client, workflow-hash) pair instead of per-client, enabling per-workflow blocking
+  * Jobs with the same workflow content automatically route around previously failed clients during the cooldown period (default: 60 seconds, configurable)
+  * Duplicate workflows detected via hash are routed to the same server when possible, improving cache hit rates and resource efficiency
+  * SmartFailoverStrategy integrated into WorkflowPool by default – no configuration needed
+  * Configuration: `new WorkflowPool(clients, { blockDuration: 60000, maxFailuresBeforeBlock: 1 })`
+  * Multi-tenant safe: Each tenant's workflows are independently tracked and blocked, preventing cross-tenant interference
+
+Developer Experience:
+
+* Added comprehensive demo scripts showcasing hash-based routing:
+  * `scripts/pool-hash-routing-demo.ts` – Educational demo with 4 complete scenarios (normal execution, failures, blocking, recovery) using mock clients
+  * `scripts/pool-hash-routing-advanced.ts` – Integration patterns with multi-tenant routing, workflow affinity, and real server support
+  * `scripts/pool-multitenant-example.ts` – Production-ready multi-tenant service template
+  * `scripts/pool-real-demo.ts` – Intelligent server capability discovery with real workflow execution and hash-routing demonstration
+* Added comprehensive documentation:
+  * `docs/hash-routing-guide.md` – Practical configuration guide with usage patterns and best practices
+  * `docs/hash-routing-architecture.md` – System diagrams, data structures, job lifecycle flows, and performance analysis
+  * `HASH_ROUTING_INDEX.md` – Getting started guide with learning paths (5-min quickstart to production integration)
+  * `DEMO_PACKAGE.md` – Complete package overview of all resources
+  * `docs/hash-routing-quickstart.sh` – Command reference for running demos
+* Updated README with hash-routing section and documentation links
+* All demos tested with real ComfyUI servers and verified working with multi-server deployments
+
+Technical Details:
+
+* Hash algorithm: Deterministic SHA-256 of JSON-normalized workflow content (order-independent)
+* Event system: New `client:blocked_workflow` and `client:unblocked_workflow` events for monitoring
+* Blocking lifecycle: Automatic unblocking after cooldown period – self-healing with no manual intervention required
+* Performance: O(1) lookup for blocked workflows, minimal memory overhead per client
+* Backward compatible: Existing WorkflowPool code works without changes; hash routing is automatic
+
 ## 1.4.1
 
 Fixes:
