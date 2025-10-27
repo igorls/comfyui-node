@@ -68,14 +68,24 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     private bypassedNodes;
     private _pendingImageInputs;
     private _pendingFolderFiles;
-    static from<TD extends WorkflowJSON>(data: TD): Workflow<TD, {}>;
-    static from(data: string): Workflow;
-    constructor(json: T);
+    /** Structural hash of the workflow JSON for compatibility tracking in failover scenarios */
+    structureHash?: string;
+    static from<TD extends WorkflowJSON>(data: TD, opts?: {
+        autoHash?: boolean;
+    }): Workflow<TD, {}>;
+    static from(data: string, opts?: {
+        autoHash?: boolean;
+    }): Workflow;
+    constructor(json: T, opts?: {
+        autoHash?: boolean;
+    });
     /**
      * Like from(), but augments known node types (e.g., KSampler) with soft union hints
      * for inputs such as sampler_name & scheduler while still allowing arbitrary strings.
      */
-    static fromAugmented<TD extends WorkflowJSON>(data: TD): Workflow<AugmentNodes<TD>, {}>;
+    static fromAugmented<TD extends WorkflowJSON>(data: TD, opts?: {
+        autoHash?: boolean;
+    }): Workflow<AugmentNodes<TD>, {}>;
     /** Set a nested input path on a node e.g. set('9.inputs.text','hello') */
     set(path: string, value: any): this;
     /** Attach a single image buffer to a node input (e.g., LoadImage.image). Will upload on run() then set the input to the filename. */
@@ -143,6 +153,19 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     reinstate(nodes: (keyof T & string)[]): this;
     private inferDefaultOutputs;
     run(api: ComfyApi, opts?: WorkflowRunOptions): Promise<WorkflowJob<WorkflowResult & O>>;
+    /**
+     * Update the structural hash after making non-dynamic changes to the workflow.
+     * Call this if you modify the workflow structure after initialization and the autoHash was disabled,
+     * or if you want to recalculate the hash after making structural changes.
+     *
+     * Example:
+     * ```
+     * const wf = Workflow.from(data, { autoHash: false });
+     * wf.input('SAMPLER', 'ckpt_name', 'model_v1.safetensors');
+     * wf.updateHash(); // Recompute hash after structural change
+     * ```
+     */
+    updateHash(): this;
     /** IDE helper returning empty object typed as final result (aliases + metadata). */
     typedResult(): WorkflowResult & O;
 }

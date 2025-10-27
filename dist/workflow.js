@@ -1,5 +1,6 @@
 import { PromptBuilder } from './prompt-builder.js';
 import { CallWrapper } from './call-wrapper.js';
+import { hashWorkflow } from './pool/utils/hash.js';
 class TinyEmitter {
     listeners = new Map();
     on(evt, fn) {
@@ -41,27 +42,33 @@ export class Workflow {
     // Pending assets to upload before execution
     _pendingImageInputs = [];
     _pendingFolderFiles = [];
-    static from(data) {
+    /** Structural hash of the workflow JSON for compatibility tracking in failover scenarios */
+    structureHash;
+    static from(data, opts) {
         if (typeof data === 'string') {
             try {
                 const parsed = JSON.parse(data);
-                return new Workflow(parsed);
+                return new Workflow(parsed, opts);
             }
             catch (e) {
                 throw new Error('Failed to parse workflow JSON string', { cause: e });
             }
         }
-        return new Workflow(structuredClone(data));
+        return new Workflow(structuredClone(data), opts);
     }
-    constructor(json) {
+    constructor(json, opts) {
         this.json = structuredClone(json);
+        // Compute structural hash by default unless explicitly disabled
+        if (opts?.autoHash !== false) {
+            this.structureHash = hashWorkflow(this.json);
+        }
     }
     /**
      * Like from(), but augments known node types (e.g., KSampler) with soft union hints
      * for inputs such as sampler_name & scheduler while still allowing arbitrary strings.
      */
-    static fromAugmented(data) {
-        return Workflow.from(data);
+    static fromAugmented(data, opts) {
+        return Workflow.from(data, opts);
     }
     /** Set a nested input path on a node e.g. set('9.inputs.text','hello') */
     set(path, value) {
@@ -334,6 +341,22 @@ export class Workflow {
             } }, 5000);
         });
         return job;
+    }
+    /**
+     * Update the structural hash after making non-dynamic changes to the workflow.
+     * Call this if you modify the workflow structure after initialization and the autoHash was disabled,
+     * or if you want to recalculate the hash after making structural changes.
+     *
+     * Example:
+     * ```
+     * const wf = Workflow.from(data, { autoHash: false });
+     * wf.input('SAMPLER', 'ckpt_name', 'model_v1.safetensors');
+     * wf.updateHash(); // Recompute hash after structural change
+     * ```
+     */
+    updateHash() {
+        this.structureHash = hashWorkflow(this.json);
+        return this;
     }
     /** IDE helper returning empty object typed as final result (aliases + metadata). */
     typedResult() { return {}; }

@@ -2,6 +2,7 @@ import { PromptBuilder } from './prompt-builder.js';
 import { CallWrapper } from './call-wrapper.js';
 import { ComfyApi } from './client.js';
 import { ComfyPool } from './pool.js';
+import { hashWorkflow } from './pool/utils/hash.js';
 import type { AugmentNodes } from './node-type-hints.js';
 
 type WorkflowJSON = Record<string, any>;
@@ -97,32 +98,39 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
     // Pending assets to upload before execution
     private _pendingImageInputs: Array<{ nodeId: string; inputName: string; blob: Blob; fileName: string; subfolder?: string; override?: boolean }> = [];
     private _pendingFolderFiles: Array<{ subfolder: string; blob: Blob; fileName: string; override?: boolean }> = [];
+    
+    /** Structural hash of the workflow JSON for compatibility tracking in failover scenarios */
+    structureHash?: string;
 
     // Overloads to preserve literal type inference when passing an object
-    static from<TD extends WorkflowJSON>(data: TD): Workflow<TD, {}>;
-    static from(data: string): Workflow;
-    static from(data: any): Workflow<any, {}> {
+    static from<TD extends WorkflowJSON>(data: TD, opts?: { autoHash?: boolean }): Workflow<TD, {}>;
+    static from(data: string, opts?: { autoHash?: boolean }): Workflow;
+    static from(data: any, opts?: { autoHash?: boolean }): Workflow<any, {}> {
         if (typeof data === 'string') {
             try {
                 const parsed = JSON.parse(data);
-                return new Workflow(parsed);
+                return new Workflow(parsed, opts);
             } catch (e) {
                 throw new Error('Failed to parse workflow JSON string', { cause: e });
             }
         }
-        return new Workflow(structuredClone(data));
+        return new Workflow(structuredClone(data), opts);
     }
 
-    constructor(json: T) {
+    constructor(json: T, opts?: { autoHash?: boolean }) {
         this.json = structuredClone(json);
+        // Compute structural hash by default unless explicitly disabled
+        if (opts?.autoHash !== false) {
+            this.structureHash = hashWorkflow(this.json);
+        }
     }
 
     /**
      * Like from(), but augments known node types (e.g., KSampler) with soft union hints
      * for inputs such as sampler_name & scheduler while still allowing arbitrary strings.
      */
-    static fromAugmented<TD extends WorkflowJSON>(data: TD): Workflow<AugmentNodes<TD>, {}> {
-        return Workflow.from(data) as unknown as Workflow<AugmentNodes<TD>, {}>;
+    static fromAugmented<TD extends WorkflowJSON>(data: TD, opts?: { autoHash?: boolean }): Workflow<AugmentNodes<TD>, {}> {
+        return Workflow.from(data, opts) as unknown as Workflow<AugmentNodes<TD>, {}>;
     }
 
     /** Set a nested input path on a node e.g. set('9.inputs.text','hello') */
@@ -417,6 +425,23 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
             setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 5000);
         });
         return job;
+    }
+
+    /**
+     * Update the structural hash after making non-dynamic changes to the workflow.
+     * Call this if you modify the workflow structure after initialization and the autoHash was disabled,
+     * or if you want to recalculate the hash after making structural changes.
+     * 
+     * Example:
+     * ```
+     * const wf = Workflow.from(data, { autoHash: false });
+     * wf.input('SAMPLER', 'ckpt_name', 'model_v1.safetensors');
+     * wf.updateHash(); // Recompute hash after structural change
+     * ```
+     */
+    updateHash(): this {
+        this.structureHash = hashWorkflow(this.json);
+        return this;
     }
 
     /** IDE helper returning empty object typed as final result (aliases + metadata). */

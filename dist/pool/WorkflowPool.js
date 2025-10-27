@@ -53,7 +53,15 @@ export class WorkflowPool extends TypedEventTarget {
     async enqueue(workflowInput, options) {
         await this.ready();
         const workflowJson = this.normalizeWorkflow(workflowInput);
-        const workflowHash = hashWorkflow(workflowJson);
+        // Use the workflow's pre-computed structureHash if available (from Workflow instance)
+        // Otherwise compute it from the JSON
+        let workflowHash;
+        if (workflowInput instanceof Workflow) {
+            workflowHash = workflowInput.structureHash ?? hashWorkflow(workflowJson);
+        }
+        else {
+            workflowHash = hashWorkflow(workflowJson);
+        }
         const jobId = options?.jobId ?? this.generateJobId();
         // Extract workflow metadata (outputAliases, outputNodeIds, etc.) if input is a Workflow instance
         let workflowMeta;

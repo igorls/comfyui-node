@@ -11,6 +11,8 @@ export interface ManagedClient {
     lastError?: unknown;
     lastSeenAt: number;
     supportedWorkflows: Set<string>;
+    lastDisconnectedAt?: number;
+    reconnectionStableAt?: number;
 }
 interface ClientLease {
     client: ComfyApi;
@@ -24,6 +26,12 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
     private strategy;
     private healthCheckInterval;
     private readonly healthCheckIntervalMs;
+    /**
+     * Grace period after reconnection before client is considered stable (default: 10 seconds).
+     * ComfyUI sometimes quickly disconnects/reconnects after job execution.
+     * During this grace period, the client won't be used for new jobs.
+     */
+    private readonly reconnectionGracePeriodMs;
     /**
      * Create a new ClientManager for managing ComfyUI client connections.
      *
@@ -46,6 +54,11 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
     addClient(client: ComfyApi): Promise<void>;
     list(): ManagedClient[];
     getClient(clientId: string): ManagedClient | undefined;
+    /**
+     * Checks if a client is truly available for work.
+     * A client must be online, not busy, AND past the reconnection grace period.
+     */
+    private isClientStable;
     claim(job: JobRecord): ClientLease | null;
     recordFailure(clientId: string, job: JobRecord, error: unknown): void;
     /**
