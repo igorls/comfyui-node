@@ -46,7 +46,7 @@ export class SmartFailoverStrategy {
         }
     }
     resetForWorkflow(workflowHash) {
-        for (const [, map] of this.workflowFailures) {
+        for (const [, map] of Array.from(this.workflowFailures)) {
             map.delete(workflowHash);
         }
     }

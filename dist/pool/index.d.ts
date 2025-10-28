@@ -6,4 +6,5 @@ export type { QueueAdapter, QueueReservation, QueueStats } from "./queue/QueueAd
 export { MemoryQueueAdapter } from "./queue/adapters/memory.js";
 export type { FailoverStrategy } from "./failover/Strategy.js";
 export { SmartFailoverStrategy } from "./failover/SmartFailoverStrategy.js";
+export type { JobProfileStats, NodeExecutionProfile } from "./profiling/JobProfiler.js";
 //# sourceMappingURL=index.d.ts.map

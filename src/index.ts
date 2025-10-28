@@ -23,6 +23,8 @@ export type {
 	QueueAdapter,
 	QueueReservation,
 	QueueStats,
-	FailoverStrategy
+	FailoverStrategy,
+	JobProfileStats,
+	NodeExecutionProfile
 } from "./pool/index.js";
 export { seed } from "./tools.js";

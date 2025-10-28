@@ -141,7 +141,7 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
             if (cur[keys[i]] === undefined) cur[keys[i]] = {};
             cur = cur[keys[i]];
         }
-        cur[keys.at(-1)!] = value;
+        cur[keys[keys.length - 1]!] = value;
         return this;
     }
 

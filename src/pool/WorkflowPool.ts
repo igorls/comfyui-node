@@ -13,6 +13,7 @@ import { hashWorkflow } from "./utils/hash.js";
 import { cloneDeep } from "./utils/clone.js";
 import type { JobRecord, WorkflowInput, WorkflowJobOptions, WorkflowJobPayload, JobId } from "./types/job.js";
 import type { WorkflowPoolEventMap } from "./types/events.js";
+import { JobProfiler } from "./profiling/JobProfiler.js";
 
 /**
  * Configuration options for WorkflowPool.
@@ -55,6 +56,60 @@ export interface WorkflowPoolOpts {
   retryBackoffMs?: number;
   
   /**
+   * Timeout in milliseconds for execution to start after job is queued.
+   * 
+   * If a server gets stuck before emitting the `execution_start` event, the job
+   * will be failed and retried on another server after this timeout.
+   * 
+   * This prevents jobs from being lost when a server accepts a prompt but fails
+   * to begin execution (e.g., GPU hang, process crash, deadlock).
+   * 
+   * Set to `0` to disable timeout (not recommended for production).
+   * 
+   * @default 5000 (5 seconds)
+   * @example
+   * ```ts
+   * const pool = new WorkflowPool(clients, {
+   *   executionStartTimeoutMs: 10000 // 10 seconds
+   * });
+   * ```
+   * @since 1.4.4
+   */
+  executionStartTimeoutMs?: number;
+  
+  /**
+   * Timeout in milliseconds for individual node execution.
+   * 
+   * If a node takes longer than this timeout to execute (time between `executing` events),
+   * the job will be failed and retried on another server.
+   * 
+   * This is critical for:
+   * - Model loading on slow disks (can take 60+ seconds on first load)
+   * - Heavy diffusion steps on slower GPUs
+   * - VAE decode operations on large images
+   * - Custom nodes with long processing times
+   * 
+   * The timeout is per-node, not total execution time. Each node gets the full timeout duration.
+   * 
+   * Set to `0` to disable timeout (not recommended for production).
+   * 
+   * @default 300000 (5 minutes)
+   * @example
+   * ```ts
+   * const pool = new WorkflowPool(clients, {
+   *   nodeExecutionTimeoutMs: 600000 // 10 minutes for slow model loading
+   * });
+   * ```
+   * @remarks
+   * - Timeout resets when a new node starts executing
+   * - Progress events (e.g., KSampler steps) reset the timeout
+   * - First generation with model loading often needs longer timeout
+   * - Cached nodes complete instantly and don't trigger timeout
+   * @since 1.4.4
+   */
+  nodeExecutionTimeoutMs?: number;
+  
+  /**
    * Interval in milliseconds for health check pings to keep WebSocket connections alive.
    * 
    * Health checks prevent idle connection timeouts by periodically pinging inactive clients
@@ -78,6 +133,35 @@ export interface WorkflowPoolOpts {
    * @since 1.4.1
    */
   healthCheckIntervalMs?: number;
+  
+  /**
+   * Enable automatic profiling of workflow execution.
+   * 
+   * When enabled, captures detailed per-node execution metrics including:
+   * - Node execution timing (start, end, duration)
+   * - Progress events for long-running nodes
+   * - Cached vs executed nodes
+   * - Execution order and dependencies
+   * 
+   * Profile stats are attached to `JobRecord.profileStats` and included
+   * in `job:completed` event details.
+   * 
+   * @default false
+   * @example
+   * ```ts
+   * const pool = new WorkflowPool(clients, {
+   *   enableProfiling: true
+   * });
+   * 
+   * pool.on('job:completed', (event) => {
+   *   const stats = event.detail.job.profileStats;
+   *   console.log(`Total: ${stats.totalDuration}ms`);
+   *   console.log(`Slowest nodes:`, stats.summary.slowestNodes);
+   * });
+   * ```
+   * @since 1.5.0
+   */
+  enableProfiling?: boolean;
 }
 
 interface ActiveJobContext {
@@ -220,7 +304,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
   async shutdown(): Promise<void> {
     this.clientManager.destroy();
     await this.queue.shutdown();
-    for (const [, ctx] of this.activeJobs) {
+    for (const [, ctx] of Array.from(this.activeJobs)) {
       ctx.release({ success: false });
     }
     this.activeJobs.clear();
@@ -371,6 +455,138 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     }
     const wrapper = new CallWrapper(client, promptBuilder);
 
+    // Setup profiling if enabled
+    const profiler = this.opts.enableProfiling 
+      ? new JobProfiler(job.enqueuedAt, workflowPayload)
+      : undefined;
+
+    // Setup node execution timeout tracking
+    const nodeExecutionTimeout = this.opts.nodeExecutionTimeoutMs ?? 300000; // 5 minutes default
+    let nodeTimeoutId: NodeJS.Timeout | undefined;
+    let lastNodeStartTime: number | undefined;
+    let currentExecutingNode: string | null = null;
+
+    const resetNodeTimeout = (nodeName?: string) => {
+      if (nodeTimeoutId) {
+        clearTimeout(nodeTimeoutId);
+        nodeTimeoutId = undefined;
+      }
+      
+      if (nodeExecutionTimeout > 0 && nodeName !== null) {
+        lastNodeStartTime = Date.now();
+        currentExecutingNode = nodeName || null;
+        
+        nodeTimeoutId = setTimeout(() => {
+          const elapsed = Date.now() - (lastNodeStartTime || 0);
+          const nodeInfo = currentExecutingNode ? ` (node: ${currentExecutingNode})` : '';
+          rejectCompletion?.(new Error(
+            `Node execution timeout: took longer than ${nodeExecutionTimeout}ms${nodeInfo}. ` +
+            `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`
+          ));
+        }, nodeExecutionTimeout);
+      }
+    };
+
+    const clearNodeTimeout = () => {
+      if (nodeTimeoutId) {
+        clearTimeout(nodeTimeoutId);
+        nodeTimeoutId = undefined;
+      }
+      currentExecutingNode = null;
+      lastNodeStartTime = undefined;
+    };
+
+    // Setup profiling event listeners on the raw ComfyUI client
+    if (profiler) {
+      const onExecutionStart = (event: CustomEvent) => {
+        const promptId = event.detail?.prompt_id;
+        if (promptId) {
+          profiler.onExecutionStart(promptId);
+        }
+      };
+
+      const onExecutionCached = (event: CustomEvent) => {
+        const nodes = event.detail?.nodes;
+        if (Array.isArray(nodes)) {
+          profiler.onCachedNodes(nodes.map(String));
+        }
+      };
+
+      const onExecuting = (event: CustomEvent) => {
+        const node = event.detail?.node;
+        if (node === null) {
+          // Workflow completed
+          profiler.onExecutionComplete();
+        } else if (node !== undefined) {
+          profiler.onNodeExecuting(String(node));
+        }
+      };
+
+      const onExecutionError = (event: CustomEvent) => {
+        const detail = event.detail || {};
+        if (detail.node !== undefined) {
+          profiler.onNodeError(String(detail.node), detail.exception_message || 'Execution error');
+        }
+      };
+
+      // Attach listeners to client
+      client.addEventListener('execution_start', onExecutionStart as EventListener);
+      client.addEventListener('execution_cached', onExecutionCached as EventListener);
+      client.addEventListener('executing', onExecuting as EventListener);
+      client.addEventListener('execution_error', onExecutionError as EventListener);
+
+      // Cleanup function to remove listeners
+      const cleanupProfiler = () => {
+        client.removeEventListener('execution_start', onExecutionStart as EventListener);
+        client.removeEventListener('execution_cached', onExecutionCached as EventListener);
+        client.removeEventListener('executing', onExecuting as EventListener);
+        client.removeEventListener('execution_error', onExecutionError as EventListener);
+      };
+
+      // Ensure cleanup happens when job finishes
+      wrapper.onFinished(() => cleanupProfiler());
+      wrapper.onFailed(() => cleanupProfiler());
+    }
+
+    // Setup node execution timeout listeners (always active if timeout > 0)
+    const onNodeExecuting = (event: CustomEvent) => {
+      const node = event.detail?.node;
+      if (node === null) {
+        // Workflow completed - clear timeout
+        clearNodeTimeout();
+      } else if (node !== undefined) {
+        // New node started - reset timeout
+        resetNodeTimeout(String(node));
+      }
+    };
+
+    const onNodeProgress = (event: CustomEvent) => {
+      // Progress event means node is still working - reset timeout
+      if (event.detail?.node) {
+        resetNodeTimeout(String(event.detail.node));
+      }
+    };
+
+    const onExecutionStarted = (event: CustomEvent) => {
+      // Execution started - reset timeout for first node
+      resetNodeTimeout('execution_start');
+    };
+
+    if (nodeExecutionTimeout > 0) {
+      client.addEventListener('execution_start', onExecutionStarted as EventListener);
+      client.addEventListener('executing', onNodeExecuting as EventListener);
+      client.addEventListener('progress', onNodeProgress as EventListener);
+    }
+
+    const cleanupNodeTimeout = () => {
+      clearNodeTimeout();
+      if (nodeExecutionTimeout > 0) {
+        client.removeEventListener('execution_start', onExecutionStarted as EventListener);
+        client.removeEventListener('executing', onNodeExecuting as EventListener);
+        client.removeEventListener('progress', onNodeProgress as EventListener);
+      }
+    };
+
     let pendingSettled = false;
     let resolvePending: (() => void) | undefined;
     let rejectPending: ((error: unknown) => void) | undefined;
@@ -406,6 +622,10 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       if (!jobStartedDispatched && job.promptId) {
         jobStartedDispatched = true;
         this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
+      }
+      // Feed progress to profiler
+      if (profiler) {
+        profiler.onProgress(progress);
       }
       this.dispatchEvent(
         new CustomEvent("job:progress", {
@@ -499,6 +719,15 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       }
       job.result = resultPayload;
       job.completedAt = Date.now();
+      
+      // Cleanup timeouts
+      cleanupNodeTimeout();
+      
+      // Attach profiling stats if profiling was enabled
+      if (profiler) {
+        job.profileStats = profiler.getStats();
+      }
+      
       this.dispatchEvent(new CustomEvent("job:completed", { detail: { job } }));
       resolveCompletion?.();
     });
@@ -508,13 +737,40 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         job.promptId = promptId;
       }
       job.lastError = error;
+      
+      // Cleanup timeouts
+      cleanupNodeTimeout();
+      
       rejectPending?.(error);
       rejectCompletion?.(error);
     });
 
     try {
       const exec = wrapper.run();
-      await pendingPromise;
+      
+      // Add timeout for execution start to prevent jobs getting stuck
+      const executionStartTimeout = this.opts.executionStartTimeoutMs ?? 5000;
+      let pendingTimeoutId: NodeJS.Timeout | undefined;
+      
+      if (executionStartTimeout > 0) {
+        const pendingWithTimeout = Promise.race([
+          pendingPromise,
+          new Promise<never>((_, reject) => {
+            pendingTimeoutId = setTimeout(() => {
+              reject(new Error(
+                `Execution failed to start within ${executionStartTimeout}ms. ` +
+                `Server may be stuck or unresponsive.`
+              ));
+            }, executionStartTimeout);
+          })
+        ]);
+        
+        await pendingWithTimeout;
+        clearTimeout(pendingTimeoutId);
+      } else {
+        await pendingPromise;
+      }
+      
       this.activeJobs.set(job.jobId, {
         reservation,
         job,

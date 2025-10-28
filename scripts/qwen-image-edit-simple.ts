@@ -7,7 +7,7 @@
 
 import path from 'node:path';
 import { ComfyApi, Workflow } from '../src/index.ts';
-import QwenEditWorkflow from './QwenEdit2509-Nunchaku-R32-S4.json';
+import QwenEditWorkflow from './workflows/quick-edit-test.json';
 
 async function main() {
     console.log('🔧 Connecting to ComfyUI at http://localhost:10888...');
@@ -26,12 +26,10 @@ async function main() {
     console.log('✓ Loaded 3 example images\n');
 
     const wf = Workflow.fromAugmented(QwenEditWorkflow)
-        .input('1', 'value', 'A professional studio portrait with dramatic cinematic lighting and vibrant colors')
-        .input('10', 'seed', -1)
-        .attachImage('24', 'image', img1, 'img1.png', { override: true })
-        .attachImage('23', 'image', img2, 'img2.png', { override: true })
-        .attachImage('21', 'image', img3, 'img3.png', { override: true })
-        .output('final_images', '19');
+        .input('91', 'prompt', 'A professional studio portrait with dramatic cinematic lighting and vibrant colors')
+        .input('51', 'seed', -1)
+        .attachImage('97', 'image', img1, 'img1.png', { override: true })
+        .output('final_images', '207');
 
     console.log('📝 Workflow Configuration:');
     console.log('   • Prompt: "A professional studio portrait with dramatic cinematic lighting and vibrant colors"');

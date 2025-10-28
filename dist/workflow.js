@@ -79,7 +79,7 @@ export class Workflow {
                 cur[keys[i]] = {};
             cur = cur[keys[i]];
         }
-        cur[keys.at(-1)] = value;
+        cur[keys[keys.length - 1]] = value;
         return this;
     }
     /** Attach a single image buffer to a node input (e.g., LoadImage.image). Will upload on run() then set the input to the filename. */

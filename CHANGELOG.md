@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.4.4
+
+**What's New:**
+
+* **WorkflowPool Profiling** – Enable automatic per-node performance tracking
+  * Set `enableProfiling: true` to get detailed execution stats on every job
+  * Stats include node timing, progress events, cache hits, and slowest bottlenecks
+  * Access via `job.profileStats` in `job:completed` events
+  * Example: `"KSampler: 4328ms (50% of execution)"` – instantly see where time is spent
+  * Zero overhead when disabled (default)
+
+* **Timeout Protection** – Prevent jobs from hanging on stuck servers
+  * **Execution Start Timeout** (default: 5s) – Auto-retry if server hangs before starting
+  * **Node Execution Timeout** (default: 5 min) – Handle slow model loading or stuck nodes
+  * Works with SmartFailoverStrategy to automatically route jobs to healthy servers
+  * Configure: `new WorkflowPool(clients, { executionStartTimeoutMs: 5000, nodeExecutionTimeoutMs: 600000 })`
+
+**Configuration:**
+
+```typescript
+const pool = new WorkflowPool(clients, {
+  enableProfiling: true,              // Get per-node timing stats
+  executionStartTimeoutMs: 5000,      // 5s - retry if execution doesn't start
+  nodeExecutionTimeoutMs: 600000      // 10 min - for slow model loading
+});
+
+pool.on('job:completed', (event) => {
+  const stats = event.detail.job.profileStats;
+  if (stats) {
+    console.log(`Total: ${stats.totalDuration}ms`);
+    console.log('Slowest nodes:', stats.summary.slowestNodes);
+  }
+});
+```
+
+**Documentation:**
+
+* `docs/profiling.md` – Profiling guide with examples and best practices
+* `docs/execution-timeout.md` – Timeout tuning and troubleshooting
+* `scripts/demo-pool-profiling.ts` – See profiling in action
+
+**New Types:**
+
+* `JobProfileStats` – Complete execution statistics with summary and per-node breakdown
+* `NodeExecutionProfile` – Individual node metrics (duration, progress, status)
+
+**Fixes:**
+
+* Improved TypeScript compatibility (removed `Array.at()`, fixed Map iteration for ES2022)
+
 ## 1.4.3
 
 Features:

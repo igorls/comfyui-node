@@ -261,7 +261,7 @@ export class CallWrapper {
             const connections = new Map();
             const connectedInputs = [];
             // connect output nodes to matching input nodes
-            for (const [outputIdx, outputType] of def.output.entries()) {
+            for (const [outputIdx, outputType] of Array.from(def.output.entries())) {
                 for (const [inputName, inputValue] of Object.entries(workflow[nodeId].inputs)) {
                     if (connectedInputs.includes(inputName)) {
                         continue;

@@ -1,0 +1,235 @@
+{
+  "25": {
+    "inputs": {
+      "text": "",
+      "mode": "image_edit",
+      "system_prompt": "",
+      "scaling_mode": "preserve_resolution",
+      "debug_mode": false,
+      "auto_label": false,
+      "verbose_log": false,
+      "resolution_mode": "balanced",
+      "vision_target_area": 147456,
+      "vae_target_area": 1048576,
+      "hero_weight": 1,
+      "reference_weight": 0.5,
+      "max_memory_mb": 0,
+      "image_weights": "",
+      "label_format": "Picture",
+      "clip": [
+        "42",
+        0
+      ],
+      "template_output": [
+        "91",
+        0
+      ],
+      "edit_image": [
+        "206",
+        0
+      ]
+    },
+    "class_type": "QwenVLTextEncoderAdvanced",
+    "_meta": {
+      "title": "Qwen2.5-VL Text Encoder (Advanced)"
+    }
+  },
+  "38": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "42": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "51": {
+    "inputs": {
+      "seed": -1,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "70",
+        0
+      ],
+      "positive": [
+        "198",
+        0
+      ],
+      "negative": [
+        "52",
+        0
+      ],
+      "latent_image": [
+        "190",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "52": {
+    "inputs": {
+      "conditioning": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "zero"
+    }
+  },
+  "69": {
+    "inputs": {
+      "model_name": "svdq-int4_r128-qwen-image-edit-2509-lightningv2.0-4steps.safetensors",
+      "cpu_offload": "enable",
+      "vram_margin_gb": 4,
+      "num_blocks_on_gpu": 20,
+      "use_pin_memory": "enable"
+    },
+    "class_type": "NunchakuQwenImageDiTLoader",
+    "_meta": {
+      "title": "Nunchaku Qwen-Image DiT Loader"
+    }
+  },
+  "70": {
+    "inputs": {
+      "shift": 3.1,
+      "model": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "71": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "69",
+        0
+      ]
+    },
+    "class_type": "CFGNorm",
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "77": {
+    "inputs": {
+      "samples": [
+        "51",
+        0
+      ],
+      "vae": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "91": {
+    "inputs": {
+      "prompt": "Change the time to night with moonlight. Zoom out to show more of the scene. An massive alien ship is using a bright beam to abduct the woman. The spaceship is so large that it extends beyond the top edge of the image. Only the center beam and part of the hull are visible.",
+      "template_mode": "default_edit",
+      "custom_system": "Describe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate."
+    },
+    "class_type": "QwenTemplateBuilder",
+    "_meta": {
+      "title": "Qwen Template Builder"
+    }
+  },
+  "97": {
+    "inputs": {
+      "image": "storybook_panel_5 (1).png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "LOADER_1"
+    }
+  },
+  "190": {
+    "inputs": {
+      "pixels": [
+        "206",
+        0
+      ],
+      "vae": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "198": {
+    "inputs": {
+      "conditioning": [
+        "25",
+        0
+      ],
+      "latent": [
+        "190",
+        0
+      ]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "ReferenceLatent"
+    }
+  },
+  "206": {
+    "inputs": {
+      "megapixels": 1,
+      "multiple_of": 16,
+      "resize_mode": "crop",
+      "upscale_method": "lanczos",
+      "resolution": "896x1152",
+      "image": [
+        "97",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixelsX",
+    "_meta": {
+      "title": "Scale Image to Total Pixels Adv"
+    }
+  },
+  "207": {
+    "inputs": {
+      "images": [
+        "77",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "FINAL_IMAGE"
+    }
+  }
+}

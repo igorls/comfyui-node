@@ -8,6 +8,6 @@ export type { AugmentNodes, SamplerName, SchedulerName } from './node-type-hints
 export type { WorkflowResult, WorkflowResultMeta } from "./workflow.js";
 export type { TSamplerName, TSchedulerName } from "./types/sampler.js";
 export type { TComfyAPIEventMap, TComfyPoolEventMap, ComfyApiEventKey, ComfyPoolEventKey } from "./types/event.js";
-export type { WorkflowPoolEventMap, WorkflowPoolOpts, JobRecord, JobStatus, WorkflowJobOptions, QueueAdapter, QueueReservation, QueueStats, FailoverStrategy } from "./pool/index.js";
+export type { WorkflowPoolEventMap, WorkflowPoolOpts, JobRecord, JobStatus, WorkflowJobOptions, QueueAdapter, QueueReservation, QueueStats, FailoverStrategy, JobProfileStats, NodeExecutionProfile } from "./pool/index.js";
 export { seed } from "./tools.js";
 //# sourceMappingURL=index.d.ts.map

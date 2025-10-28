@@ -1,4 +1,5 @@
 import type { Workflow, WorkflowResult } from "../../workflow.js";
+import type { JobProfileStats } from "../profiling/JobProfiler.js";
 
 export type JobId = string;
 
@@ -63,4 +64,6 @@ export interface JobRecord extends WorkflowJobPayload {
   result?: WorkflowResult | Record<string, unknown>;
   startedAt?: number;
   completedAt?: number;
+  /** Execution profiling stats (only present when profiling enabled) */
+  profileStats?: JobProfileStats;
 }
