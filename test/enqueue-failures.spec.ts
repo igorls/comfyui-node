@@ -117,13 +117,11 @@ describe("Workflow.run() error handling without pool", () => {
     let caughtError: any = null;
     let didCatch = false;
     try {
-      const job = await wf.run(api as any);
+      await wf.run(api as any);
       // The run() should reject during enqueue, so we shouldn't get here
-      console.log("[TEST] Got job:", job);
     } catch (err) {
       didCatch = true;
       caughtError = err;
-      console.log("[TEST] Caught error:", err?.constructor?.name);
     }
     
     // Verify the error was properly caught
