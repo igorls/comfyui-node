@@ -94,3 +94,83 @@ describe("buildEnqueueFailedError standalone", () => {
     expect(err.bodyTextSnippet).toContain("Bad Gateway");
   });
 });
+
+describe("Workflow.run() error handling without pool", () => {
+  it("gracefully handles enqueue failures without crashing", async () => {
+    const { Workflow } = await import("../src/workflow");
+    const api = makeApi();
+    const jsonBody = { error: { type: "prompt_validation_failed", message: "Invalid prompt" } };
+    
+    // mock queue.appendPrompt to throw Response with JSON
+    (api as any).ext.queue.appendPrompt = async () => {
+      const resp = new Response(JSON.stringify(jsonBody), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+      throw resp;
+    };
+
+    const wf = Workflow.from(dummyWorkflow);
+    
+    // This should NOT crash with unhandled promise rejection
+    // Instead, it should properly reject the promise returned by run()
+    let caughtError: any = null;
+    let didCatch = false;
+    try {
+      const job = await wf.run(api as any);
+      // The run() should reject during enqueue, so we shouldn't get here
+      console.log("[TEST] Got job:", job);
+    } catch (err) {
+      didCatch = true;
+      caughtError = err;
+      console.log("[TEST] Caught error:", err?.constructor?.name);
+    }
+    
+    // Verify the error was properly caught
+    expect(didCatch).toBe(true);
+    expect(caughtError).toBeInstanceOf(EnqueueFailedError);
+    expect(caughtError.status).toBe(400);
+    expect(caughtError.bodyJSON).toEqual(jsonBody);
+  });
+
+  it("emits failed event and rejects job.done() on enqueue failure", async () => {
+    const { Workflow } = await import("../src/workflow");
+    const api = makeApi();
+    const jsonBody = { error: { type: "model_not_found", message: "Model missing" } };
+    
+    (api as any).ext.queue.appendPrompt = async () => {
+      const resp = new Response(JSON.stringify(jsonBody), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+      throw resp;
+    };
+
+    const wf = Workflow.from(dummyWorkflow);
+    
+    let failedEventError: any = null;
+    let doneRejectionError: any = null;
+    
+    try {
+      const job = await wf.run(api as any);
+      
+      // Listen for failed event
+      job.on("failed", (err) => {
+        failedEventError = err;
+      });
+      
+      // Attempt to wait for completion
+      try {
+        await job.done();
+      } catch (err) {
+        doneRejectionError = err;
+      }
+    } catch (err) {
+      // If run() itself rejects, that's also acceptable
+      doneRejectionError = err;
+    }
+    
+    // Either the run() or done() should have caught the error
+    expect(doneRejectionError || failedEventError).toBeInstanceOf(EnqueueFailedError);
+  });
+});

@@ -24,6 +24,9 @@ export class WorkflowJob {
     lastProgressPct = -1;
     constructor() {
         this.donePromise = new Promise((res, rej) => { this.doneResolve = res; this.doneReject = rej; });
+        // Prevent unhandled rejection warnings by attaching a catch handler
+        // The actual error handling happens when user calls done()
+        this.donePromise.catch(() => { });
     }
     on(evt, fn) { this.emitter.on(evt, fn); return this; }
     off(evt, fn) { this.emitter.off(evt, fn); return this; }
@@ -321,7 +324,7 @@ export class Workflow {
             opts.pool.run(exec).catch(e => job._fail(e));
         }
         else {
-            exec();
+            exec().catch(e => job._fail(e));
         }
         // Wait until the job is accepted (pending) OR failed during enqueue
         await new Promise((resolve, reject) => {

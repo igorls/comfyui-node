@@ -59,6 +59,9 @@ export class WorkflowJob<R extends WorkflowResult = WorkflowResult> {
     public lastProgressPct: number = -1;
     constructor() {
         this.donePromise = new Promise((res, rej) => { this.doneResolve = res; this.doneReject = rej; });
+        // Prevent unhandled rejection warnings by attaching a catch handler
+        // The actual error handling happens when user calls done()
+        this.donePromise.catch(() => {});
     }
     on<K extends EventKey<R>>(evt: K, fn: WorkflowJobEvents<R>[K]) { this.emitter.on(evt, fn as any); return this; }
     off<K extends EventKey<R>>(evt: K, fn: WorkflowJobEvents<R>[K]) { this.emitter.off(evt, fn as any); return this; }
@@ -414,7 +417,7 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
         if (opts.pool) {
             opts.pool.run(exec).catch(e => job._fail(e));
         } else {
-            exec();
+            exec().catch(e => job._fail(e));
         }
         // Wait until the job is accepted (pending) OR failed during enqueue
         await new Promise<void>((resolve, reject) => {
