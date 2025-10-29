@@ -15,13 +15,15 @@ import { delay } from "../src/tools.ts";
  */
 
 const DEFAULT_HOSTS = [
-  "http://localhost:8188",
+  "http://afterpic-comfy-igor:8188",
   "http://afterpic-comfy-aero16:8188",
   "http://afterpic-comfy-domi:8188"
 ];
 
 const hosts = process.env.TWO_STAGE_HOSTS
-  ? process.env.TWO_STAGE_HOSTS.split(",").map((h) => h.trim()).filter(Boolean)
+  ? process.env.TWO_STAGE_HOSTS.split(",")
+      .map((h) => h.trim())
+      .filter(Boolean)
   : DEFAULT_HOSTS;
 
 if (hosts.length === 0) {
@@ -35,11 +37,11 @@ const runtimeMs = Number.isFinite(Number(process.env.TWO_STAGE_RUNTIME_MS))
 
 let minDelayMs = Number.isFinite(Number(process.env.TWO_STAGE_MIN_DELAY_MS))
   ? Number(process.env.TWO_STAGE_MIN_DELAY_MS)
-  : 30_000; // 30 seconds
+  : 5_000; // 5 seconds
 
 let maxDelayMs = Number.isFinite(Number(process.env.TWO_STAGE_MAX_DELAY_MS))
   ? Number(process.env.TWO_STAGE_MAX_DELAY_MS)
-  : 4 * 60_000; // 4 minutes
+  : 1 * 60_000; // 4 minutes
 
 if (minDelayMs > maxDelayMs) {
   console.warn(`Swapping min/max delay: ${minDelayMs} > ${maxDelayMs}`);
@@ -121,8 +123,7 @@ function clone<T>(obj: T): T {
 
 function buildGenerationWorkflow(prompt: string, negative: string, seed: number) {
   const wf = Workflow.from(clone(GenerationGraph));
-  wf
-    .set("1.inputs.value", prompt)
+  wf.set("1.inputs.value", prompt)
     .set("2.inputs.value", negative)
     .set("10.inputs.seed", seed)
     .output("base_preview", "12");
@@ -131,11 +132,7 @@ function buildGenerationWorkflow(prompt: string, negative: string, seed: number)
 
 function buildEditWorkflow(imageName: string, editPrompt: string, seed: number) {
   const wf = Workflow.from(clone(EditGraph));
-  wf
-    .set("91.inputs.prompt", editPrompt)
-    .set("51.inputs.seed", seed)
-    .set("97.inputs.image", imageName)
-    .output("207");
+  wf.set("91.inputs.prompt", editPrompt).set("51.inputs.seed", seed).set("97.inputs.image", imageName).output("207");
   return wf;
 }
 
@@ -225,10 +222,10 @@ async function main() {
         const records = Array.isArray(preview?.images)
           ? preview.images
           : Array.isArray(preview)
-          ? preview
-          : preview
-          ? [preview]
-          : [];
+            ? preview
+            : preview
+              ? [preview]
+              : [];
         if (!records.length) {
           throw new Error("Generation workflow returned no images");
         }
@@ -314,7 +311,10 @@ async function main() {
     }
   }
 
-  log("Two-stage simulation complete", stats.map(({ client, ...rest }) => rest));
+  log(
+    "Two-stage simulation complete",
+    stats.map(({ client, ...rest }) => rest)
+  );
   const totalFailures = stats.reduce((sum, s) => sum + s.failures, 0);
   const totalDisconnects = stats.reduce((sum, s) => sum + s.disconnects, 0);
 
