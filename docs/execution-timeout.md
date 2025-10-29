@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Version**: 1.4.4  
+**Version**: 1.5.0
 **Status**: ✅ Implemented and Tested
 
 WorkflowPool now includes two layers of automatic timeout protection to prevent jobs from being lost when servers hang:
