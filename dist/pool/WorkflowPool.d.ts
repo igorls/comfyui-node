@@ -152,6 +152,7 @@ export declare class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap>
     private clientManager;
     private opts;
     private jobStore;
+    private jobFailureAnalysis;
     private initPromise;
     private processing;
     private activeJobs;
@@ -167,6 +168,12 @@ export declare class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap>
     private static fallbackId;
     private scheduleProcess;
     private applyAutoSeed;
+    private rememberJobFailure;
+    private clearJobFailures;
+    private collectFailureReasons;
+    private addPermanentExclusion;
+    private hasRetryPath;
+    private createWorkflowNotSupportedError;
     private processQueue;
     private runJob;
 }

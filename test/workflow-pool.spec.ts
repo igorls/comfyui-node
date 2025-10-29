@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { WorkflowPool } from "../src/pool/WorkflowPool";
 import { Workflow } from "../src/workflow";
+import { EnqueueFailedError, WorkflowNotSupportedError } from "../src/types/error";
 import type { WorkflowPoolEventMap } from "../src/pool/types/events";
 import type { FailoverStrategy } from "../src/pool/failover/Strategy";
 
@@ -23,6 +24,7 @@ class FakeWorkflowClient extends EventTarget {
     private queuePending: string[] = [];
     private history = new Map<string, any>();
     public interrupted: string[] = [];
+    private appendPromptHandler?: (workflow: any) => Promise<{ prompt_id: string }>;
 
     constructor(id: string) {
         super();
@@ -30,6 +32,9 @@ class FakeWorkflowClient extends EventTarget {
         this.ext = {
             queue: {
                 appendPrompt: async (workflow: any) => {
+                    if (this.appendPromptHandler) {
+                        return this.appendPromptHandler(workflow);
+                    }
                     const prompt_id = `${this.id}-prompt-${++this.promptCounter}`;
 
                     this.queuePending.push(prompt_id);
@@ -54,6 +59,10 @@ class FakeWorkflowClient extends EventTarget {
                 uploadImage: async () => { }
             }
         };
+    }
+
+    setAppendPromptHandler(handler?: (workflow: any) => Promise<{ prompt_id: string }>) {
+        this.appendPromptHandler = handler;
     }
 
     async init() {
@@ -87,6 +96,19 @@ class FakeWorkflowClient extends EventTarget {
         }
         this.dispatchEvent(new CustomEvent("execution_success", { detail: { prompt_id: promptId } }));
         this.dispatchStatus();
+    }
+
+    async completePromptSilently(promptId: string, outputs: Record<string, any>) {
+        if (!this.history.has(promptId)) {
+            throw new Error(`Unknown prompt ${promptId}`);
+        }
+        this.queuePending = this.queuePending.filter((id) => id !== promptId);
+        this.history.set(promptId, { status: { completed: true }, outputs });
+        this.dispatchStatus();
+    }
+
+    simulateDisconnect() {
+        this.dispatchEvent(new CustomEvent("disconnected"));
     }
 
     async failPrompt(promptId: string, message = "boom") {
@@ -166,50 +188,39 @@ describe("WorkflowPool", () => {
         await pool.shutdown();
     });
 
-    it("retries a job after failure and eventually succeeds", async () => {
+    it("recovers a completed job after websocket disconnect", async () => {
 
-        const client = new FakeWorkflowClient("client-retry");
-        const pool = new WorkflowPool([client as any], { retryBackoffMs: 10, failoverStrategy });
+        const client = new FakeWorkflowClient("client-disc");
+        const pool = new WorkflowPool([client as any], { failoverStrategy, retryBackoffMs: 5 });
         await pool.ready();
 
         const workflow = Workflow.from(SAMPLE_WORKFLOW).output("result", "2");
-        let attempt = 0;
+
+        let sawFailure = false;
+        pool.on("job:failed", () => {
+            sawFailure = true;
+        });
+
         pool.on("job:accepted", (ev) => {
             const promptId = ev.detail.job.promptId!;
-            attempt = ev.detail.job.attempts;
-
             setTimeout(() => {
-                if (attempt === 1) {
-                    void client.failPrompt(promptId, "first-attempt");
-                } else {
-                    void client.completePrompt(promptId, { "2": { data: { attempt } } });
-                }
+                client.simulateDisconnect();
+                setTimeout(() => {
+                    void client.completePromptSilently(promptId, { "2": { data: { recovered: true } } });
+                }, 20);
             }, 10);
         });
-        pool.on("job:failed", (ev) => {
 
-        });
-        pool.on("job:retrying", (ev) => {
-
-        });
-        pool.on("job:queued", (ev) => {
-
-        });
-
-        const retrying = waitForEvent(pool, "job:retrying");
         const completed = waitForEvent(pool, "job:completed");
+        const jobId = await pool.enqueue(workflow, { includeOutputs: ["2"] });
 
-        const jobId = await pool.enqueue(workflow, { includeOutputs: ["2"], maxAttempts: 2 });
-
-
-        await retrying;
         const { detail } = await completed;
 
-
+        expect(sawFailure).toBe(false);
         expect(detail.job.jobId).toBe(jobId);
         expect(detail.job.status).toBe("completed");
-        expect(detail.job.attempts).toBe(2);
-        expect((detail.job.result as any).result?.data?.attempt ?? (detail.job.result as any)["2"].data.attempt).toBe(2);
+        const recoveredValue = (detail.job.result as any).result?.data?.recovered ?? (detail.job.result as any)["2"].data.recovered;
+        expect(recoveredValue).toBe(true);
 
         await pool.shutdown();
     });
@@ -242,6 +253,50 @@ describe("WorkflowPool", () => {
         expect(cancelDetail.job.status).toBe("cancelled");
         expect(promptId).toBeTruthy();
         expect(client.interrupted).toContain(promptId);
+
+        await pool.shutdown();
+    });
+
+    it("emits WorkflowNotSupportedError when all clients reject the workflow", async () => {
+
+        const clientA = new FakeWorkflowClient("client-a");
+        const clientB = new FakeWorkflowClient("client-b");
+        const pool = new WorkflowPool([clientA as any, clientB as any], { failoverStrategy, retryBackoffMs: 5 });
+        await pool.ready();
+
+        const rejection = () => new EnqueueFailedError("Failed to queue prompt", {
+            bodyJSON: { error: "value_not_in_list", message: "value_not_in_list" },
+            reason: "value_not_in_list"
+        });
+
+        clientA.setAppendPromptHandler(async () => { throw rejection(); });
+        clientB.setAppendPromptHandler(async () => { throw rejection(); });
+
+        const workflow = Workflow.from(SAMPLE_WORKFLOW).output("result", "2");
+
+        const finalFailure = new Promise<WorkflowPoolEventMap["job:failed"]>((resolve) => {
+            pool.on("job:failed", (ev) => {
+                if (!ev.detail.willRetry) {
+                    resolve(ev as WorkflowPoolEventMap["job:failed"]);
+                }
+            });
+        });
+
+        const jobId = await pool.enqueue(workflow, { includeOutputs: ["2"], maxAttempts: 4 });
+
+        const { detail } = await finalFailure;
+
+        expect(detail.job.jobId).toBe(jobId);
+        expect(detail.willRetry).toBe(false);
+        expect(detail.job.status).toBe("failed");
+        expect(detail.job.attempts).toBe(2);
+        expect(new Set(detail.job.options.excludeClientIds)).toEqual(new Set(["client-a", "client-b"]));
+        expect(detail.job.lastError).toBeInstanceOf(WorkflowNotSupportedError);
+        const err = detail.job.lastError as WorkflowNotSupportedError;
+        expect(err.workflowHash).toBe(detail.job.workflowHash);
+        expect(Object.keys(err.reasons)).toEqual(expect.arrayContaining(["client-a", "client-b"]));
+        expect(err.reasons["client-a"]).toContain("value_not_in_list");
+        expect(err.reasons["client-b"]).toContain("value_not_in_list");
 
         await pool.shutdown();
     });

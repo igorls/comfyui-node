@@ -9,6 +9,8 @@ import { ClientManager } from "./client/ClientManager.js";
 import { hashWorkflow } from "./utils/hash.js";
 import { cloneDeep } from "./utils/clone.js";
 import { JobProfiler } from "./profiling/JobProfiler.js";
+import { analyzeWorkflowFailure } from "./utils/failure-analysis.js";
+import { WorkflowNotSupportedError } from "../types/error.js";
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY = 1000;
 export class WorkflowPool extends TypedEventTarget {
@@ -17,6 +19,7 @@ export class WorkflowPool extends TypedEventTarget {
     clientManager;
     opts;
     jobStore = new Map();
+    jobFailureAnalysis = new Map();
     initPromise;
     processing = false;
     activeJobs = new Map();
@@ -113,6 +116,7 @@ export class WorkflowPool extends TypedEventTarget {
             if (removed) {
                 record.status = "cancelled";
                 record.completedAt = Date.now();
+                this.clearJobFailures(jobId);
                 this.dispatchEvent(new CustomEvent("job:cancelled", { detail: { job: record } }));
                 return true;
             }
@@ -122,6 +126,7 @@ export class WorkflowPool extends TypedEventTarget {
             await active.cancel();
             record.status = "cancelled";
             record.completedAt = Date.now();
+            this.clearJobFailures(jobId);
             this.dispatchEvent(new CustomEvent("job:cancelled", { detail: { job: record } }));
             return true;
         }
@@ -184,6 +189,66 @@ export class WorkflowPool extends TypedEventTarget {
             }
         }
         return autoSeeds;
+    }
+    rememberJobFailure(job, clientId, analysis) {
+        let map = this.jobFailureAnalysis.get(job.jobId);
+        if (!map) {
+            map = new Map();
+            this.jobFailureAnalysis.set(job.jobId, map);
+        }
+        map.set(clientId, analysis);
+    }
+    clearJobFailures(jobId) {
+        this.jobFailureAnalysis.delete(jobId);
+    }
+    collectFailureReasons(jobId) {
+        const map = this.jobFailureAnalysis.get(jobId);
+        if (!map) {
+            return {};
+        }
+        const reasons = {};
+        for (const [clientId, analysis] of map.entries()) {
+            reasons[clientId] = analysis.reason;
+        }
+        return reasons;
+    }
+    addPermanentExclusion(job, clientId) {
+        if (!job.options.excludeClientIds) {
+            job.options.excludeClientIds = [];
+        }
+        if (!job.options.excludeClientIds.includes(clientId)) {
+            job.options.excludeClientIds.push(clientId);
+        }
+    }
+    hasRetryPath(job) {
+        const map = this.jobFailureAnalysis.get(job.jobId);
+        const exclude = new Set(job.options.excludeClientIds ?? []);
+        const preferred = job.options.preferredClientIds?.length
+            ? new Set(job.options.preferredClientIds)
+            : null;
+        for (const client of this.clientManager.list()) {
+            if (preferred && !preferred.has(client.id)) {
+                continue;
+            }
+            if (exclude.has(client.id)) {
+                continue;
+            }
+            const analysis = map?.get(client.id);
+            if (analysis?.blockClient === "permanent") {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+    createWorkflowNotSupportedError(job, cause) {
+        const reasons = this.collectFailureReasons(job.jobId);
+        const message = `Workflow ${job.workflowHash} is not supported by any connected clients`;
+        return new WorkflowNotSupportedError(message, {
+            workflowHash: job.workflowHash,
+            reasons,
+            cause
+        });
     }
     async processQueue() {
         if (this.processing) {
@@ -286,8 +351,9 @@ export class WorkflowPool extends TypedEventTarget {
                 nodeTimeoutId = setTimeout(() => {
                     const elapsed = Date.now() - (lastNodeStartTime || 0);
                     const nodeInfo = currentExecutingNode ? ` (node: ${currentExecutingNode})` : '';
-                    rejectCompletion?.(new Error(`Node execution timeout: took longer than ${nodeExecutionTimeout}ms${nodeInfo}. ` +
-                        `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`));
+                    completionError = new Error(`Node execution timeout: took longer than ${nodeExecutionTimeout}ms${nodeInfo}. ` +
+                        `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`);
+                    resolveCompletion?.();
                 }, nodeExecutionTimeout);
             }
         };
@@ -398,10 +464,9 @@ export class WorkflowPool extends TypedEventTarget {
             };
         });
         let resolveCompletion;
-        let rejectCompletion;
-        const completionPromise = new Promise((resolve, reject) => {
+        let completionError;
+        const completionPromise = new Promise((resolve) => {
             resolveCompletion = resolve;
-            rejectCompletion = reject;
         });
         let jobStartedDispatched = false;
         wrapper.onProgress((progress, promptId) => {
@@ -493,16 +558,19 @@ export class WorkflowPool extends TypedEventTarget {
             }
             job.result = resultPayload;
             job.completedAt = Date.now();
+            this.clearJobFailures(job.jobId);
             // Cleanup timeouts
             cleanupNodeTimeout();
             // Attach profiling stats if profiling was enabled
             if (profiler) {
                 job.profileStats = profiler.getStats();
             }
+            completionError = undefined;
             this.dispatchEvent(new CustomEvent("job:completed", { detail: { job } }));
             resolveCompletion?.();
         });
         wrapper.onFailed((error, promptId) => {
+            console.log("[debug] wrapper.onFailed", job.jobId, error.name);
             if (!job.promptId && promptId) {
                 job.promptId = promptId;
             }
@@ -510,10 +578,14 @@ export class WorkflowPool extends TypedEventTarget {
             // Cleanup timeouts
             cleanupNodeTimeout();
             rejectPending?.(error);
-            rejectCompletion?.(error);
+            completionError = error;
+            console.log("[debug] resolveCompletion available", Boolean(resolveCompletion));
+            resolveCompletion?.();
         });
         try {
             const exec = wrapper.run();
+            console.log("[debug] wrapper.run() returned", exec);
+            exec.then((value) => console.log("[debug] exec promise resolved", job.jobId, value), (err) => console.log("[debug] exec promise rejected", job.jobId, err));
             // Add timeout for execution start to prevent jobs getting stuck
             const executionStartTimeout = this.opts.executionStartTimeoutMs ?? 5000;
             let pendingTimeoutId;
@@ -540,6 +612,7 @@ export class WorkflowPool extends TypedEventTarget {
                 release,
                 cancel: async () => {
                     try {
+                        wrapper.cancel("workflow pool cancel");
                         if (job.promptId) {
                             await client.ext.queue.interrupt(job.promptId);
                         }
@@ -552,21 +625,20 @@ export class WorkflowPool extends TypedEventTarget {
                 }
             });
             const result = await exec;
+            console.log("[debug] exec result", job.jobId, result);
             if (result === false) {
-                // Execution failed - try to get the error from completionPromise rejection
-                try {
-                    await completionPromise;
-                }
-                catch (err) {
-                    throw err;
-                }
-                throw job.lastError ?? new Error("Execution failed");
+                await completionPromise;
+                const errorToThrow = (completionError instanceof Error ? completionError : undefined) ??
+                    (job.lastError instanceof Error ? job.lastError : undefined) ??
+                    new Error("Execution failed");
+                throw errorToThrow;
             }
             await completionPromise;
             await this.queue.commit(reservation.reservationId);
             release({ success: true });
         }
         catch (error) {
+            console.log("[debug] runJob catch", job.jobId, error?.name);
             const latestStatus = this.jobStore.get(job.jobId)?.status;
             if (latestStatus === "cancelled") {
                 release({ success: false });
@@ -574,9 +646,16 @@ export class WorkflowPool extends TypedEventTarget {
             }
             job.lastError = error;
             job.status = "failed";
-            this.clientManager.recordFailure(clientId, job, error);
             const remainingAttempts = job.options.maxAttempts - job.attempts;
-            const willRetry = remainingAttempts > 0;
+            const failureAnalysis = analyzeWorkflowFailure(error);
+            this.rememberJobFailure(job, clientId, failureAnalysis);
+            if (failureAnalysis.blockClient === "permanent") {
+                this.addPermanentExclusion(job, clientId);
+                reservation.payload.options.excludeClientIds = [...(job.options.excludeClientIds ?? [])];
+            }
+            this.clientManager.recordFailure(clientId, job, error);
+            const hasRetryPath = this.hasRetryPath(job);
+            const willRetry = failureAnalysis.retryable && remainingAttempts > 0 && hasRetryPath;
             this.dispatchEvent(new CustomEvent("job:failed", {
                 detail: { job, willRetry }
             }));
@@ -589,6 +668,7 @@ export class WorkflowPool extends TypedEventTarget {
                 job.startedAt = undefined;
                 job.completedAt = undefined;
                 job.result = undefined;
+                reservation.payload.options.excludeClientIds = [...(job.options.excludeClientIds ?? [])];
                 await this.queue.retry(reservation.reservationId, { delayMs: delay });
                 this.dispatchEvent(new CustomEvent("job:queued", { detail: { job } }));
                 this.scheduleProcess(delay);
@@ -596,7 +676,12 @@ export class WorkflowPool extends TypedEventTarget {
             }
             else {
                 job.completedAt = Date.now();
-                await this.queue.discard(reservation.reservationId, error);
+                const finalError = !hasRetryPath && failureAnalysis.type === "client_incompatible" && this.jobFailureAnalysis.has(job.jobId)
+                    ? this.createWorkflowNotSupportedError(job, error)
+                    : error;
+                job.lastError = finalError;
+                await this.queue.discard(reservation.reservationId, finalError);
+                this.clearJobFailures(job.jobId);
                 release({ success: false });
             }
         }

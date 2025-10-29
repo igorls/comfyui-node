@@ -3,6 +3,8 @@ import { ComfyApi } from "./client.js";
 import { PromptBuilder } from "./prompt-builder.js";
 import { TExecutionCached, TComfyAPIEventMap } from "./types/event.js";
 import { FailedCacheError, WentMissingError, EnqueueFailedError, DisconnectedError, CustomEventError, ExecutionFailedError, ExecutionInterruptedError, MissingNodeError } from "./types/error.js";
+
+const DISCONNECT_FAILURE_GRACE_MS = 5000;
 import { buildEnqueueFailedError } from "./utils/response-error.js";
 
 type LogEventDetail = TComfyAPIEventMap["log"] extends CustomEvent<infer D> ? D : never;
@@ -40,6 +42,17 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
   ) => void;
   private onFailedFn?: (err: Error, promptId?: string) => void;
   private onProgressFn?: (info: NodeProgress, promptId?: string) => void;
+
+  private jobResolveFn?: (value: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false) => void;
+  private jobDoneResolved: boolean = false;
+  private pendingCompletion: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false | null = null;
+  private cancellationRequested = false;
+  private promptLoadTrigger: ((value: boolean) => void) | null = null;
+
+  private disconnectRecoveryActive: boolean = false;
+  private disconnectFailureTimer: NodeJS.Timeout | null = null;
+  private onReconnectHandlerOffFn: (() => void) | undefined;
+  private onReconnectFailedHandlerOffFn: (() => void) | undefined;
 
   private onDisconnectedHandlerOffFn: any;
   private checkExecutingOffFn: any;
@@ -182,6 +195,11 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
      * Start the job execution.
      */
     this.emitLog("CallWrapper.run", "enqueue start");
+    this.pendingCompletion = null;
+    this.jobResolveFn = undefined;
+    this.jobDoneResolved = false;
+    this.cancellationRequested = false;
+    this.promptLoadTrigger = null;
     const job = await this.enqueueJob();
     if (!job) {
       // enqueueJob already invoked onFailed with a rich error instance; just abort.
@@ -189,15 +207,30 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       return false;
     }
 
-    let promptLoadTrigger!: (value: boolean) => void;
     const promptLoadCached: Promise<boolean> = new Promise((resolve) => {
-      promptLoadTrigger = resolve;
+      this.promptLoadTrigger = (value: boolean) => {
+        if (this.promptLoadTrigger) {
+          this.promptLoadTrigger = null;
+        }
+        resolve(value);
+      };
     });
 
-    let jobDoneTrigger!: (value: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false) => void;
     const jobDonePromise: Promise<Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false> =
       new Promise((resolve) => {
-        jobDoneTrigger = resolve;
+        this.jobDoneResolved = false;
+        this.jobResolveFn = (value) => {
+          if (this.jobDoneResolved) {
+            return;
+          }
+          this.jobDoneResolved = true;
+          resolve(value);
+        };
+        if (this.pendingCompletion !== null) {
+          const pending = this.pendingCompletion;
+          this.pendingCompletion = null;
+          this.jobResolveFn?.(pending);
+        }
       });
 
     /**
@@ -206,7 +239,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     const checkExecutingFn = (event: CustomEvent) => {
       if (event.detail && event.detail.prompt_id === job.prompt_id) {
         this.emitLog("CallWrapper.run", "executing observed", { node: event.detail.node });
-        promptLoadTrigger(false);
+        this.resolvePromptLoad(false);
       }
     };
     /**
@@ -224,7 +257,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
           nodes: event.detail.nodes,
           expected: outputNodes
         });
-        promptLoadTrigger(cached);
+        this.resolvePromptLoad(cached);
       }
     };
     /**
@@ -260,6 +293,16 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
         return;
       }
 
+      if (this.cancellationRequested) {
+        this.emitLog("CallWrapper.status", "job missing after cancellation", {
+          prompt_id: job.prompt_id
+        });
+        this.resolvePromptLoad(false);
+        this.resolveJob(false);
+        this.cleanupListeners("status handler cancellation");
+        return;
+      }
+
       wentMissing = true;
 
       const output = await this.handleCachedOutput(job.prompt_id);
@@ -268,8 +311,18 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
         this.emitLog("CallWrapper.status", "output from history after missing", {
           prompt_id: job.prompt_id
         });
-        jobDoneTrigger(output);
+        this.resolvePromptLoad(false);
+        this.resolveJob(output);
         this.cleanupListeners("status handler resolved from history");
+        return;
+      }
+
+      if (this.disconnectRecoveryActive) {
+        this.emitLog("CallWrapper.status", "job missing but disconnect recovery active -> waiting", {
+          prompt_id: job.prompt_id
+        });
+        this.resolvePromptLoad(false);
+        void this.attemptHistoryCompletion("status_missing");
         return;
       }
 
@@ -277,16 +330,16 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       this.emitLog("CallWrapper.status", "job missing without cached output", {
         prompt_id: job.prompt_id
       });
-      promptLoadTrigger(false);
-      jobDoneTrigger(false);
+      this.resolvePromptLoad(false);
+      this.resolveJob(false);
       this.cleanupListeners("status handler missing");
-      this.onFailedFn?.(new WentMissingError("The job went missing!"), job.prompt_id);
+      this.emitFailure(new WentMissingError("The job went missing!"), job.prompt_id);
     };
 
     this.statusHandlerOffFn = this.client.on("status", statusHandler as any);
 
     // Attach execution listeners immediately so fast jobs cannot finish before we subscribe
-    this.handleJobExecution(job.prompt_id, jobDoneTrigger);
+    this.handleJobExecution(job.prompt_id);
 
     await promptLoadCached;
 
@@ -300,14 +353,14 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     if (output) {
       cachedOutputDone = true;
       this.cleanupListeners("no cached output values returned");
-      jobDoneTrigger(output);
+      this.resolveJob(output);
       return output;
     }
     if (output === false) {
       cachedOutputDone = true;
       this.cleanupListeners("cached output ready before execution listeners");
-      this.onFailedFn?.(new FailedCacheError("Failed to get cached output"), this.promptId);
-      jobDoneTrigger(false);
+      this.emitFailure(new FailedCacheError("Failed to get cached output"), this.promptId);
+      this.resolveJob(false);
       return false;
     }
 
@@ -387,9 +440,12 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
         workflow = await this.bypassWorkflowNodes(workflow);
       } catch (e) {
         if (e instanceof Response) {
-          this.onFailedFn?.(new MissingNodeError("Failed to get workflow node definitions", { cause: await e.json() }));
+          this.emitFailure(
+            new MissingNodeError("Failed to get workflow node definitions", { cause: await e.json() }),
+            this.promptId
+          );
         } else {
-          this.onFailedFn?.(new MissingNodeError("There was a missing node in the workflow bypass.", { cause: e }));
+          this.emitFailure(new MissingNodeError("There was a missing node in the workflow bypass.", { cause: e }), this.promptId);
         }
         return null;
       }
@@ -401,18 +457,21 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     } catch (e: any) {
       try {
         if (e instanceof EnqueueFailedError) {
-          this.onFailedFn?.(e);
+          this.emitFailure(e, this.promptId);
         } else if (e instanceof Response) {
           const err = await buildEnqueueFailedError(e);
-          this.onFailedFn?.(err);
+          this.emitFailure(err, this.promptId);
         } else if (e && typeof e === "object" && "response" in e && e.response instanceof Response) {
           const err = await buildEnqueueFailedError(e.response);
-          this.onFailedFn?.(err);
+          this.emitFailure(err, this.promptId);
         } else {
-          this.onFailedFn?.(new EnqueueFailedError("Failed to queue prompt", { cause: e, reason: (e as Error)?.message }));
+          this.emitFailure(
+            new EnqueueFailedError("Failed to queue prompt", { cause: e, reason: (e as Error)?.message }),
+            this.promptId
+          );
         }
       } catch (inner) {
-        this.onFailedFn?.(new EnqueueFailedError("Failed to queue prompt", { cause: inner }));
+        this.emitFailure(new EnqueueFailedError("Failed to queue prompt", { cause: inner }), this.promptId);
       }
       job = null;
     }
@@ -424,16 +483,154 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     this.emitLog("CallWrapper.enqueueJob", "queued", { prompt_id: this.promptId });
     this.onPendingFn?.(this.promptId);
     this.onDisconnectedHandlerOffFn = this.client.on("disconnected", () => {
-      // Ignore disconnection if we are already successfully completing
-      // This prevents a race condition where outputs are collected successfully
-      // but the WebSocket disconnects before cleanupListeners() is called
       if (this.isCompletingSuccessfully) {
         this.emitLog("CallWrapper.enqueueJob", "disconnected during success completion -> ignored");
         return;
       }
-      this.onFailedFn?.(new DisconnectedError("Disconnected"), this.promptId);
+      this.emitLog("CallWrapper.enqueueJob", "socket disconnected -> enter recovery", { promptId: this.promptId });
+      this.startDisconnectRecovery();
+    });
+
+    this.onReconnectHandlerOffFn = this.client.on("reconnected", () => {
+      if (!this.disconnectRecoveryActive) {
+        return;
+      }
+      this.emitLog("CallWrapper.enqueueJob", "socket reconnected", { promptId: this.promptId });
+      this.stopDisconnectRecovery();
+      void this.attemptHistoryCompletion("reconnected");
+    });
+
+    this.onReconnectFailedHandlerOffFn = this.client.on("reconnection_failed" as any, () => {
+      if (!this.disconnectRecoveryActive) {
+        return;
+      }
+      this.emitLog("CallWrapper.enqueueJob", "reconnection failed", { promptId: this.promptId });
+      this.failDisconnected("reconnection_failed");
     });
     return job;
+  }
+
+  private resolvePromptLoad(value: boolean) {
+    const trigger = this.promptLoadTrigger;
+    if (!trigger) {
+      return;
+    }
+    this.promptLoadTrigger = null;
+    try {
+      trigger(value);
+    } catch (error) {
+      this.emitLog("CallWrapper.resolvePromptLoad", "prompt load trigger threw", {
+        error: error instanceof Error ? error.message : String(error),
+        promptId: this.promptId
+      } as LogEventDetail["data"]);
+    }
+  }
+
+  private resolveJob(value: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false) {
+    console.log("[debug] resolveJob", this.promptId, value, Boolean(this.jobResolveFn), this.jobDoneResolved);
+    if (this.jobResolveFn) {
+      if (this.jobDoneResolved) {
+        return;
+      }
+      this.jobDoneResolved = true;
+      this.jobResolveFn(value);
+      console.log("[debug] jobResolveFn invoked", this.promptId);
+    } else {
+      this.pendingCompletion = value;
+    }
+  }
+
+  private emitFailure(error: Error, promptId?: string) {
+    const fn = this.onFailedFn;
+    if (!fn) {
+      return;
+    }
+    const targetPromptId = promptId ?? this.promptId;
+    try {
+      console.log("[debug] emitFailure start", error.name);
+      fn(error, targetPromptId);
+      console.log("[debug] emitFailure end", error.name);
+    } catch (callbackError) {
+      this.emitLog("CallWrapper.emitFailure", "onFailed callback threw", {
+        prompt_id: targetPromptId,
+        error: callbackError instanceof Error ? callbackError.message : String(callbackError)
+      } as LogEventDetail["data"]);
+    }
+  }
+
+  cancel(reason = "cancelled") {
+    if (this.cancellationRequested) {
+      this.emitLog("CallWrapper.cancel", "cancel already requested", {
+        promptId: this.promptId,
+        reason
+      } as LogEventDetail["data"]);
+      return;
+    }
+    this.cancellationRequested = true;
+    this.emitLog("CallWrapper.cancel", "cancel requested", {
+      promptId: this.promptId,
+      reason
+    } as LogEventDetail["data"]);
+    this.resolvePromptLoad(false);
+    this.emitFailure(new ExecutionInterruptedError("The execution was interrupted!", { cause: { reason } }), this.promptId);
+    this.cleanupListeners("cancel requested");
+    this.resolveJob(false);
+  }
+
+  private startDisconnectRecovery() {
+    if (this.disconnectRecoveryActive || this.cancellationRequested) {
+      return;
+    }
+    this.disconnectRecoveryActive = true;
+    if (this.disconnectFailureTimer) {
+      clearTimeout(this.disconnectFailureTimer);
+    }
+    this.disconnectFailureTimer = setTimeout(() => this.failDisconnected("timeout"), DISCONNECT_FAILURE_GRACE_MS);
+    void this.attemptHistoryCompletion("disconnect_start");
+  }
+
+  private stopDisconnectRecovery() {
+    if (!this.disconnectRecoveryActive) {
+      return;
+    }
+    this.disconnectRecoveryActive = false;
+    if (this.disconnectFailureTimer) {
+      clearTimeout(this.disconnectFailureTimer);
+      this.disconnectFailureTimer = null;
+    }
+  }
+
+  private async attemptHistoryCompletion(reason: string): Promise<boolean> {
+    if (!this.promptId || this.cancellationRequested) {
+      return false;
+    }
+    try {
+      const output = await this.handleCachedOutput(this.promptId);
+      if (output && output !== false) {
+        this.emitLog("CallWrapper.historyRecovery", "completed from history", { reason, promptId: this.promptId });
+        this.stopDisconnectRecovery();
+        this.isCompletingSuccessfully = true;
+        this.resolvePromptLoad(false);
+        this.resolveJob(output);
+        this.cleanupListeners(`history recovery (${reason})`);
+        return true;
+      }
+    } catch (error) {
+      this.emitLog("CallWrapper.historyRecovery", "history fetch failed", { reason, error: String(error) });
+    }
+    return false;
+  }
+
+  private failDisconnected(reason: string) {
+    if (!this.disconnectRecoveryActive || this.isCompletingSuccessfully) {
+      return;
+    }
+    this.stopDisconnectRecovery();
+    this.emitLog("CallWrapper.enqueueJob", "disconnect recovery failed", { reason, promptId: this.promptId });
+    this.resolvePromptLoad(false);
+    this.resolveJob(false);
+    this.cleanupListeners("disconnect failure");
+    this.emitFailure(new DisconnectedError("Disconnected"), this.promptId);
   }
 
   private async handleCachedOutput(
@@ -506,10 +703,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     return output;
   }
 
-  private handleJobExecution(
-    promptId: string,
-    jobDoneTrigger: (value: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false) => void
-  ): void {
+  private handleJobExecution(promptId: string): void {
 
     if (this.executionHandlerOffFn) {
       return;
@@ -564,7 +758,7 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
         this.isCompletingSuccessfully = true;
         this.cleanupListeners("all outputs collected");
         this.onFinishedFn?.(this.output, this.promptId);
-        jobDoneTrigger(this.output);
+        this.resolveJob(this.output);
       }
     };
 
@@ -593,22 +787,21 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
         remainingOutput,
         totalOutput
       });
-      this.onFailedFn?.(new ExecutionFailedError("Execution failed"), this.promptId);
+      this.emitFailure(new ExecutionFailedError("Execution failed"), this.promptId);
+      this.resolvePromptLoad(false);
       this.cleanupListeners("executedEnd missing outputs");
-      jobDoneTrigger(false);
+      this.resolveJob(false);
     };
 
     this.executionEndSuccessOffFn = this.client.on("execution_success", executedEnd);
     this.executionHandlerOffFn = this.client.on("executed", executionHandler);
-    this.errorHandlerOffFn = this.client.on("execution_error", (ev) => this.handleError(ev, promptId, jobDoneTrigger));
+    this.errorHandlerOffFn = this.client.on("execution_error", (ev) => this.handleError(ev, promptId));
     this.interruptionHandlerOffFn = this.client.on("execution_interrupted", (ev) => {
       if (ev.detail.prompt_id !== promptId) return;
-      this.onFailedFn?.(
-        new ExecutionInterruptedError("The execution was interrupted!", { cause: ev.detail }),
-        ev.detail.prompt_id
-      );
+      this.emitFailure(new ExecutionInterruptedError("The execution was interrupted!", { cause: ev.detail }), ev.detail.prompt_id);
+      this.resolvePromptLoad(false);
       this.cleanupListeners("execution interrupted");
-      jobDoneTrigger(false);
+      this.resolveJob(false);
     });
   }
 
@@ -631,19 +824,19 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     this.onProgressFn?.(ev.detail, this.promptId);
   }
 
-  private handleError(
-    ev: CustomEvent,
-    promptId: string,
-    resolve: (value: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false) => void
-  ) {
+  private handleError(ev: CustomEvent, promptId: string) {
     if (ev.detail.prompt_id !== promptId) return;
     this.emitLog("CallWrapper.handleError", ev.detail.exception_type, {
       prompt_id: ev.detail.prompt_id,
       node_id: (ev as any).detail?.node_id
     });
-    this.onFailedFn?.(new CustomEventError(ev.detail.exception_type, { cause: ev.detail }), ev.detail.prompt_id);
+    this.emitFailure(new CustomEventError(ev.detail.exception_type, { cause: ev.detail }), ev.detail.prompt_id);
+    console.log("[debug] handleError after emitFailure");
+    this.resolvePromptLoad(false);
+    console.log("[debug] handleError before cleanup");
     this.cleanupListeners("execution_error received");
-    resolve(false);
+    console.log("[debug] handleError after cleanup");
+    this.resolveJob(false);
   }
 
   private emitLog(fnName: string, message: string, data?: LogEventDetail["data"]) {
@@ -666,6 +859,13 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
   private cleanupListeners(reason?: string) {
     const debugPayload = { reason, promptId: this.promptId };
     this.emitLog("CallWrapper.cleanupListeners", "removing listeners", debugPayload);
+    this.resolvePromptLoad(false);
+    this.stopDisconnectRecovery();
+    this.onReconnectHandlerOffFn?.();
+    this.onReconnectHandlerOffFn = undefined;
+    this.onReconnectFailedHandlerOffFn?.();
+    this.onReconnectFailedHandlerOffFn = undefined;
+    this.disconnectFailureTimer = null;
     this.onDisconnectedHandlerOffFn?.();
     this.onDisconnectedHandlerOffFn = undefined;
     this.checkExecutingOffFn?.();

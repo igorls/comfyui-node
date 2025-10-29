@@ -785,6 +785,43 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   private createSocket(isReconnect: boolean = false) {
     let reconnecting = false;
     let usePolling = false;
+    let opened = false;
+
+    const stopHeartbeat = () => {
+      if (this.wsTimer) {
+        clearInterval(this.wsTimer);
+        this.wsTimer = null;
+      }
+    };
+
+    const startHeartbeat = () => {
+      stopHeartbeat();
+      if (!Number.isFinite(this.wsTimeout) || this.wsTimeout <= 0) {
+        return;
+      }
+      const interval = Math.max(1000, Math.floor(this.wsTimeout / 2));
+      this.wsTimer = setInterval(() => {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        const idleFor = Date.now() - this.lastActivity;
+        if (idleFor >= this.wsTimeout) {
+          this.log("socket", "Heartbeat ping after inactivity", { idleMs: idleFor, wsTimeout: this.wsTimeout });
+          try {
+            const wsAny = this.socket as any;
+            if (typeof wsAny.ping === "function") {
+              wsAny.ping();
+              this.resetLastActivity();
+            } else {
+              this.log("socket", "Heartbeat ping skipped - unsupported by WebSocket implementation");
+            }
+          } catch (error) {
+            this.log("socket", "Heartbeat ping failed", error);
+          }
+        }
+      }, interval) as NodeJS.Timeout;
+    };
+
     // Track last seen executing node + prompt id for correlation
     let lastExecutingNode: string | null = null;
     let lastPromptId: string | null = null;
@@ -813,23 +850,68 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       this.socket = new WebSocket(wsUrl, {
         headers: headers
       });
+      const wsEventSource = this.socket as any;
+      if (typeof wsEventSource.on === "function") {
+        wsEventSource.on("pong", () => this.resetLastActivity());
+        wsEventSource.on("ping", () => this.resetLastActivity());
+      } else {
+        this.socket.addEventListener?.("pong" as any, () => this.resetLastActivity());
+        this.socket.addEventListener?.("ping" as any, () => this.resetLastActivity());
+      }
 
-      this.socket.onclose = () => {
-        if (reconnecting || isReconnect) return;
+      const activeSocket = this.socket;
+      this.socket.onclose = (_event) => {
+        const closeEvent = _event as any;
+        const code = closeEvent?.code ?? undefined;
+        const reason = closeEvent?.reason ?? undefined;
+        const wasClean = closeEvent?.wasClean ?? undefined;
+
+        stopHeartbeat();
+
+        if (this.socket === activeSocket) {
+          this.socket = null;
+        }
+
+        if (reconnecting || isReconnect) {
+          return;
+        }
+
         reconnecting = true;
-        this.log("socket", "Socket closed -> Reconnecting");
-        this.reconnectWs(true);
+        const shouldEmit = opened;
+        opened = false;
+        this.log("socket", "Socket closed", { code, reason, wasClean, shouldEmit, isReconnect });
+
+        if (shouldEmit) {
+          this.dispatchEvent(new CustomEvent("status", { detail: null }));
+        }
+
+        this.reconnectWs(shouldEmit);
+
+        if (!opened && !isReconnect && !usePolling) {
+          usePolling = true;
+          this.log("socket", "Socket failed to open, enabling polling fallback");
+          this.setupPollingFallback();
+        }
       };
 
       this.socket.onopen = () => {
         this.resetLastActivity();
         reconnecting = false;
+        opened = true;
         usePolling = false; // Reset polling flag if we have an open connection
         this.log("socket", "Socket opened");
+        stopHeartbeat();
+        startHeartbeat();
+
         if (isReconnect) {
           this.dispatchEvent(new CustomEvent("reconnected"));
         } else {
           this.dispatchEvent(new CustomEvent("connected"));
+        }
+
+        if (this._pollingTimer) {
+          clearInterval(this._pollingTimer as any);
+          this._pollingTimer = null;
         }
 
         // Announce feature flags (configurable via constructor option)
@@ -991,25 +1073,12 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       this.socket.onerror = (e) => {
         this.log("socket", "Socket error", e);
 
-        // If this is the first error and we're not already in reconnect mode
-        if (!reconnecting && !usePolling) {
+        if (!opened && !isReconnect && !usePolling) {
           usePolling = true;
-          this.log("socket", "WebSocket error, will try polling as fallback");
+          this.log("socket", "WebSocket error before open, enabling polling fallback");
           this.setupPollingFallback();
         }
       };
-
-      if (!isReconnect) {
-        this.wsTimer = setInterval(() => {
-          if (reconnecting) return;
-          const idleFor = Date.now() - this.lastActivity;
-          if (idleFor > this.wsTimeout) {
-            reconnecting = true;
-            this.log("socket", "Connection timed out, reconnecting...", { idleMs: idleFor, wsTimeout: this.wsTimeout });
-            this.reconnectWs(true);
-          }
-        }, this.wsTimeout / 2);
-      }
     }
   }
 

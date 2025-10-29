@@ -33,7 +33,11 @@ export declare enum ErrorCode {
     /**
      * Missing node in workflow
      */
-    MISSING_NODE = "E_MISSING_NODE"
+    MISSING_NODE = "E_MISSING_NODE",
+    /**
+     * No connected clients support this workflow
+     */
+    WORKFLOW_NOT_SUPPORTED = "E_WORKFLOW_NOT_SUPPORTED"
 }
 /**
  * Base error class for ComfyUI call wrapper operations
@@ -194,5 +198,31 @@ export declare class MissingNodeError extends CallWrapperError {
      * The error code for this error type
      */
     code: ErrorCode;
+}
+/**
+ * Error thrown when no connected clients can execute the workflow
+ */
+export declare class WorkflowNotSupportedError extends CallWrapperError {
+    /**
+     * The name of the error class
+     */
+    name: string;
+    /**
+     * The error code for this error type
+     */
+    code: ErrorCode;
+    /**
+     * Workflow hash associated with the failure
+     */
+    workflowHash: string;
+    /**
+     * Diagnostic reasons keyed by client id when available
+     */
+    reasons: Record<string, string | undefined>;
+    constructor(message: string, init: {
+        workflowHash: string;
+        reasons?: Record<string, string | undefined>;
+        cause?: unknown;
+    });
 }
 //# sourceMappingURL=error.d.ts.map

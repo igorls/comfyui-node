@@ -35,6 +35,10 @@ export var ErrorCode;
      * Missing node in workflow
      */
     ErrorCode["MISSING_NODE"] = "E_MISSING_NODE";
+    /**
+     * No connected clients support this workflow
+     */
+    ErrorCode["WORKFLOW_NOT_SUPPORTED"] = "E_WORKFLOW_NOT_SUPPORTED";
 })(ErrorCode || (ErrorCode = {}));
 /**
  * Base error class for ComfyUI call wrapper operations
@@ -197,5 +201,31 @@ export class MissingNodeError extends CallWrapperError {
      * The error code for this error type
      */
     code = ErrorCode.MISSING_NODE;
+}
+/**
+ * Error thrown when no connected clients can execute the workflow
+ */
+export class WorkflowNotSupportedError extends CallWrapperError {
+    /**
+     * The name of the error class
+     */
+    name = "WorkflowNotSupportedError";
+    /**
+     * The error code for this error type
+     */
+    code = ErrorCode.WORKFLOW_NOT_SUPPORTED;
+    /**
+     * Workflow hash associated with the failure
+     */
+    workflowHash;
+    /**
+     * Diagnostic reasons keyed by client id when available
+     */
+    reasons;
+    constructor(message, init) {
+        super(message, init.cause ? { cause: init.cause } : undefined);
+        this.workflowHash = init.workflowHash;
+        this.reasons = init.reasons ?? {};
+    }
 }
 //# sourceMappingURL=error.js.map
