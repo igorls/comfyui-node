@@ -118,7 +118,8 @@ describe("Workflow.run() error handling without pool", () => {
     let didCatch = false;
     try {
       await wf.run(api as any);
-      // The run() should reject during enqueue, so we shouldn't get here
+      // If we reach here, the test should fail because run() should have thrown
+      expect(true).toBe(false); // Force test failure if no error was thrown
     } catch (err) {
       didCatch = true;
       caughtError = err;
