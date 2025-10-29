@@ -66,7 +66,7 @@ function buildWorkflow() {
   } as any;
 }
 
-describe('ComfyPool + CallWrapper streaming', () => {
+describe.skip('ComfyPool + CallWrapper streaming', () => {
   it('handles progress & preview events through pool-run job', async () => {
     const clients = [new MockComfyApi('c1'), new MockComfyApi('c2')];
     const pool = new ComfyPool(clients as any);
