@@ -61,10 +61,11 @@ for (const img of (result.images?.images || [])) {
 
 ### Multi-Instance Pooling
 
-- **[WorkflowPool Documentation](./docs/workflow-pool.md)** – Production-ready pooling with health checks (v1.4.1+)
+- **[WorkflowPool Documentation](./docs/workflow-pool.md)** – Production-ready pooling with health checks, profiling, and timeout protection
 - **[Connection Stability Guide](./docs/websocket-idle-issue.md)** – WebSocket health check implementation details
-- **[Hash-Based Routing Guide](./docs/hash-routing-guide.md)** – Workflow-level failure tracking and intelligent failover (v1.4.2+)
-- **[Hash-Routing Quick Start](./docs/hash-routing-quickstart.sh)** – Running the demos
+- **[Hash-Based Routing Guide](./docs/hash-routing-guide.md)** – Workflow-level failure tracking and intelligent failover
+- **[Profiling Guide](./docs/profiling.md)** – Automatic per-node performance profiling (v1.5.0+)
+- **[Execution Timeout Guide](./docs/execution-timeout.md)** – Timeout protection for stuck servers and nodes (v1.5.0+)
 
 ### Advanced Features
 
@@ -99,7 +100,7 @@ const builder = new PromptBuilder(base, ['positive', 'seed'], ['images'])
 
 See [comparison guide](./docs/workflow-guide.md#choosing-workflow-vs-promptbuilder) for details.
 
-### WorkflowPool (v1.4.1+)
+### WorkflowPool
 
 Production-ready multi-instance scheduling with automatic health checks and intelligent hash-based routing:
 
@@ -114,29 +115,33 @@ const pool = new WorkflowPool([
     cooldownMs: 60_000,           // Block workflow for 60s after failure
     maxFailuresBeforeBlock: 1     // Block on first failure
   }),
-  healthCheckIntervalMs: 30000  // keeps connections alive
+  healthCheckIntervalMs: 30000, // keeps connections alive
+  enableProfiling: true,        // NEW: enable automatic performance profiling
+  executionStartTimeoutMs: 5000 // NEW: 5s timeout for execution to start
 });
 
-// Monitor workflow blocking
-pool.on("client:blocked_workflow", ev => {
-  console.log(`${ev.detail.clientId} blocked for workflow ${ev.detail.workflowHash.slice(0, 8)}`);
+// Monitor job completion and view profiling stats
+pool.on("job:completed", ev => {
+  if (ev.detail.job.profileStats) {
+    const { totalDuration, executionTime, summary } = ev.detail.job.profileStats;
+    console.log(`Job ${ev.detail.job.jobId} completed in ${totalDuration}ms`);
+    console.log(`Slowest nodes:`, summary.slowestNodes);
+  }
 });
-
-pool.on("job:progress", ev => console.log(ev.detail.jobId, ev.detail.progress));
 
 const jobId = await pool.enqueue(workflow, { priority: 10 });
 ```
 
-**New in v1.4.2:** Hash-based routing intelligently handles failures at the workflow level (not client level). When a workflow fails on one client, the pool routes it to others while keeping that client available for different workflows.
+Hash-based routing intelligently handles failures at the workflow level (not client level). When a workflow fails on one client, the pool routes it to others while keeping that client available for different workflows.
 
 See [Hash-Based Routing Guide](./docs/hash-routing-guide.md) for details and demos.
 
-## What's New in v1.4.1
+## What's New in v1.5.0
 
-- **Idle connection stability** – Automatic health checks keep WebSocket connections alive
-- **Increased default timeout** – WebSocket inactivity timeout raised from 10s to 60s
-- **Configurable health checks** – `healthCheckIntervalMs` option (default 30s, set to 0 to disable)
-- **Better DX** – Comprehensive JSDoc comments and exported types for all pool options
+- **WorkflowPool Profiling** – Enable automatic per-node performance tracking with `enableProfiling: true`.
+- **Timeout Protection** – Prevent jobs from hanging with `executionStartTimeoutMs` and `nodeExecutionTimeoutMs`.
+- **Idle connection stability** – Automatic health checks keep WebSocket connections alive.
+- **Better DX** – Comprehensive JSDoc comments and exported types for all pool options.
 
 See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 

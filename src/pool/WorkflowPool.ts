@@ -76,7 +76,7 @@ export interface WorkflowPoolOpts {
    *   executionStartTimeoutMs: 10000 // 10 seconds
    * });
    * ```
-   * @since 1.4.4
+   * @since 1.5.0
    */
   executionStartTimeoutMs?: number;
   
@@ -108,7 +108,7 @@ export interface WorkflowPoolOpts {
    * - Progress events (e.g., KSampler steps) reset the timeout
    * - First generation with model loading often needs longer timeout
    * - Cached nodes complete instantly and don't trigger timeout
-   * @since 1.4.4
+   * @since 1.5.0
    */
   nodeExecutionTimeoutMs?: number;
   
