@@ -301,7 +301,16 @@ export class WorkflowPool extends TypedEventTarget {
                         continue;
                     }
                     const compatibleClients = idleClients
-                        .filter(client => this.clientManager.canClientRunJob(client, job))
+                        .filter(client => {
+                        const canRun = this.clientManager.canClientRunJob(client, job);
+                        if (!canRun) {
+                            console.log(`[processQueue] Job ${job.jobId.substring(0, 8)}... NOT compatible with ${client.id}. Checking why...`);
+                            console.log(`[processQueue]   - preferredClientIds: ${JSON.stringify(job.options.preferredClientIds)}`);
+                            console.log(`[processQueue]   - excludeClientIds: ${JSON.stringify(job.options.excludeClientIds)}`);
+                            console.log(`[processQueue]   - client.id: ${client.id}`);
+                        }
+                        return canRun;
+                    })
                         .map(client => client.id);
                     console.log(`[processQueue] Job ${job.jobId.substring(0, 8)}... compatible with: [${compatibleClients.join(", ")}] (selectivity=${compatibleClients.length})`);
                     if (compatibleClients.length > 0) {
