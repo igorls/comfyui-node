@@ -500,29 +500,29 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         for (const jobPayload of waitingJobs) {
           if (reservedJobIds.has(jobPayload.jobId)) continue; // Skip if already reserved
 
-          const canRun = this.clientManager.canClientRunJob(client, jobPayload);
+          const job = this.jobStore.get(jobPayload.jobId);
+          if (!job) continue; // Job not found in store, skip
+
+          const canRun = this.clientManager.canClientRunJob(client, job);
           if (canRun) {
             const reservation = await this.queue.reserveById(jobPayload.jobId);
             if (reservation) {
-              const job = this.jobStore.get(jobPayload.jobId);
-              if (job) {
-                // Mark as leased/reserved for this cycle
-                leasedClientIds.add(client.id);
-                reservedJobIds.add(job.jobId);
+              // Mark as leased/reserved for this cycle
+              leasedClientIds.add(client.id);
+              reservedJobIds.add(job.jobId);
 
-                // Get the lease (which marks the client as busy)
-                const lease = this.clientManager.claim(job, client.id);
-                if (lease) {
-                  this.runJob({ reservation, job, clientId: lease.clientId, release: lease.release }).catch((error) => {
-                    console.error("[WorkflowPool] Unhandled job error", error);
-                  });
-                } else {
-                   // This should not happen since we checked canClientRunJob, but handle defensively
-                   console.error(`[WorkflowPool.processQueue] CRITICAL: Failed to claim client ${client.id} for job ${job.jobId} after successful check.`);
-                   await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
-                }
-                break; // Move to the next idle client
+              // Get the lease (which marks the client as busy)
+              const lease = this.clientManager.claim(job, client.id);
+              if (lease) {
+                this.runJob({ reservation, job, clientId: lease.clientId, release: lease.release }).catch((error) => {
+                  console.error("[WorkflowPool] Unhandled job error", error);
+                });
+              } else {
+                 // This should not happen since we checked canClientRunJob, but handle defensively
+                 console.error(`[WorkflowPool.processQueue] CRITICAL: Failed to claim client ${client.id} for job ${job.jobId} after successful check.`);
+                 await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
               }
+              break; // Move to the next idle client
             }
           }
         }
@@ -747,7 +747,9 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
     let resolveCompletion: (() => void) | undefined;
     let completionError: unknown;
-    const completionPromise = new Promise<void>((resolve) => {
+    // completionPromise is used to track when the wrapper completes (success or failure)
+    // It's resolved in onFinished and onFailed handlers
+    new Promise<void>((resolve) => {
       resolveCompletion = resolve;
     });
 
@@ -890,6 +892,9 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     });
 
     try {
+      // Start the workflow execution
+      const exec = wrapper.run();
+
       // Add timeout for execution start to prevent jobs getting stuck
       const executionStartTimeout = this.opts.executionStartTimeoutMs ?? 5000;
       let pendingTimeoutId: NodeJS.Timeout | undefined;
