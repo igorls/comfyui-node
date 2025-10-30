@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { WorkflowAffinity } from "./types/affinity.js";
 import { JobId, JobRecord, WorkflowJobPayload, JobStatus } from "./types/job.js";
-import { hashWorkflow } from "src/pool/utils/hash.js";
-import { ComfyApi } from "src/client.js";
-import { Workflow } from "src/workflow.js";
-import { PromptBuilder } from "src/prompt-builder.js";
+import { hashWorkflow } from "../pool/utils/hash.js";
+import { ComfyApi } from "../client.js";
+import { Workflow } from "../workflow.js";
+import { PromptBuilder } from "../prompt-builder.js";
 import { MemoryQueueAdapter } from "./queue/adapters/memory.js";
-import { TypedEventTarget } from "src/typed-event-target.js";
+import { TypedEventTarget } from "../typed-event-target.js";
 
 interface SmartPoolOptions {
   connectionTimeoutMs: number;

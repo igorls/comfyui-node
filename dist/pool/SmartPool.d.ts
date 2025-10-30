@@ -1,8 +1,8 @@
 import { WorkflowAffinity } from "./types/affinity.js";
 import { JobId, JobRecord } from "./types/job.js";
-import { ComfyApi } from "src/client.js";
-import { Workflow } from "src/workflow.js";
-import { TypedEventTarget } from "src/typed-event-target.js";
+import { ComfyApi } from "../client.js";
+import { Workflow } from "../workflow.js";
+import { TypedEventTarget } from "../typed-event-target.js";
 interface SmartPoolOptions {
     connectionTimeoutMs: number;
 }
