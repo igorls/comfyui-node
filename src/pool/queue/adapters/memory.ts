@@ -36,9 +36,13 @@ export class MemoryQueueAdapter implements QueueAdapter {
     });
   }
 
-  async reserve(): Promise<QueueReservation | null> {
+  async peek(limit: number): Promise<WorkflowJobPayload[]> {
     const now = Date.now();
-    const idx = this.waiting.findIndex((entry) => entry.availableAt <= now);
+    return this.waiting.filter((e) => e.availableAt <= now).slice(0, limit).map(e => e.payload);
+  }
+
+  async reserveById(jobId: string): Promise<QueueReservation | null> {
+    const idx = this.waiting.findIndex((entry) => entry.payload.jobId === jobId);
     if (idx === -1) {
       return null;
     }
@@ -50,6 +54,16 @@ export class MemoryQueueAdapter implements QueueAdapter {
       attempt: entry.payload.attempts,
       availableAt: entry.availableAt
     };
+  }
+
+  async reserve(): Promise<QueueReservation | null> {
+    const now = Date.now();
+    const idx = this.waiting.findIndex((entry) => entry.availableAt <= now);
+    if (idx === -1) {
+      return null;
+    }
+    const entry = this.waiting[idx];
+    return this.reserveById(entry.payload.jobId);
   }
 
   async commit(reservationId: string): Promise<void> {

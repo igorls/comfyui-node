@@ -20,6 +20,7 @@ export class WorkflowPool extends TypedEventTarget {
     opts;
     jobStore = new Map();
     jobFailureAnalysis = new Map();
+    affinities = new Map();
     initPromise;
     processing = false;
     activeJobs = new Map();
@@ -31,6 +32,11 @@ export class WorkflowPool extends TypedEventTarget {
             healthCheckIntervalMs: opts?.healthCheckIntervalMs ?? 30000
         });
         this.opts = opts ?? {};
+        if (opts?.workflowAffinities) {
+            for (const affinity of opts.workflowAffinities) {
+                this.affinities.set(affinity.workflowHash, affinity);
+            }
+        }
         this.clientManager.on("client:state", (ev) => {
             this.dispatchEvent(new CustomEvent("client:state", { detail: ev.detail }));
         });
@@ -54,6 +60,15 @@ export class WorkflowPool extends TypedEventTarget {
     async ready() {
         await this.initPromise;
     }
+    setAffinity(affinity) {
+        this.affinities.set(affinity.workflowHash, affinity);
+    }
+    removeAffinity(workflowHash) {
+        return this.affinities.delete(workflowHash);
+    }
+    getAffinities() {
+        return Array.from(this.affinities.values());
+    }
     async enqueue(workflowInput, options) {
         await this.ready();
         const workflowJson = this.normalizeWorkflow(workflowInput);
@@ -75,6 +90,9 @@ export class WorkflowPool extends TypedEventTarget {
                 outputAliases: workflowInput.outputAliases ?? {}
             };
         }
+        const affinity = this.affinities.get(workflowHash);
+        const preferredClientIds = options?.preferredClientIds ?? affinity?.preferredClientIds ?? [];
+        const excludeClientIds = options?.excludeClientIds ?? affinity?.excludeClientIds ?? [];
         const payload = {
             jobId,
             workflow: workflowJson,
@@ -86,8 +104,8 @@ export class WorkflowPool extends TypedEventTarget {
                 maxAttempts: options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
                 retryDelayMs: options?.retryDelayMs ?? DEFAULT_RETRY_DELAY,
                 priority: options?.priority ?? 0,
-                preferredClientIds: options?.preferredClientIds ?? [],
-                excludeClientIds: options?.excludeClientIds ?? [],
+                preferredClientIds: preferredClientIds,
+                excludeClientIds: excludeClientIds,
                 metadata: options?.metadata ?? {},
                 includeOutputs: options?.includeOutputs ?? []
             }
@@ -164,7 +182,7 @@ export class WorkflowPool extends TypedEventTarget {
         }
     }
     static fallbackId() {
-        return (globalThis.crypto && "randomUUID" in globalThis.crypto)
+        return globalThis.crypto && "randomUUID" in globalThis.crypto
             ? globalThis.crypto.randomUUID()
             : `job_${Math.random().toString(36).slice(2, 10)}`;
     }
@@ -223,9 +241,7 @@ export class WorkflowPool extends TypedEventTarget {
     hasRetryPath(job) {
         const map = this.jobFailureAnalysis.get(job.jobId);
         const exclude = new Set(job.options.excludeClientIds ?? []);
-        const preferred = job.options.preferredClientIds?.length
-            ? new Set(job.options.preferredClientIds)
-            : null;
+        const preferred = job.options.preferredClientIds?.length ? new Set(job.options.preferredClientIds) : null;
         for (const client of this.clientManager.list()) {
             if (preferred && !preferred.has(client.id)) {
                 continue;
@@ -256,25 +272,49 @@ export class WorkflowPool extends TypedEventTarget {
         }
         this.processing = true;
         try {
-            while (true) {
-                const reservation = await this.queue.reserve();
-                if (!reservation) {
-                    break;
+            const idleClients = this.clientManager.list().filter(c => this.clientManager.isClientStable(c));
+            if (!idleClients.length) {
+                return;
+            }
+            const waitingJobs = await this.queue.peek(100); // Peek at top 100 jobs
+            if (!waitingJobs.length) {
+                return;
+            }
+            const leasedClientIds = new Set();
+            const reservedJobIds = new Set();
+            for (const client of idleClients) {
+                if (leasedClientIds.has(client.id))
+                    continue; // Skip if already leased in this cycle
+                // Find the first job that this client can run
+                for (const jobPayload of waitingJobs) {
+                    if (reservedJobIds.has(jobPayload.jobId))
+                        continue; // Skip if already reserved
+                    const canRun = this.clientManager.canClientRunJob(client, jobPayload);
+                    if (canRun) {
+                        const reservation = await this.queue.reserveById(jobPayload.jobId);
+                        if (reservation) {
+                            const job = this.jobStore.get(jobPayload.jobId);
+                            if (job) {
+                                // Mark as leased/reserved for this cycle
+                                leasedClientIds.add(client.id);
+                                reservedJobIds.add(job.jobId);
+                                // Get the lease (which marks the client as busy)
+                                const lease = this.clientManager.claim(job, client.id);
+                                if (lease) {
+                                    this.runJob({ reservation, job, clientId: lease.clientId, release: lease.release }).catch((error) => {
+                                        console.error("[WorkflowPool] Unhandled job error", error);
+                                    });
+                                }
+                                else {
+                                    // This should not happen since we checked canClientRunJob, but handle defensively
+                                    console.error(`[WorkflowPool.processQueue] CRITICAL: Failed to claim client ${client.id} for job ${job.jobId} after successful check.`);
+                                    await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
+                                }
+                                break; // Move to the next idle client
+                            }
+                        }
+                    }
                 }
-                const job = this.jobStore.get(reservation.payload.jobId);
-                if (!job) {
-                    await this.queue.commit(reservation.reservationId);
-                    continue;
-                }
-                const lease = this.clientManager.claim(job);
-                if (!lease) {
-                    await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
-                    this.scheduleProcess(job.options.retryDelayMs);
-                    break;
-                }
-                this.runJob({ reservation, job, clientId: lease.clientId, release: lease.release }).catch((error) => {
-                    console.error("[WorkflowPool] Unhandled job error", error);
-                });
             }
         }
         finally {
@@ -322,9 +362,9 @@ export class WorkflowPool extends TypedEventTarget {
         // Use stored metadata if available (from Workflow instance), otherwise extract from recreated instance
         const outputNodeIds = reservation.payload.workflowMeta?.outputNodeIds ??
             wfInstance.outputNodeIds ??
-            job.options.includeOutputs ?? [];
-        const outputAliases = reservation.payload.workflowMeta?.outputAliases ??
-            wfInstance.outputAliases ?? {};
+            job.options.includeOutputs ??
+            [];
+        const outputAliases = reservation.payload.workflowMeta?.outputAliases ?? wfInstance.outputAliases ?? {};
         let promptBuilder = new PromptBuilder(wfInstance.json, wfInstance.inputPaths ?? [], outputNodeIds);
         for (const nodeId of outputNodeIds) {
             const alias = outputAliases[nodeId] ?? nodeId;
@@ -332,9 +372,7 @@ export class WorkflowPool extends TypedEventTarget {
         }
         const wrapper = new CallWrapper(client, promptBuilder);
         // Setup profiling if enabled
-        const profiler = this.opts.enableProfiling
-            ? new JobProfiler(job.enqueuedAt, workflowPayload)
-            : undefined;
+        const profiler = this.opts.enableProfiling ? new JobProfiler(job.enqueuedAt, workflowPayload) : undefined;
         // Setup node execution timeout tracking
         const nodeExecutionTimeout = this.opts.nodeExecutionTimeoutMs ?? 300000; // 5 minutes default
         let nodeTimeoutId;
@@ -350,7 +388,7 @@ export class WorkflowPool extends TypedEventTarget {
                 currentExecutingNode = nodeName || null;
                 nodeTimeoutId = setTimeout(() => {
                     const elapsed = Date.now() - (lastNodeStartTime || 0);
-                    const nodeInfo = currentExecutingNode ? ` (node: ${currentExecutingNode})` : '';
+                    const nodeInfo = currentExecutingNode ? ` (node: ${currentExecutingNode})` : "";
                     completionError = new Error(`Node execution timeout: took longer than ${nodeExecutionTimeout}ms${nodeInfo}. ` +
                         `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`);
                     resolveCompletion?.();
@@ -392,20 +430,20 @@ export class WorkflowPool extends TypedEventTarget {
             const onExecutionError = (event) => {
                 const detail = event.detail || {};
                 if (detail.node !== undefined) {
-                    profiler.onNodeError(String(detail.node), detail.exception_message || 'Execution error');
+                    profiler.onNodeError(String(detail.node), detail.exception_message || "Execution error");
                 }
             };
             // Attach listeners to client
-            client.addEventListener('execution_start', onExecutionStart);
-            client.addEventListener('execution_cached', onExecutionCached);
-            client.addEventListener('executing', onExecuting);
-            client.addEventListener('execution_error', onExecutionError);
+            client.addEventListener("execution_start", onExecutionStart);
+            client.addEventListener("execution_cached", onExecutionCached);
+            client.addEventListener("executing", onExecuting);
+            client.addEventListener("execution_error", onExecutionError);
             // Cleanup function to remove listeners
             const cleanupProfiler = () => {
-                client.removeEventListener('execution_start', onExecutionStart);
-                client.removeEventListener('execution_cached', onExecutionCached);
-                client.removeEventListener('executing', onExecuting);
-                client.removeEventListener('execution_error', onExecutionError);
+                client.removeEventListener("execution_start", onExecutionStart);
+                client.removeEventListener("execution_cached", onExecutionCached);
+                client.removeEventListener("executing", onExecuting);
+                client.removeEventListener("execution_error", onExecutionError);
             };
             // Ensure cleanup happens when job finishes
             wrapper.onFinished(() => cleanupProfiler());
@@ -431,19 +469,19 @@ export class WorkflowPool extends TypedEventTarget {
         };
         const onExecutionStarted = (event) => {
             // Execution started - reset timeout for first node
-            resetNodeTimeout('execution_start');
+            resetNodeTimeout("execution_start");
         };
         if (nodeExecutionTimeout > 0) {
-            client.addEventListener('execution_start', onExecutionStarted);
-            client.addEventListener('executing', onNodeExecuting);
-            client.addEventListener('progress', onNodeProgress);
+            client.addEventListener("execution_start", onExecutionStarted);
+            client.addEventListener("executing", onNodeExecuting);
+            client.addEventListener("progress", onNodeProgress);
         }
         const cleanupNodeTimeout = () => {
             clearNodeTimeout();
             if (nodeExecutionTimeout > 0) {
-                client.removeEventListener('execution_start', onExecutionStarted);
-                client.removeEventListener('executing', onNodeExecuting);
-                client.removeEventListener('progress', onNodeProgress);
+                client.removeEventListener("execution_start", onExecutionStarted);
+                client.removeEventListener("executing", onNodeExecuting);
+                client.removeEventListener("progress", onNodeProgress);
             }
         };
         let pendingSettled = false;
@@ -583,9 +621,6 @@ export class WorkflowPool extends TypedEventTarget {
             resolveCompletion?.();
         });
         try {
-            const exec = wrapper.run();
-            console.log("[debug] wrapper.run() returned", exec);
-            exec.then((value) => console.log("[debug] exec promise resolved", job.jobId, value), (err) => console.log("[debug] exec promise rejected", job.jobId, err));
             // Add timeout for execution start to prevent jobs getting stuck
             const executionStartTimeout = this.opts.executionStartTimeoutMs ?? 5000;
             let pendingTimeoutId;
@@ -600,10 +635,12 @@ export class WorkflowPool extends TypedEventTarget {
                     })
                 ]);
                 await pendingWithTimeout;
-                clearTimeout(pendingTimeoutId);
             }
             else {
                 await pendingPromise;
+            }
+            if (executionStartTimeout > 0) {
+                clearTimeout(pendingTimeoutId);
             }
             this.activeJobs.set(job.jobId, {
                 reservation,
@@ -625,23 +662,20 @@ export class WorkflowPool extends TypedEventTarget {
                 }
             });
             const result = await exec;
-            console.log("[debug] exec result", job.jobId, result);
             if (result === false) {
-                await completionPromise;
                 const errorToThrow = (completionError instanceof Error ? completionError : undefined) ??
                     (job.lastError instanceof Error ? job.lastError : undefined) ??
                     new Error("Execution failed");
                 throw errorToThrow;
             }
-            await completionPromise;
             await this.queue.commit(reservation.reservationId);
             release({ success: true });
         }
         catch (error) {
-            console.log("[debug] runJob catch", job.jobId, error?.name);
+            // Immediately release the client on any failure
+            release({ success: false });
             const latestStatus = this.jobStore.get(job.jobId)?.status;
             if (latestStatus === "cancelled") {
-                release({ success: false });
                 return;
             }
             job.lastError = error;
@@ -672,7 +706,6 @@ export class WorkflowPool extends TypedEventTarget {
                 await this.queue.retry(reservation.reservationId, { delayMs: delay });
                 this.dispatchEvent(new CustomEvent("job:queued", { detail: { job } }));
                 this.scheduleProcess(delay);
-                release({ success: false });
             }
             else {
                 job.completedAt = Date.now();
@@ -682,7 +715,6 @@ export class WorkflowPool extends TypedEventTarget {
                 job.lastError = finalError;
                 await this.queue.discard(reservation.reservationId, finalError);
                 this.clearJobFailures(job.jobId);
-                release({ success: false });
             }
         }
         finally {

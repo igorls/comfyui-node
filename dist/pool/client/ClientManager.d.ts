@@ -58,8 +58,9 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
      * Checks if a client is truly available for work.
      * A client must be online, not busy, AND past the reconnection grace period.
      */
-    private isClientStable;
-    claim(job: JobRecord): ClientLease | null;
+    isClientStable(client: ManagedClient): boolean;
+    canClientRunJob(client: ManagedClient, job: JobRecord): boolean;
+    claim(job: JobRecord, specificClientId?: string): ClientLease | null;
     recordFailure(clientId: string, job: JobRecord, error: unknown): void;
     /**
      * Start periodic health check to keep connections alive and detect issues early.

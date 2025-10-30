@@ -1,24 +1,19 @@
-import { Blob } from "buffer";
-import { ComfyApi, Workflow } from "../src/index.ts";
+import { ComfyApi, WorkflowPool, JobRecord, hashWorkflow, WorkflowAffinity } from "../src/index.ts";
 import GenerationGraph from "./workflows/T2I-anime-nova-xl.json" assert { type: "json" };
 import EditGraph from "./workflows/quick-edit-test.json" assert { type: "json" };
 import { delay } from "../src/tools.ts";
-
-/**
- * Two-stage workflow simulation:
- *  1. Generate an image with the Anime Nova workflow using a random prompt.
- *  2. Upload the result and run the Quick Edit workflow with a random edit instruction.
- *
- * Designed to stress heterogeneous clusters: if a host cannot run the generation
- * workflow (missing models, etc.), it is skipped for future generation runs but
- * still participates in edit runs if possible.
- */
+import { log, pickRandom, uploadImage, nextSeed, randomInt } from "./simulator/helpers.ts";
+import { buildEditWorkflow, buildGenerationWorkflow } from "./simulator/workflows.ts";
+import { waitForJob } from "./simulator/pool.ts";
 
 const DEFAULT_HOSTS = [
   "http://afterpic-comfy-igor:8188",
   "http://afterpic-comfy-aero16:8188",
   "http://afterpic-comfy-domi:8188"
 ];
+
+const GEN_HOST = "http://afterpic-comfy-aero16:8188";
+const EDIT_HOSTS = ["http://afterpic-comfy-igor:8188", "http://afterpic-comfy-domi:8188"];
 
 const hosts = process.env.TWO_STAGE_HOSTS
   ? process.env.TWO_STAGE_HOSTS.split(",")
@@ -37,11 +32,11 @@ const runtimeMs = Number.isFinite(Number(process.env.TWO_STAGE_RUNTIME_MS))
 
 let minDelayMs = Number.isFinite(Number(process.env.TWO_STAGE_MIN_DELAY_MS))
   ? Number(process.env.TWO_STAGE_MIN_DELAY_MS)
-  : 5_000; // 5 seconds
+  : 0; // 5 seconds
 
 let maxDelayMs = Number.isFinite(Number(process.env.TWO_STAGE_MAX_DELAY_MS))
   ? Number(process.env.TWO_STAGE_MAX_DELAY_MS)
-  : 1 * 60_000; // 4 minutes
+  : 0; // 20 seconds
 
 if (minDelayMs > maxDelayMs) {
   console.warn(`Swapping min/max delay: ${minDelayMs} > ${maxDelayMs}`);
@@ -49,6 +44,10 @@ if (minDelayMs > maxDelayMs) {
   minDelayMs = maxDelayMs;
   maxDelayMs = tmp;
 }
+
+const concurrency = Number.isFinite(Number(process.env.TWO_STAGE_CONCURRENCY))
+  ? Number(process.env.TWO_STAGE_CONCURRENCY)
+  : 2;
 
 const generationPrompts = (process.env.TWO_STAGE_GEN_PROMPTS || "")
   .split("||")
@@ -91,54 +90,11 @@ if (editPrompts.length === 0) {
   );
 }
 
-const seedStrategy = (process.env.TWO_STAGE_SEED_STRATEGY || "random").toLowerCase();
-
-function log(...args: any[]) {
-  // eslint-disable-next-line no-console
-  console.log(`[${new Date().toISOString()}]`, ...args);
-}
-
-function randomInt(min: number, max: number) {
-  const floorMin = Math.ceil(min);
-  const floorMax = Math.floor(max);
-  return Math.floor(Math.random() * (floorMax - floorMin + 1)) + floorMin;
-}
-
-function pickRandom<T>(list: T[]): T {
-  return list[randomInt(0, list.length - 1)];
-}
-
-function nextSeed() {
-  if (seedStrategy === "auto") return -1;
-  if (seedStrategy === "fixed") return 42;
-  return randomInt(0, 2_147_483_647);
-}
-
-function clone<T>(obj: T): T {
-  if (typeof globalThis.structuredClone === "function") {
-    return globalThis.structuredClone(obj);
-  }
-  return JSON.parse(JSON.stringify(obj));
-}
-
-function buildGenerationWorkflow(prompt: string, negative: string, seed: number) {
-  const wf = Workflow.from(clone(GenerationGraph));
-  wf.set("1.inputs.value", prompt)
-    .set("2.inputs.value", negative)
-    .set("10.inputs.seed", seed)
-    .output("base_preview", "12");
-  return wf;
-}
-
-function buildEditWorkflow(imageName: string, editPrompt: string, seed: number) {
-  const wf = Workflow.from(clone(EditGraph));
-  wf.set("91.inputs.prompt", editPrompt).set("51.inputs.seed", seed).set("97.inputs.image", imageName).output("207");
-  return wf;
-}
+const seedStrategy = (process.env.TWO_STAGE_SEED_STRATEGY || "random").toLowerCase() as "random" | "auto" | "fixed";
 
 interface HostStats {
   host: string;
-  client: ComfyApi;
+  clientId: string;
   generationCapable: boolean;
   generationRuns: number;
   generationSuccess: number;
@@ -154,18 +110,16 @@ async function main() {
     runtimeHours: runtimeMs / 3_600_000,
     minDelayMs,
     maxDelayMs,
-    seedStrategy
+    seedStrategy,
+    concurrency
   });
 
-  const endTime = Date.now() + runtimeMs;
-  const stats: HostStats[] = [];
-
-  for (const host of hosts) {
-    const client = new ComfyApi(host, undefined, { wsTimeout: maxDelayMs * 2, debug: false });
-    await client.ready();
-    const entry: HostStats = {
+  const stats = new Map<string, HostStats>();
+  const clients = hosts.map((host, i) => {
+    const clientId = `host-${i}`;
+    stats.set(clientId, {
       host,
-      client,
+      clientId,
       generationCapable: true,
       generationRuns: 0,
       generationSuccess: 0,
@@ -173,150 +127,194 @@ async function main() {
       editSuccess: 0,
       failures: 0,
       disconnects: 0
-    };
+    });
+    const client = new ComfyApi(host, clientId, { wsTimeout: maxDelayMs * 2, debug: false });
     client.on("disconnected", () => {
-      entry.disconnects += 1;
-      log(`⚠️  Disconnected: ${host}`);
+      const s = stats.get(clientId)!;
+      s.disconnects += 1;
+      log(`⚠️  Disconnected: ${s.host}`);
     });
     client.on("reconnected", () => {
-      log(`✅ Reconnected: ${host}`);
+      const s = stats.get(clientId)!;
+      log(`✅ Reconnected: ${s.host}`);
     });
-    stats.push(entry);
+    return client;
+  });
+
+  await Promise.all(clients.map((c) => c.ready()));
+
+  const genClientIds = Array.from(stats.values())
+    .filter((s) => s.host === GEN_HOST)
+    .map((s) => s.clientId);
+  const editClientIds = Array.from(stats.values())
+    .filter((s) => EDIT_HOSTS.includes(s.host))
+    .map((s) => s.clientId);
+
+  if (genClientIds.length === 0) {
+    log(`❌ Generation host ${GEN_HOST} not found in the available hosts.`);
+    process.exit(1);
   }
+  if (editClientIds.length === 0) {
+    log(`❌ No edit hosts found in the available hosts.`);
+    process.exit(1);
+  }
+
+  const generationWorkflowHash = hashWorkflow(GenerationGraph);
+  const editWorkflowHash = hashWorkflow(EditGraph);
+
+  const affinities: WorkflowAffinity[] = [
+    { workflowHash: generationWorkflowHash, preferredClientIds: genClientIds },
+    { workflowHash: editWorkflowHash, preferredClientIds: editClientIds }
+  ];
+
+  const pool = new WorkflowPool(clients, { workflowAffinities: affinities });
+  log(
+    "WorkflowPool created with clients:",
+    clients.map((c) => c.id)
+  );
+  log("Affinities:", pool.getAffinities());
+
+  const endTime = Date.now() + runtimeMs;
 
   try {
-    let triggerImmediateNextCycle = true;
-    while (Date.now() < endTime) {
-      if (stats.every((s) => !s.generationCapable)) {
-        log("No generation-capable hosts remaining. Exiting early.");
-        break;
-      }
+    const runWorker = async (workerId: number) => {
+      log(`[Worker ${workerId}] Started`);
+      let triggerImmediateNextCycle = true;
 
-      if (!triggerImmediateNextCycle) {
-        const waitMs = randomInt(minDelayMs, maxDelayMs);
-        log(`Waiting ${Math.round(waitMs / 1000)}s before next cycle`);
-        await delay(waitMs);
-        if (Date.now() >= endTime) break;
-      } else {
-        log("Starting first cycle immediately");
-      }
-
-      triggerImmediateNextCycle = false;
-
-      const hostEntry = pickRandom(stats.filter((s) => s.generationCapable));
-      const client = hostEntry.client;
-      const genPrompt = pickRandom(generationPrompts);
-      const genNegative = pickRandom(generationNegatives);
-      const genSeed = nextSeed();
-
-      hostEntry.generationRuns += 1;
-      log(`▶️  [${hostEntry.host}] Generation run #${hostEntry.generationRuns} seed=${genSeed}`);
-
-      let imageRecord: { filename?: string; subfolder?: string; type?: string } | undefined;
-      try {
-        const genWorkflow = buildGenerationWorkflow(genPrompt, genNegative, genSeed);
-        const job = await client.run(genWorkflow, { includeOutputs: ["12"], autoDestroy: false });
-        job.on("failed", (err) => log(`❌ Generation failed (event) on ${hostEntry.host}`, err));
-        const result = await job.done();
-        const preview = (result as any).base_preview ?? (result as any)["12"];
-        const records = Array.isArray(preview?.images)
-          ? preview.images
-          : Array.isArray(preview)
-            ? preview
-            : preview
-              ? [preview]
-              : [];
-        if (!records.length) {
-          throw new Error("Generation workflow returned no images");
-        }
-        imageRecord = records[0];
-        hostEntry.generationSuccess += 1;
-        const promptId = (result as any)?._promptId;
-        log(`✅ [${hostEntry.host}] Generation succeeded promptId=${promptId ?? "n/a"}`);
-      } catch (error: any) {
-        hostEntry.failures += 1;
-        const message = String(error?.message || error);
-        const detailBlob = JSON.stringify(error?.bodyJSON ?? error ?? {});
-        const missingModel =
-          /model/i.test(message) ||
-          /checkpoint/i.test(message) ||
-          /not found/i.test(message) ||
-          /value_not_in_list/i.test(detailBlob) ||
-          /ckpt_name/i.test(detailBlob);
-        if (missingModel) {
-          hostEntry.generationCapable = false;
-          log(`⚠️  Marking ${hostEntry.host} as generation-incapable (${message})`);
+      while (Date.now() < endTime) {
+        if (!triggerImmediateNextCycle) {
+          const waitMs = randomInt(minDelayMs, maxDelayMs);
+          log(`[Worker ${workerId}] Waiting ${Math.round(waitMs / 1000)}s before next cycle`);
+          await delay(waitMs);
+          if (Date.now() >= endTime) break;
         } else {
-          log(`❌ Generation error on ${hostEntry.host}`, error);
+          log(`[Worker ${workerId}] Starting first cycle immediately`);
         }
-        triggerImmediateNextCycle = true;
-        continue; // Skip edit stage on failure
-      }
+        triggerImmediateNextCycle = false;
 
-      if (!imageRecord?.filename) {
-        log(`⚠️  Missing filename in generation output for ${hostEntry.host}, skipping edit.`);
-        triggerImmediateNextCycle = true;
-        continue;
-      }
+        // Generation Stage
+        const genPrompt = pickRandom(generationPrompts);
+        const genNegative = pickRandom(generationNegatives);
+        const genSeed = nextSeed(seedStrategy);
+        const genWorkflow = buildGenerationWorkflow(genPrompt, genNegative, genSeed);
 
-      const imageUrl = hostEntry.client.ext.file.getPathImage(imageRecord as any);
-      const uploadName = `two-stage-${Date.now()}-${Math.random().toString(16).slice(2)}.png`;
-      try {
-        const fetchFn = globalThis.fetch?.bind(globalThis);
-        if (!fetchFn) {
-          throw new Error("fetch is not available in this runtime");
+        let imageRecord: { filename?: string; subfolder?: string; type?: string } | undefined;
+        let genClient: ComfyApi | undefined;
+        let genJobId: string;
+
+        try {
+          genJobId = await pool.enqueue(genWorkflow, { includeOutputs: ["12"] });
+          const completedJob = await waitForJob(pool, genJobId);
+          const clientId = completedJob.clientId;
+          if (!clientId) throw new Error("Job completed without a client ID");
+
+          genClient = clients.find((c) => c.id === clientId);
+          if (!genClient) throw new Error(`Client ${clientId} not found`);
+
+          const s = stats.get(clientId)!;
+          s.generationRuns += 1;
+          s.generationSuccess += 1;
+          const promptId = (completedJob.result as any)?._promptId;
+          log(`✅ [Worker ${workerId}] [${s.host}] Generation succeeded promptId=${promptId ?? "n/a"}`);
+
+          const preview = (completedJob.result as any).base_preview ?? (completedJob.result as any)["12"];
+          const records = Array.isArray(preview?.images)
+            ? preview.images
+            : Array.isArray(preview)
+              ? preview
+              : preview
+                ? [preview]
+                : [];
+          if (!records.length) {
+            throw new Error("Generation workflow returned no images");
+          }
+          imageRecord = records[0];
+        } catch (failedJob: any) {
+          const clientId = (failedJob as JobRecord).clientId;
+          if (clientId) {
+            const s = stats.get(clientId)!;
+            s.generationRuns += 1;
+            s.failures += 1;
+            log(`❌ [Worker ${workerId}] [${s.host}] Generation failed`, (failedJob as JobRecord).lastError);
+          }
+          triggerImmediateNextCycle = true;
+          continue;
         }
-        const response = await fetchFn(imageUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch generated image: ${response.status} ${response.statusText}`);
+
+        if (!imageRecord?.filename || !genClient) {
+          log(`⚠️  [Worker ${workerId}] Missing filename or client from generation output, skipping edit.`);
+          triggerImmediateNextCycle = true;
+          continue;
         }
-        const arrayBuffer = await response.arrayBuffer();
-        const blob = new Blob([arrayBuffer]);
-        await hostEntry.client.ext.file.uploadImage(blob, uploadName, { overwrite: true });
-        log(`⬆️  Uploaded generated image to ${uploadName} for edit step`);
-      } catch (uploadError) {
-        hostEntry.failures += 1;
-        log(`❌ Failed to prepare image for edit on ${hostEntry.host}`, uploadError);
-        triggerImmediateNextCycle = true;
-        continue;
-      }
 
-      const editPrompt = pickRandom(editPrompts);
-      const editSeed = nextSeed();
-      hostEntry.editRuns += 1;
-      log(`✏️  [${hostEntry.host}] Edit run #${hostEntry.editRuns} seed=${editSeed}`);
+        // Edit Stage
+        const targetEditClientId = pickRandom(editClientIds);
+        const targetEditClient = clients.find((c) => c.id === targetEditClientId);
 
-      try {
+        if (!targetEditClient) {
+          log(`⚠️  [Worker ${workerId}] Could not find an edit client to run on.`);
+          triggerImmediateNextCycle = true;
+          continue;
+        }
+
+        const imageUrl = genClient.ext.file.getPathImage(imageRecord as any);
+        const uploadName = `two-stage-${Date.now()}-${Math.random().toString(16).slice(2)}.png`;
+        try {
+          await uploadImage(imageUrl, uploadName, targetEditClient);
+          log(
+            `⬆️  [Worker ${workerId}] Uploaded generated image to ${uploadName} for edit step to ${targetEditClient.id}`
+          );
+        } catch (uploadError) {
+          const s = stats.get(targetEditClient.id)!;
+          s.failures += 1;
+          log(`❌ [Worker ${workerId}] Failed to prepare image for edit on ${s.host}`, uploadError);
+          triggerImmediateNextCycle = true;
+          continue;
+        }
+
+        const editPrompt = pickRandom(editPrompts);
+        const editSeed = nextSeed(seedStrategy);
         const editWorkflow = buildEditWorkflow(uploadName, editPrompt, editSeed);
-        const job = await hostEntry.client.run(editWorkflow, { includeOutputs: ["207"], autoDestroy: false });
-        job.on("failed", (err) => log(`❌ Edit failed (event) on ${hostEntry.host}`, err));
-        const result = await job.done();
-        hostEntry.editSuccess += 1;
-        const promptId = (result as any)?._promptId;
-        log(`✅ [${hostEntry.host}] Edit succeeded promptId=${promptId ?? "n/a"}`);
-      } catch (error) {
-        hostEntry.failures += 1;
-        log(`❌ Edit error on ${hostEntry.host}`, error);
-        triggerImmediateNextCycle = true;
+        // Enqueue with affinity to the specific edit client we uploaded the image to.
+        const editJobId = await pool.enqueue(editWorkflow, {
+          includeOutputs: ["207"],
+          preferredClientIds: [targetEditClientId]
+        });
+
+        try {
+          const completedJob = await waitForJob(pool, editJobId);
+          const clientId = completedJob.clientId;
+          if (!clientId) throw new Error("Job completed without a client ID");
+
+          const s = stats.get(clientId)!;
+          s.editRuns += 1;
+          s.editSuccess += 1;
+          const promptId = (completedJob.result as any)?._promptId;
+          log(`✅ [Worker ${workerId}] [${s.host}] Edit succeeded promptId=${promptId ?? "n/a"}`);
+        } catch (failedJob: any) {
+          const clientId = (failedJob as JobRecord).clientId;
+          if (clientId) {
+            const s = stats.get(clientId)!;
+            s.editRuns += 1;
+            s.failures += 1;
+            log(`❌ [Worker ${workerId}] [${s.host}] Edit failed`, (failedJob as JobRecord).lastError);
+          }
+          triggerImmediateNextCycle = true;
+        }
       }
-    }
+      log(`[Worker ${workerId}] Stopped`);
+    };
+
+    const workers = Array.from({ length: concurrency }, (_, i) => runWorker(i + 1));
+    await Promise.all(workers);
   } finally {
     log("Shutting down clients...");
-    for (const entry of stats) {
-      try {
-        entry.client.destroy();
-      } catch (error) {
-        log(`Error destroying client for ${entry.host}`, error);
-      }
-    }
+    pool.shutdown();
   }
 
-  log(
-    "Two-stage simulation complete",
-    stats.map(({ client, ...rest }) => rest)
-  );
-  const totalFailures = stats.reduce((sum, s) => sum + s.failures, 0);
-  const totalDisconnects = stats.reduce((sum, s) => sum + s.disconnects, 0);
+  log("Two-stage simulation complete", Array.from(stats.values()));
+  const totalFailures = Array.from(stats.values()).reduce((sum, s) => sum + s.failures, 0);
+  const totalDisconnects = Array.from(stats.values()).reduce((sum, s) => sum + s.disconnects, 0);
 
   if (totalFailures > 0 || totalDisconnects > 0) {
     log("Summary:", { totalFailures, totalDisconnects });

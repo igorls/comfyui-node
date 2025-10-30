@@ -4,10 +4,26 @@ import type { QueueAdapter, QueueStats } from "./queue/QueueAdapter.js";
 import type { FailoverStrategy } from "./failover/Strategy.js";
 import type { JobRecord, WorkflowInput, WorkflowJobOptions, JobId } from "./types/job.js";
 import type { WorkflowPoolEventMap } from "./types/events.js";
+import type { WorkflowAffinity } from "./types/affinity.js";
 /**
  * Configuration options for WorkflowPool.
  */
 export interface WorkflowPoolOpts {
+    /**
+     * An array of workflow affinity rules to establish a default mapping
+     * between workflows and specific clients.
+     *
+     * @example
+     * ```ts
+     * const pool = new WorkflowPool(clients, {
+     *   workflowAffinities: [
+     *     { workflowHash: "hash1", preferredClientIds: ["client-a"] },
+     *     { workflowHash: "hash2", excludeClientIds: ["client-b"] },
+     *   ]
+     * });
+     * ```
+     */
+    workflowAffinities?: WorkflowAffinity[];
     /**
      * Queue adapter for managing job queue operations.
      *
@@ -153,11 +169,15 @@ export declare class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap>
     private opts;
     private jobStore;
     private jobFailureAnalysis;
+    private affinities;
     private initPromise;
     private processing;
     private activeJobs;
     constructor(clients: ComfyApi[], opts?: WorkflowPoolOpts);
     ready(): Promise<void>;
+    setAffinity(affinity: WorkflowAffinity): void;
+    removeAffinity(workflowHash: string): boolean;
+    getAffinities(): WorkflowAffinity[];
     enqueue(workflowInput: WorkflowInput, options?: WorkflowJobOptions): Promise<JobId>;
     getJob(jobId: string): JobRecord | undefined;
     cancel(jobId: string): Promise<boolean>;

@@ -10,13 +10,12 @@ import { delay } from "../src/tools.ts";
  * disconnect fixes over multi-hour periods.
  */
 
-const DEFAULT_HOSTS = [
-  "http://localhost:8188",
-  "http://afterpic-comfy-aero16:8188"
-];
+const DEFAULT_HOSTS = ["http://afterpic-comfy-aero16:8188"];
 
 const hosts = process.env.SPARSE_HOSTS
-  ? process.env.SPARSE_HOSTS.split(",").map((h) => h.trim()).filter(Boolean)
+  ? process.env.SPARSE_HOSTS.split(",")
+      .map((h) => h.trim())
+      .filter(Boolean)
   : DEFAULT_HOSTS;
 
 if (hosts.length === 0) {
@@ -30,11 +29,11 @@ const runtimeMs = Number.isFinite(Number(process.env.SPARSE_RUNTIME_MS))
 
 let minDelayMs = Number.isFinite(Number(process.env.SPARSE_MIN_DELAY_MS))
   ? Number(process.env.SPARSE_MIN_DELAY_MS)
-  : 60_000; // 1 minute
+  : 5_000; // 5 seconds
 
 let maxDelayMs = Number.isFinite(Number(process.env.SPARSE_MAX_DELAY_MS))
   ? Number(process.env.SPARSE_MAX_DELAY_MS)
-  : 5 * 60_000; // 5 minutes
+  : 60_000; // 1 minutes
 
 if (minDelayMs > maxDelayMs) {
   console.warn(`Swapping min/max delay: ${minDelayMs} > ${maxDelayMs}`);
@@ -46,12 +45,10 @@ if (minDelayMs > maxDelayMs) {
 const seedStrategy = (process.env.SPARSE_SEED_STRATEGY || "random").toLowerCase();
 
 const positivePrompt =
-  process.env.SPARSE_POSITIVE ||
-  "anime style portrait of a curious explorer, detailed lighting, cinematic tone";
+  process.env.SPARSE_POSITIVE || "anime style portrait of a curious explorer, detailed lighting, cinematic tone";
 
 const negativePrompt =
-  process.env.SPARSE_NEGATIVE ||
-  "lowres, blurry, bad anatomy, extra limbs, watermark, text, signature";
+  process.env.SPARSE_NEGATIVE || "lowres, blurry, bad anatomy, extra limbs, watermark, text, signature";
 
 const steps = Number(process.env.SPARSE_STEPS ?? 20);
 const cfg = Number(process.env.SPARSE_CFG ?? 4.5);
@@ -83,8 +80,7 @@ function log(...args: any[]) {
 
 function buildWorkflow(seed: number) {
   const wf = Workflow.from(Graph);
-  wf
-    .set("3.inputs.width", width)
+  wf.set("3.inputs.width", width)
     .set("3.inputs.height", height)
     .set("10.inputs.steps", steps)
     .set("10.inputs.cfg", cfg)

@@ -8,6 +8,8 @@ export declare class MemoryQueueAdapter implements QueueAdapter {
         priority?: number;
         delayMs?: number;
     }): Promise<void>;
+    peek(limit: number): Promise<WorkflowJobPayload[]>;
+    reserveById(jobId: string): Promise<QueueReservation | null>;
     reserve(): Promise<QueueReservation | null>;
     commit(reservationId: string): Promise<void>;
     retry(reservationId: string, opts?: {

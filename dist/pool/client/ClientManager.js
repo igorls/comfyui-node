@@ -90,24 +90,41 @@ export class ClientManager extends TypedEventTarget {
         }
         return true;
     }
-    claim(job) {
-        const candidates = this.clients.filter((c) => this.isClientStable(c));
-        const preferred = job.options.preferredClientIds?.length
-            ? candidates.filter((c) => job.options.preferredClientIds?.includes(c.id))
-            : candidates;
-        const filtered = preferred
-            .filter((client) => !job.options.excludeClientIds?.includes(client.id))
-            .filter((client) => !this.strategy.shouldSkipClient(client, job));
-        const chosen = filtered[0];
+    canClientRunJob(client, job) {
+        if (job.options.preferredClientIds?.length && !job.options.preferredClientIds.includes(client.id)) {
+            return false; // Job has preferred clients and this isn't one of them
+        }
+        if (job.options.excludeClientIds?.includes(client.id)) {
+            return false; // Job has excluded clients and this is one of them
+        }
+        if (this.strategy.shouldSkipClient(client, job)) {
+            return false; // Strategy says to skip
+        }
+        return true;
+    }
+    claim(job, specificClientId) {
+        let chosen;
+        if (specificClientId) {
+            const candidate = this.clients.find(c => c.id === specificClientId);
+            if (candidate && this.isClientStable(candidate) && this.canClientRunJob(candidate, job)) {
+                chosen = candidate;
+            }
+        }
+        else {
+            const candidates = this.clients.filter((c) => this.isClientStable(c));
+            chosen = candidates.find(c => this.canClientRunJob(c, job));
+        }
         if (!chosen) {
             return null;
         }
+        chosen.busy = true;
         chosen.busy = true;
         chosen.lastSeenAt = Date.now();
         return {
             client: chosen.client,
             clientId: chosen.id,
             release: (opts) => {
+                console.log(`[ClientManager.release] Releasing client ${chosen.id} for job ${job.jobId}. Setting busy: false.`);
                 chosen.busy = false;
                 if (opts?.success) {
                     const wasBlocked = this.strategy.isWorkflowBlocked?.(chosen, job.workflowHash) ?? false;

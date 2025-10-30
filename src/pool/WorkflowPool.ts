@@ -17,14 +17,30 @@ import { JobProfiler } from "./profiling/JobProfiler.js";
 import { analyzeWorkflowFailure } from "./utils/failure-analysis.js";
 import type { WorkflowFailureAnalysis } from "./utils/failure-analysis.js";
 import { WorkflowNotSupportedError } from "../types/error.js";
+import type { WorkflowAffinity } from "./types/affinity.js";
 
 /**
  * Configuration options for WorkflowPool.
  */
 export interface WorkflowPoolOpts {
   /**
+   * An array of workflow affinity rules to establish a default mapping
+   * between workflows and specific clients.
+   *
+   * @example
+   * ```ts
+   * const pool = new WorkflowPool(clients, {
+   *   workflowAffinities: [
+   *     { workflowHash: "hash1", preferredClientIds: ["client-a"] },
+   *     { workflowHash: "hash2", excludeClientIds: ["client-b"] },
+   *   ]
+   * });
+   * ```
+   */
+  workflowAffinities?: WorkflowAffinity[];
+  /**
    * Queue adapter for managing job queue operations.
-   * 
+   *
    * @default MemoryQueueAdapter (in-memory queue)
    * @example
    * ```ts
@@ -35,10 +51,10 @@ export interface WorkflowPoolOpts {
    * ```
    */
   queueAdapter?: QueueAdapter;
-  
+
   /**
    * Failover strategy for handling client failures and workflow routing.
-   * 
+   *
    * @default SmartFailoverStrategy (exponential backoff with workflow-specific cooldowns)
    * @example
    * ```ts
@@ -49,26 +65,26 @@ export interface WorkflowPoolOpts {
    * ```
    */
   failoverStrategy?: FailoverStrategy;
-  
+
   /**
    * Base retry backoff delay in milliseconds for failed jobs.
    * Actual delay may be adjusted by the failover strategy.
-   * 
+   *
    * @default 1000 (1 second)
    */
   retryBackoffMs?: number;
-  
+
   /**
    * Timeout in milliseconds for execution to start after job is queued.
-   * 
+   *
    * If a server gets stuck before emitting the `execution_start` event, the job
    * will be failed and retried on another server after this timeout.
-   * 
+   *
    * This prevents jobs from being lost when a server accepts a prompt but fails
    * to begin execution (e.g., GPU hang, process crash, deadlock).
-   * 
+   *
    * Set to `0` to disable timeout (not recommended for production).
-   * 
+   *
    * @default 5000 (5 seconds)
    * @example
    * ```ts
@@ -79,23 +95,23 @@ export interface WorkflowPoolOpts {
    * @since 1.5.0
    */
   executionStartTimeoutMs?: number;
-  
+
   /**
    * Timeout in milliseconds for individual node execution.
-   * 
+   *
    * If a node takes longer than this timeout to execute (time between `executing` events),
    * the job will be failed and retried on another server.
-   * 
+   *
    * This is critical for:
    * - Model loading on slow disks (can take 60+ seconds on first load)
    * - Heavy diffusion steps on slower GPUs
    * - VAE decode operations on large images
    * - Custom nodes with long processing times
-   * 
+   *
    * The timeout is per-node, not total execution time. Each node gets the full timeout duration.
-   * 
+   *
    * Set to `0` to disable timeout (not recommended for production).
-   * 
+   *
    * @default 300000 (5 minutes)
    * @example
    * ```ts
@@ -111,16 +127,16 @@ export interface WorkflowPoolOpts {
    * @since 1.5.0
    */
   nodeExecutionTimeoutMs?: number;
-  
+
   /**
    * Interval in milliseconds for health check pings to keep WebSocket connections alive.
-   * 
+   *
    * Health checks prevent idle connection timeouts by periodically pinging inactive clients
    * with lightweight `getQueue()` calls. This maintains stable connections when the pool
    * has no active jobs, avoiding false disconnection alerts.
-   * 
+   *
    * Set to `0` to disable health checks (not recommended for production).
-   * 
+   *
    * @default 30000 (30 seconds)
    * @example
    * ```ts
@@ -136,26 +152,26 @@ export interface WorkflowPoolOpts {
    * @since 1.4.1
    */
   healthCheckIntervalMs?: number;
-  
+
   /**
    * Enable automatic profiling of workflow execution.
-   * 
+   *
    * When enabled, captures detailed per-node execution metrics including:
    * - Node execution timing (start, end, duration)
    * - Progress events for long-running nodes
    * - Cached vs executed nodes
    * - Execution order and dependencies
-   * 
+   *
    * Profile stats are attached to `JobRecord.profileStats` and included
    * in `job:completed` event details.
-   * 
+   *
    * @default false
    * @example
    * ```ts
    * const pool = new WorkflowPool(clients, {
    *   enableProfiling: true
    * });
-   * 
+   *
    * pool.on('job:completed', (event) => {
    *   const stats = event.detail.job.profileStats;
    *   console.log(`Total: ${stats.totalDuration}ms`);
@@ -185,6 +201,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
   private opts: WorkflowPoolOpts;
   private jobStore: Map<JobId, JobRecord> = new Map();
   private jobFailureAnalysis: Map<JobId, Map<string, WorkflowFailureAnalysis>> = new Map();
+  private affinities: Map<string, WorkflowAffinity> = new Map();
   private initPromise: Promise<void>;
   private processing = false;
   private activeJobs: Map<JobId, ActiveJobContext> = new Map();
@@ -197,6 +214,11 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       healthCheckIntervalMs: opts?.healthCheckIntervalMs ?? 30000
     });
     this.opts = opts ?? {};
+    if (opts?.workflowAffinities) {
+      for (const affinity of opts.workflowAffinities) {
+        this.affinities.set(affinity.workflowHash, affinity);
+      }
+    }
     this.clientManager.on("client:state", (ev) => {
       this.dispatchEvent(new CustomEvent("client:state", { detail: ev.detail }));
     });
@@ -209,9 +231,11 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     this.initPromise = this.clientManager
       .initialize(clients)
       .then(() => {
-        this.dispatchEvent(new CustomEvent("pool:ready", {
-          detail: { clientIds: this.clientManager.list().map((c) => c.id) }
-        }));
+        this.dispatchEvent(
+          new CustomEvent("pool:ready", {
+            detail: { clientIds: this.clientManager.list().map((c) => c.id) }
+          })
+        );
       })
       .catch((error) => {
         this.dispatchEvent(new CustomEvent("pool:error", { detail: { error } }));
@@ -222,10 +246,22 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     await this.initPromise;
   }
 
+  public setAffinity(affinity: WorkflowAffinity): void {
+    this.affinities.set(affinity.workflowHash, affinity);
+  }
+
+  public removeAffinity(workflowHash: string): boolean {
+    return this.affinities.delete(workflowHash);
+  }
+
+  public getAffinities(): WorkflowAffinity[] {
+    return Array.from(this.affinities.values());
+  }
+
   async enqueue(workflowInput: WorkflowInput, options?: WorkflowJobOptions): Promise<JobId> {
     await this.ready();
     const workflowJson = this.normalizeWorkflow(workflowInput);
-    
+
     // Use the workflow's pre-computed structureHash if available (from Workflow instance)
     // Otherwise compute it from the JSON
     let workflowHash: string;
@@ -234,7 +270,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     } else {
       workflowHash = hashWorkflow(workflowJson);
     }
-    
+
     const jobId = options?.jobId ?? this.generateJobId();
 
     // Extract workflow metadata (outputAliases, outputNodeIds, etc.) if input is a Workflow instance
@@ -245,6 +281,11 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         outputAliases: (workflowInput as any).outputAliases ?? {}
       };
     }
+
+    const affinity = this.affinities.get(workflowHash);
+
+    const preferredClientIds = options?.preferredClientIds ?? affinity?.preferredClientIds ?? [];
+    const excludeClientIds = options?.excludeClientIds ?? affinity?.excludeClientIds ?? [];
 
     const payload: WorkflowJobPayload = {
       jobId,
@@ -257,8 +298,8 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         maxAttempts: options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
         retryDelayMs: options?.retryDelayMs ?? DEFAULT_RETRY_DELAY,
         priority: options?.priority ?? 0,
-        preferredClientIds: options?.preferredClientIds ?? [],
-        excludeClientIds: options?.excludeClientIds ?? [],
+        preferredClientIds: preferredClientIds,
+        excludeClientIds: excludeClientIds,
         metadata: options?.metadata ?? {},
         includeOutputs: options?.includeOutputs ?? []
       }
@@ -342,7 +383,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
   }
 
   private static fallbackId(): string {
-    return (globalThis.crypto && "randomUUID" in globalThis.crypto)
+    return globalThis.crypto && "randomUUID" in globalThis.crypto
       ? globalThis.crypto.randomUUID()
       : `job_${Math.random().toString(36).slice(2, 10)}`;
   }
@@ -406,9 +447,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
   private hasRetryPath(job: JobRecord): boolean {
     const map = this.jobFailureAnalysis.get(job.jobId);
     const exclude = new Set(job.options.excludeClientIds ?? []);
-    const preferred = job.options.preferredClientIds?.length
-      ? new Set(job.options.preferredClientIds)
-      : null;
+    const preferred = job.options.preferredClientIds?.length ? new Set(job.options.preferredClientIds) : null;
     for (const client of this.clientManager.list()) {
       if (preferred && !preferred.has(client.id)) {
         continue;
@@ -441,26 +480,54 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     }
     this.processing = true;
     try {
-      while (true) {
-        const reservation = await this.queue.reserve();
-        if (!reservation) {
-          break;
-        }
-        const job = this.jobStore.get(reservation.payload.jobId);
-        if (!job) {
-          await this.queue.commit(reservation.reservationId);
-          continue;
-        }
-        const lease = this.clientManager.claim(job);
-        if (!lease) {
-          await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
-          this.scheduleProcess(job.options.retryDelayMs);
-          break;
-        }
-        this.runJob({ reservation, job, clientId: lease.clientId, release: lease.release }).catch((error) => {
-          console.error("[WorkflowPool] Unhandled job error", error);
-        });
+      const idleClients = this.clientManager.list().filter(c => this.clientManager.isClientStable(c));
+      if (!idleClients.length) {
+        return;
       }
+
+      const waitingJobs = await this.queue.peek(100); // Peek at top 100 jobs
+      if (!waitingJobs.length) {
+        return;
+      }
+
+      const leasedClientIds = new Set<string>();
+      const reservedJobIds = new Set<string>();
+
+      for (const client of idleClients) {
+        if (leasedClientIds.has(client.id)) continue; // Skip if already leased in this cycle
+
+        // Find the first job that this client can run
+        for (const jobPayload of waitingJobs) {
+          if (reservedJobIds.has(jobPayload.jobId)) continue; // Skip if already reserved
+
+          const canRun = this.clientManager.canClientRunJob(client, jobPayload);
+          if (canRun) {
+            const reservation = await this.queue.reserveById(jobPayload.jobId);
+            if (reservation) {
+              const job = this.jobStore.get(jobPayload.jobId);
+              if (job) {
+                // Mark as leased/reserved for this cycle
+                leasedClientIds.add(client.id);
+                reservedJobIds.add(job.jobId);
+
+                // Get the lease (which marks the client as busy)
+                const lease = this.clientManager.claim(job, client.id);
+                if (lease) {
+                  this.runJob({ reservation, job, clientId: lease.clientId, release: lease.release }).catch((error) => {
+                    console.error("[WorkflowPool] Unhandled job error", error);
+                  });
+                } else {
+                   // This should not happen since we checked canClientRunJob, but handle defensively
+                   console.error(`[WorkflowPool.processQueue] CRITICAL: Failed to claim client ${client.id} for job ${job.jobId} after successful check.`);
+                   await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
+                }
+                break; // Move to the next idle client
+              }
+            }
+          }
+        }
+      }
+
     } finally {
       this.processing = false;
     }
@@ -510,11 +577,13 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     (wfInstance as any).inferDefaultOutputs?.();
 
     // Use stored metadata if available (from Workflow instance), otherwise extract from recreated instance
-    const outputNodeIds: string[] = reservation.payload.workflowMeta?.outputNodeIds ??
+    const outputNodeIds: string[] =
+      reservation.payload.workflowMeta?.outputNodeIds ??
       (wfInstance as any).outputNodeIds ??
-      job.options.includeOutputs ?? [];
-    const outputAliases: Record<string, string> = reservation.payload.workflowMeta?.outputAliases ??
-      (wfInstance as any).outputAliases ?? {};
+      job.options.includeOutputs ??
+      [];
+    const outputAliases: Record<string, string> =
+      reservation.payload.workflowMeta?.outputAliases ?? (wfInstance as any).outputAliases ?? {};
 
     let promptBuilder = new PromptBuilder<any, any, any>(
       (wfInstance as any).json,
@@ -528,9 +597,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     const wrapper = new CallWrapper(client, promptBuilder);
 
     // Setup profiling if enabled
-    const profiler = this.opts.enableProfiling 
-      ? new JobProfiler(job.enqueuedAt, workflowPayload)
-      : undefined;
+    const profiler = this.opts.enableProfiling ? new JobProfiler(job.enqueuedAt, workflowPayload) : undefined;
 
     // Setup node execution timeout tracking
     const nodeExecutionTimeout = this.opts.nodeExecutionTimeoutMs ?? 300000; // 5 minutes default
@@ -543,17 +610,17 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         clearTimeout(nodeTimeoutId);
         nodeTimeoutId = undefined;
       }
-      
+
       if (nodeExecutionTimeout > 0 && nodeName !== null) {
         lastNodeStartTime = Date.now();
         currentExecutingNode = nodeName || null;
-        
+
         nodeTimeoutId = setTimeout(() => {
           const elapsed = Date.now() - (lastNodeStartTime || 0);
-          const nodeInfo = currentExecutingNode ? ` (node: ${currentExecutingNode})` : '';
+          const nodeInfo = currentExecutingNode ? ` (node: ${currentExecutingNode})` : "";
           completionError = new Error(
             `Node execution timeout: took longer than ${nodeExecutionTimeout}ms${nodeInfo}. ` +
-            `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`
+              `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`
           );
           resolveCompletion?.();
         }, nodeExecutionTimeout);
@@ -598,22 +665,22 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       const onExecutionError = (event: CustomEvent) => {
         const detail = event.detail || {};
         if (detail.node !== undefined) {
-          profiler.onNodeError(String(detail.node), detail.exception_message || 'Execution error');
+          profiler.onNodeError(String(detail.node), detail.exception_message || "Execution error");
         }
       };
 
       // Attach listeners to client
-      client.addEventListener('execution_start', onExecutionStart as EventListener);
-      client.addEventListener('execution_cached', onExecutionCached as EventListener);
-      client.addEventListener('executing', onExecuting as EventListener);
-      client.addEventListener('execution_error', onExecutionError as EventListener);
+      client.addEventListener("execution_start", onExecutionStart as EventListener);
+      client.addEventListener("execution_cached", onExecutionCached as EventListener);
+      client.addEventListener("executing", onExecuting as EventListener);
+      client.addEventListener("execution_error", onExecutionError as EventListener);
 
       // Cleanup function to remove listeners
       const cleanupProfiler = () => {
-        client.removeEventListener('execution_start', onExecutionStart as EventListener);
-        client.removeEventListener('execution_cached', onExecutionCached as EventListener);
-        client.removeEventListener('executing', onExecuting as EventListener);
-        client.removeEventListener('execution_error', onExecutionError as EventListener);
+        client.removeEventListener("execution_start", onExecutionStart as EventListener);
+        client.removeEventListener("execution_cached", onExecutionCached as EventListener);
+        client.removeEventListener("executing", onExecuting as EventListener);
+        client.removeEventListener("execution_error", onExecutionError as EventListener);
       };
 
       // Ensure cleanup happens when job finishes
@@ -642,21 +709,21 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
     const onExecutionStarted = (event: CustomEvent) => {
       // Execution started - reset timeout for first node
-      resetNodeTimeout('execution_start');
+      resetNodeTimeout("execution_start");
     };
 
     if (nodeExecutionTimeout > 0) {
-      client.addEventListener('execution_start', onExecutionStarted as EventListener);
-      client.addEventListener('executing', onNodeExecuting as EventListener);
-      client.addEventListener('progress', onNodeProgress as EventListener);
+      client.addEventListener("execution_start", onExecutionStarted as EventListener);
+      client.addEventListener("executing", onNodeExecuting as EventListener);
+      client.addEventListener("progress", onNodeProgress as EventListener);
     }
 
     const cleanupNodeTimeout = () => {
       clearNodeTimeout();
       if (nodeExecutionTimeout > 0) {
-        client.removeEventListener('execution_start', onExecutionStarted as EventListener);
-        client.removeEventListener('executing', onNodeExecuting as EventListener);
-        client.removeEventListener('progress', onNodeProgress as EventListener);
+        client.removeEventListener("execution_start", onExecutionStarted as EventListener);
+        client.removeEventListener("executing", onNodeExecuting as EventListener);
+        client.removeEventListener("progress", onNodeProgress as EventListener);
       }
     };
 
@@ -792,15 +859,15 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       job.result = resultPayload;
       job.completedAt = Date.now();
       this.clearJobFailures(job.jobId);
-      
+
       // Cleanup timeouts
       cleanupNodeTimeout();
-      
+
       // Attach profiling stats if profiling was enabled
       if (profiler) {
         job.profileStats = profiler.getStats();
       }
-      
+
       completionError = undefined;
       this.dispatchEvent(new CustomEvent("job:completed", { detail: { job } }));
       resolveCompletion?.();
@@ -812,7 +879,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         job.promptId = promptId;
       }
       job.lastError = error;
-      
+
       // Cleanup timeouts
       cleanupNodeTimeout();
 
@@ -823,36 +890,34 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     });
 
     try {
-      const exec = wrapper.run();
-      console.log("[debug] wrapper.run() returned", exec);
-      exec.then(
-        (value) => console.log("[debug] exec promise resolved", job.jobId, value),
-        (err) => console.log("[debug] exec promise rejected", job.jobId, err)
-      );
-      
       // Add timeout for execution start to prevent jobs getting stuck
       const executionStartTimeout = this.opts.executionStartTimeoutMs ?? 5000;
       let pendingTimeoutId: NodeJS.Timeout | undefined;
-      
+
       if (executionStartTimeout > 0) {
         const pendingWithTimeout = Promise.race([
           pendingPromise,
           new Promise<never>((_, reject) => {
             pendingTimeoutId = setTimeout(() => {
-              reject(new Error(
-                `Execution failed to start within ${executionStartTimeout}ms. ` +
-                `Server may be stuck or unresponsive.`
-              ));
+              reject(
+                new Error(
+                  `Execution failed to start within ${executionStartTimeout}ms. ` +
+                    `Server may be stuck or unresponsive.`
+                )
+              );
             }, executionStartTimeout);
           })
         ]);
-        
+
         await pendingWithTimeout;
-        clearTimeout(pendingTimeoutId);
       } else {
         await pendingPromise;
       }
-      
+
+      if (executionStartTimeout > 0) {
+        clearTimeout(pendingTimeoutId);
+      }
+
       this.activeJobs.set(job.jobId, {
         reservation,
         job,
@@ -871,24 +936,26 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
           }
         }
       });
+
       const result = await exec;
-      console.log("[debug] exec result", job.jobId, result);
+
       if (result === false) {
-        await completionPromise;
         const errorToThrow =
           (completionError instanceof Error ? completionError : undefined) ??
           (job.lastError instanceof Error ? job.lastError : undefined) ??
           new Error("Execution failed");
         throw errorToThrow;
       }
-      await completionPromise;
+
       await this.queue.commit(reservation.reservationId);
       release({ success: true });
+
     } catch (error) {
-      console.log("[debug] runJob catch", job.jobId, (error as Error)?.name);
+      // Immediately release the client on any failure
+      release({ success: false });
+
       const latestStatus = this.jobStore.get(job.jobId)?.status;
       if (latestStatus === "cancelled") {
-        release({ success: false });
         return;
       }
       job.lastError = error;
@@ -921,16 +988,15 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         await this.queue.retry(reservation.reservationId, { delayMs: delay });
         this.dispatchEvent(new CustomEvent("job:queued", { detail: { job } }));
         this.scheduleProcess(delay);
-        release({ success: false });
       } else {
         job.completedAt = Date.now();
-        const finalError = !hasRetryPath && failureAnalysis.type === "client_incompatible" && this.jobFailureAnalysis.has(job.jobId)
-          ? this.createWorkflowNotSupportedError(job, error)
-          : error;
+        const finalError =
+          !hasRetryPath && failureAnalysis.type === "client_incompatible" && this.jobFailureAnalysis.has(job.jobId)
+            ? this.createWorkflowNotSupportedError(job, error)
+            : error;
         job.lastError = finalError;
         await this.queue.discard(reservation.reservationId, finalError);
         this.clearJobFailures(job.jobId);
-        release({ success: false });
       }
     } finally {
       this.activeJobs.delete(job.jobId);

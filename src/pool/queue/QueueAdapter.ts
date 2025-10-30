@@ -18,7 +18,9 @@ export interface QueueReservation {
 
 export interface QueueAdapter {
   enqueue(payload: WorkflowJobPayload, opts?: { priority?: number; delayMs?: number }): Promise<void>;
+  peek(limit: number): Promise<WorkflowJobPayload[]>;
   reserve(): Promise<QueueReservation | null>;
+  reserveById(jobId: string): Promise<QueueReservation | null>;
   commit(reservationId: string): Promise<void>;
   retry(reservationId: string, opts?: { delayMs?: number }): Promise<void>;
   discard(reservationId: string, reason?: unknown): Promise<void>;

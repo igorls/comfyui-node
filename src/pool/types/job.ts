@@ -33,12 +33,7 @@ export interface WorkflowJobOptions {
   attachments?: WorkflowJobAttachment[];
 }
 
-export type JobStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export interface WorkflowJobPayload {
   jobId: JobId;
