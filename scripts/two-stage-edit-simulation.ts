@@ -1,10 +1,11 @@
-import { ComfyApi, WorkflowPool, JobRecord, hashWorkflow, WorkflowAffinity } from "../src/index.ts";
+import { ComfyApi, WorkflowPool, JobRecord, WorkflowAffinity } from "../src/index.ts";
 import GenerationGraph from "./workflows/T2I-anime-nova-xl.json" assert { type: "json" };
 import EditGraph from "./workflows/quick-edit-test.json" assert { type: "json" };
 import { delay } from "../src/tools.ts";
 import { log, pickRandom, uploadImage, nextSeed, randomInt } from "./simulator/helpers.ts";
 import { buildEditWorkflow, buildGenerationWorkflow } from "./simulator/workflows.ts";
 import { waitForJob } from "./simulator/pool.ts";
+import { hashWorkflow } from "../src/pool/utils/hash.ts";
 
 const DEFAULT_HOSTS = [
   "http://afterpic-comfy-igor:8188",
@@ -45,10 +46,6 @@ if (minDelayMs > maxDelayMs) {
   maxDelayMs = tmp;
 }
 
-const concurrency = Number.isFinite(Number(process.env.TWO_STAGE_CONCURRENCY))
-  ? Number(process.env.TWO_STAGE_CONCURRENCY)
-  : 2;
-
 const generationPrompts = (process.env.TWO_STAGE_GEN_PROMPTS || "")
   .split("||")
   .map((s) => s.trim())
@@ -56,10 +53,14 @@ const generationPrompts = (process.env.TWO_STAGE_GEN_PROMPTS || "")
 
 if (generationPrompts.length === 0) {
   generationPrompts.push(
-    "cinematic portrait of a spacefarer gazing at a nebula, vibrant color arcs, anime shading",
-    "lush forest clearing at dawn with crystalline waterfalls and ethereal wildlife, anime art",
-    "retro-futuristic city skyline at sunset, hovering ships and neon reflections, anime style",
-    "battle-ready mage summoning luminous glyphs, dramatic pose, detailed anime illustration"
+    "cinematic portrait of a spacefarer gazing at a nebula",
+    "lush forest clearing at dawn with crystalline waterfalls and ethereal wildlife",
+    "retro-futuristic city skyline at sunset with hovering ships",
+    "battle-ready mage summoning luminous glyphs in a ruined cathedral",
+    "steampunk explorer overlooking a floating archipelago",
+    "mythic beast emerging from misty mountains",
+    "mecha pilot preparing for launch on an illuminated runway",
+    "ancient library guarded by arcane spirits"
   );
 }
 
@@ -72,7 +73,8 @@ if (generationNegatives.length === 0) {
   generationNegatives.push(
     "lowres, blurry, bad anatomy, extra limbs, watermark, text, signature",
     "poor lighting, washed out colors, distorted perspective, nsfw",
-    "cropped face, missing fingers, artifacts, posterization"
+    "cropped face, missing fingers, artifacts, posterization",
+    "muted colors, flat lighting, repetitive patterns"
   );
 }
 
@@ -86,11 +88,92 @@ if (editPrompts.length === 0) {
     "Shift to a nighttime scene with glowing lanterns and gentle rain, add reflective puddles",
     "Transform into a winter landscape with snowfall and frosted trees, keep main subject",
     "Reimagine as a bustling cyberpunk alley filled with holographic signs and neon rain",
-    "Convert the environment to a tranquil seaside at sunrise with warm golden lighting"
+    "Convert the environment to a tranquil seaside at sunrise with warm golden lighting",
+    "Reframe as an autumn festival with floating lanterns and soft embers",
+    "Turn into a bioluminescent jungle with fog and glowing flora",
+    "Adapt into a desert oasis at twilight with swirling dust and warm rim light"
   );
 }
 
+const generationLighting = [
+  "dramatic rim lighting",
+  "soft volumetric sunrise glow",
+  "diffuse moonlit ambience",
+  "harsh neon key lighting",
+  "studio three-point lighting"
+];
+
+const generationAtmospheres = [
+  "mist drifting through the scene",
+  "sparkling particulate haze",
+  "storm clouds gathering overhead",
+  "crystalline dust suspended in the air",
+  "aurora weaving across the sky"
+];
+
+const generationPalettes = [
+  "vibrant magenta and teal palette",
+  "warm amber and indigo palette",
+  "cool cyan and silver palette",
+  "sunset gold and crimson palette",
+  "emerald and violet complementary palette"
+];
+
+const generationCameraAngles = [
+  "dynamic low-angle perspective",
+  "overhead cinematic shot",
+  "heroic medium shot",
+  "wide establishing shot",
+  "tight portrait framing"
+];
+
+const editAmbiences = [
+  "emphasize cinematic depth of field",
+  "add drifting embers and floating motes",
+  "accent with volumetric god rays",
+  "introduce subtle film grain and halation",
+  "layer in atmospheric fog"
+];
+
+const editColorNotes = [
+  "cool teal and fuchsia grade",
+  "muted sepia wash",
+  "hyper-saturated neon glow",
+  "warm copper highlights",
+  "icy cyan overtones"
+];
+
+const DEFAULT_CONCURRENCY = Math.max(3, Math.min(4, hosts.length + 1));
+
+const concurrency = Number.isFinite(Number(process.env.TWO_STAGE_CONCURRENCY))
+  ? Number(process.env.TWO_STAGE_CONCURRENCY)
+  : DEFAULT_CONCURRENCY;
+
 const seedStrategy = (process.env.TWO_STAGE_SEED_STRATEGY || "random").toLowerCase() as "random" | "auto" | "fixed";
+
+const randomPromptToken = () => Math.random().toString(36).slice(2, 8);
+
+const buildVariedGenerationPrompt = () => {
+  const base = pickRandom(generationPrompts);
+  const extras = [
+    pickRandom(generationLighting),
+    pickRandom(generationAtmospheres),
+    pickRandom(generationPalettes),
+    pickRandom(generationCameraAngles),
+    `scene tag ${randomPromptToken()}`
+  ];
+  return `${base}, ${extras.join(", ")}`;
+};
+
+const buildVariedEditPrompt = () => {
+  const base = pickRandom(editPrompts);
+  const extras = [
+    pickRandom(editAmbiences),
+    `color treatment ${pickRandom(editColorNotes)}`,
+    `detail tag ${randomPromptToken()}`
+  ];
+  return `${base}, ${extras.join(", ")}`;
+};
 
 interface HostStats {
   host: string;
@@ -173,11 +256,6 @@ async function main() {
   // - Priority can also be set per job to override selectivity ordering
   const pool = new WorkflowPool(clients, { workflowAffinities: affinities });
 
-  pool.on('job:completed', async (ev) => {
-    const stats = await pool.getQueueStats();
-    console.log('Queue stats after job completed:', stats);
-  });
-
   log("WorkflowPool created with clients:", clients.map((c) => c.id));
 
   log("Affinities:", pool.getAffinities());
@@ -201,7 +279,7 @@ async function main() {
         triggerImmediateNextCycle = false;
 
         // Generation Stage
-        const genPrompt = pickRandom(generationPrompts);
+        const genPrompt = buildVariedGenerationPrompt();
         const genNegative = pickRandom(generationNegatives);
         const genSeed = nextSeed(seedStrategy);
         const genWorkflow = buildGenerationWorkflow(genPrompt, genNegative, genSeed);
@@ -280,7 +358,7 @@ async function main() {
           continue;
         }
 
-        const editPrompt = pickRandom(editPrompts);
+        const editPrompt = buildVariedEditPrompt();
         const editSeed = nextSeed(seedStrategy);
         const editWorkflow = buildEditWorkflow(uploadName, editPrompt, editSeed);
         // Enqueue with affinity to the specific edit client we uploaded the image to.

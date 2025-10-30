@@ -27,6 +27,7 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
   private strategy: FailoverStrategy;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private readonly healthCheckIntervalMs: number;
+  private readonly debugLogs = process.env.WORKFLOW_POOL_DEBUG === "1";
   
   /**
    * Grace period after reconnection before client is considered stable (default: 10 seconds).
@@ -174,7 +175,9 @@ export class ClientManager extends TypedEventTarget<WorkflowPoolEventMap> {
       client: chosen.client,
       clientId: chosen.id,
       release: (opts?: { success?: boolean }) => {
-        console.log(`[ClientManager.release] Releasing client ${chosen.id} for job ${job.jobId}. Setting busy: false.`);
+        if (this.debugLogs) {
+          console.log(`[ClientManager.release] Releasing client ${chosen.id} for job ${job.jobId}. Setting busy: false.`);
+        }
         chosen.busy = false;
         if (opts?.success) {
           const wasBlocked = this.strategy.isWorkflowBlocked?.(chosen, job.workflowHash) ?? false;

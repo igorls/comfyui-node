@@ -3,9 +3,10 @@ import { ComfyApi } from "./client.js";
 import { PromptBuilder } from "./prompt-builder.js";
 import { TExecutionCached, TComfyAPIEventMap } from "./types/event.js";
 import { FailedCacheError, WentMissingError, EnqueueFailedError, DisconnectedError, CustomEventError, ExecutionFailedError, ExecutionInterruptedError, MissingNodeError } from "./types/error.js";
+import { buildEnqueueFailedError } from "./utils/response-error.js";
 
 const DISCONNECT_FAILURE_GRACE_MS = 5000;
-import { buildEnqueueFailedError } from "./utils/response-error.js";
+const CALL_WRAPPER_DEBUG = process.env.WORKFLOW_POOL_DEBUG === "1";
 
 type LogEventDetail = TComfyAPIEventMap["log"] extends CustomEvent<infer D> ? D : never;
 
@@ -527,14 +528,18 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
   }
 
   private resolveJob(value: Record<keyof PromptBuilder<I, O, T>["mapOutputKeys"] | "_raw", any> | false) {
-    console.log("[debug] resolveJob", this.promptId, value, Boolean(this.jobResolveFn), this.jobDoneResolved);
+    if (CALL_WRAPPER_DEBUG) {
+      console.log("[debug] resolveJob", this.promptId, value, Boolean(this.jobResolveFn), this.jobDoneResolved);
+    }
     if (this.jobResolveFn) {
       if (this.jobDoneResolved) {
         return;
       }
       this.jobDoneResolved = true;
       this.jobResolveFn(value);
-      console.log("[debug] jobResolveFn invoked", this.promptId);
+      if (CALL_WRAPPER_DEBUG) {
+        console.log("[debug] jobResolveFn invoked", this.promptId);
+      }
     } else {
       this.pendingCompletion = value;
     }
@@ -547,9 +552,13 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     }
     const targetPromptId = promptId ?? this.promptId;
     try {
-      console.log("[debug] emitFailure start", error.name);
+      if (CALL_WRAPPER_DEBUG) {
+        console.log("[debug] emitFailure start", error.name);
+      }
       fn(error, targetPromptId);
-      console.log("[debug] emitFailure end", error.name);
+      if (CALL_WRAPPER_DEBUG) {
+        console.log("[debug] emitFailure end", error.name);
+      }
     } catch (callbackError) {
       this.emitLog("CallWrapper.emitFailure", "onFailed callback threw", {
         prompt_id: targetPromptId,
@@ -831,11 +840,17 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       node_id: (ev as any).detail?.node_id
     });
     this.emitFailure(new CustomEventError(ev.detail.exception_type, { cause: ev.detail }), ev.detail.prompt_id);
-    console.log("[debug] handleError after emitFailure");
+    if (CALL_WRAPPER_DEBUG) {
+      console.log("[debug] handleError after emitFailure");
+    }
     this.resolvePromptLoad(false);
-    console.log("[debug] handleError before cleanup");
+    if (CALL_WRAPPER_DEBUG) {
+      console.log("[debug] handleError before cleanup");
+    }
     this.cleanupListeners("execution_error received");
-    console.log("[debug] handleError after cleanup");
+    if (CALL_WRAPPER_DEBUG) {
+      console.log("[debug] handleError after cleanup");
+    }
     this.resolveJob(false);
   }
 
