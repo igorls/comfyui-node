@@ -4,6 +4,7 @@ export class ClientManager extends TypedEventTarget {
     strategy;
     healthCheckInterval = null;
     healthCheckIntervalMs;
+    debugLogs = process.env.WORKFLOW_POOL_DEBUG === "1";
     /**
      * Grace period after reconnection before client is considered stable (default: 10 seconds).
      * ComfyUI sometimes quickly disconnects/reconnects after job execution.
@@ -124,7 +125,9 @@ export class ClientManager extends TypedEventTarget {
             client: chosen.client,
             clientId: chosen.id,
             release: (opts) => {
-                console.log(`[ClientManager.release] Releasing client ${chosen.id} for job ${job.jobId}. Setting busy: false.`);
+                if (this.debugLogs) {
+                    console.log(`[ClientManager.release] Releasing client ${chosen.id} for job ${job.jobId}. Setting busy: false.`);
+                }
                 chosen.busy = false;
                 if (opts?.success) {
                     const wasBlocked = this.strategy.isWorkflowBlocked?.(chosen, job.workflowHash) ?? false;

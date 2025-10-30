@@ -7,5 +7,4 @@ export { MemoryQueueAdapter } from "./queue/adapters/memory.js";
 export type { FailoverStrategy } from "./failover/Strategy.js";
 export { SmartFailoverStrategy } from "./failover/SmartFailoverStrategy.js";
 export type { JobProfileStats, NodeExecutionProfile } from "./profiling/JobProfiler.js";
-export { hashWorkflow } from "./utils/hash.js";
 //# sourceMappingURL=index.d.ts.map

@@ -1,4 +1,3 @@
-export { hashWorkflow } from "./pool/utils/hash.js";
 export { ComfyApi } from "./client.js";
 export { CallWrapper } from "./call-wrapper.js";
 export { ComfyPool, EQueueMode } from "./pool.js";

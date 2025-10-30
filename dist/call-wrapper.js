@@ -1,6 +1,7 @@
 import { FailedCacheError, WentMissingError, EnqueueFailedError, DisconnectedError, CustomEventError, ExecutionFailedError, ExecutionInterruptedError, MissingNodeError } from "./types/error.js";
-const DISCONNECT_FAILURE_GRACE_MS = 5000;
 import { buildEnqueueFailedError } from "./utils/response-error.js";
+const DISCONNECT_FAILURE_GRACE_MS = 5000;
+const CALL_WRAPPER_DEBUG = process.env.WORKFLOW_POOL_DEBUG === "1";
 /**
  * Represents a wrapper class for making API calls using the ComfyApi client.
  * Provides methods for setting callback functions and executing the job.
@@ -391,6 +392,8 @@ export class CallWrapper {
             return;
         }
         this.promptId = job.prompt_id;
+        console.log(`[CallWrapper] Enqueued with promptId=${this.promptId?.substring(0, 8)}...`);
+        console.log(`[CallWrapper] Full job object:`, JSON.stringify({ promptId: job.prompt_id }, null, 2));
         this.emitLog("CallWrapper.enqueueJob", "queued", { prompt_id: this.promptId });
         this.onPendingFn?.(this.promptId);
         this.onDisconnectedHandlerOffFn = this.client.on("disconnected", () => {
@@ -435,14 +438,18 @@ export class CallWrapper {
         }
     }
     resolveJob(value) {
-        console.log("[debug] resolveJob", this.promptId, value, Boolean(this.jobResolveFn), this.jobDoneResolved);
+        if (CALL_WRAPPER_DEBUG) {
+            console.log("[debug] resolveJob", this.promptId, value, Boolean(this.jobResolveFn), this.jobDoneResolved);
+        }
         if (this.jobResolveFn) {
             if (this.jobDoneResolved) {
                 return;
             }
             this.jobDoneResolved = true;
             this.jobResolveFn(value);
-            console.log("[debug] jobResolveFn invoked", this.promptId);
+            if (CALL_WRAPPER_DEBUG) {
+                console.log("[debug] jobResolveFn invoked", this.promptId);
+            }
         }
         else {
             this.pendingCompletion = value;
@@ -455,9 +462,13 @@ export class CallWrapper {
         }
         const targetPromptId = promptId ?? this.promptId;
         try {
-            console.log("[debug] emitFailure start", error.name);
+            if (CALL_WRAPPER_DEBUG) {
+                console.log("[debug] emitFailure start", error.name);
+            }
             fn(error, targetPromptId);
-            console.log("[debug] emitFailure end", error.name);
+            if (CALL_WRAPPER_DEBUG) {
+                console.log("[debug] emitFailure end", error.name);
+            }
         }
         catch (callbackError) {
             this.emitLog("CallWrapper.emitFailure", "onFailed callback threw", {
@@ -603,10 +614,26 @@ export class CallWrapper {
             return;
         }
         const reverseOutputMapped = this.reverseMapOutputKeys();
+        const mapOutputKeys = this.prompt.mapOutputKeys;
+        console.log(`[CallWrapper] handleJobExecution for ${promptId.substring(0, 8)}... - mapOutputKeys:`, mapOutputKeys, "reverseOutputMapped:", reverseOutputMapped);
         this.progressHandlerOffFn = this.client.on("progress", (ev) => this.handleProgress(ev, promptId));
-        this.previewHandlerOffFn = this.client.on("b_preview", (ev) => this.onPreviewFn?.(ev.detail, this.promptId));
+        this.previewHandlerOffFn = this.client.on("b_preview", (ev) => {
+            // Note: b_preview events don't include prompt_id. They're scoped per connection.
+            // If multiple jobs use the same connection, they will all receive preview events.
+            // This is a limitation of the ComfyUI protocol - previews are not separated by prompt_id.
+            this.onPreviewFn?.(ev.detail, this.promptId);
+        });
         // Also forward preview with metadata if available
-        const offPreviewMeta = this.client.on("b_preview_meta", (ev) => this.onPreviewMetaFn?.(ev.detail, this.promptId));
+        const offPreviewMeta = this.client.on("b_preview_meta", (ev) => {
+            // Validate prompt_id from metadata if available to prevent cross-user preview leakage
+            const metadata = ev.detail.metadata;
+            const metaPromptId = metadata?.prompt_id;
+            if (metaPromptId && metaPromptId !== promptId) {
+                console.log(`[CallWrapper] Ignoring b_preview_meta for wrong prompt. Expected ${promptId.substring(0, 8)}..., got ${metaPromptId.substring(0, 8)}...`);
+                return;
+            }
+            this.onPreviewMetaFn?.(ev.detail, this.promptId);
+        });
         const prevCleanup = this.previewHandlerOffFn;
         this.previewHandlerOffFn = () => {
             prevCleanup?.();
@@ -614,16 +641,18 @@ export class CallWrapper {
         };
         const totalOutput = Object.keys(reverseOutputMapped).length;
         let remainingOutput = totalOutput;
+        console.log(`[CallWrapper] totalOutput=${totalOutput}, remainingOutput=${remainingOutput}`);
         const executionHandler = (ev) => {
-            if (ev.detail.prompt_id !== promptId)
+            console.log(`[CallWrapper.executionHandler] received executed event for promptId=${ev.detail.prompt_id?.substring(0, 8)}..., node=${ev.detail.node}, waitingFor=${promptId.substring(0, 8)}...`);
+            const eventPromptId = ev.detail.prompt_id;
+            const isCorrectPrompt = eventPromptId === promptId;
+            // STRICT: Only accept events where prompt_id matches our expected promptId
+            if (!isCorrectPrompt) {
+                console.log(`[CallWrapper.executionHandler] REJECTED - prompt_id mismatch (expected ${promptId.substring(0, 8)}..., got ${eventPromptId?.substring(0, 8)}...)`);
                 return;
+            }
             const outputKey = reverseOutputMapped[ev.detail.node];
-            this.emitLog("CallWrapper.executionHandler", "executed event received", {
-                node: ev.detail.node,
-                outputKey,
-                remainingBefore: remainingOutput,
-                isTrackedOutput: !!outputKey
-            });
+            console.log(`[CallWrapper] executionHandler - promptId: ${promptId.substring(0, 8)}... (event says: ${ev.detail.prompt_id?.substring(0, 8)}...), node: ${ev.detail.node}, outputKey: ${outputKey}, output:`, JSON.stringify(ev.detail.output));
             if (outputKey) {
                 this.output[outputKey] = ev.detail.output;
                 this.onOutputFn?.(outputKey, ev.detail.output, this.promptId);
@@ -634,12 +663,9 @@ export class CallWrapper {
                 this.output._raw[ev.detail.node] = ev.detail.output;
                 this.onOutputFn?.(ev.detail.node, ev.detail.output, this.promptId);
             }
-            this.emitLog("CallWrapper.executionHandler", "after processing executed event", {
-                remainingAfter: remainingOutput,
-                willTriggerCompletion: remainingOutput === 0
-            });
+            console.log(`[CallWrapper] afterProcessing - remainingAfter: ${remainingOutput}, willTriggerCompletion: ${remainingOutput === 0}`);
             if (remainingOutput === 0) {
-                this.emitLog("CallWrapper.handleJobExecution", "all outputs collected");
+                console.log(`[CallWrapper] all outputs collected for ${promptId.substring(0, 8)}...`);
                 // Mark as successfully completing BEFORE cleanup to prevent race condition with disconnection handler
                 this.isCompletingSuccessfully = true;
                 this.cleanupListeners("all outputs collected");
@@ -648,27 +674,90 @@ export class CallWrapper {
             }
         };
         const executedEnd = async () => {
-            this.emitLog("CallWrapper.executedEnd", "execution_success fired", {
-                promptId,
-                remainingOutput,
-                totalOutput
-            });
-            if (remainingOutput === 0) {
-                this.emitLog("CallWrapper.executedEnd", "all outputs already collected, nothing to do");
+            console.log(`[CallWrapper] execution_success fired for ${promptId.substring(0, 8)}..., remainingOutput=${remainingOutput}, totalOutput=${totalOutput}`);
+            // If we've already marked this as successfully completing, don't fail it again
+            if (this.isCompletingSuccessfully) {
+                console.log(`[CallWrapper] Already marked as successfully completing, ignoring this execution_success`);
                 return;
             }
-            const hisData = await this.client.ext.history.getHistory(promptId);
-            if (hisData?.status?.completed) {
-                const outputCount = Object.keys(hisData.outputs ?? {}).length;
-                if (outputCount > 0 && outputCount - totalOutput === 0) {
-                    this.emitLog("CallWrapper.executedEnd", "outputs equal total after history check -> ignore false end");
-                    return;
+            if (remainingOutput === 0) {
+                console.log(`[CallWrapper] all outputs already collected, nothing to do`);
+                return;
+            }
+            // Wait briefly for outputs that might be arriving due to prompt ID mismatch
+            await new Promise(resolve => setTimeout(resolve, 100));
+            console.log(`[CallWrapper] After wait - remainingOutput=${remainingOutput}, this.output keys:`, Object.keys(this.output));
+            // Check if outputs arrived while we were waiting
+            if (remainingOutput === 0) {
+                console.log(`[CallWrapper] Outputs arrived during wait - marking as complete`);
+                this.isCompletingSuccessfully = true;
+                this.cleanupListeners("executedEnd - outputs complete after wait");
+                this.onFinishedFn?.(this.output, this.promptId);
+                this.resolveJob(this.output);
+                return;
+            }
+            // Check if we have collected all outputs (even if prompt ID mismatch)
+            const hasAllOutputs = Object.keys(reverseOutputMapped).every(nodeId => this.output[reverseOutputMapped[nodeId]] !== undefined);
+            if (hasAllOutputs) {
+                console.log(`[CallWrapper] Have all required outputs despite promptId mismatch - marking as complete`);
+                this.isCompletingSuccessfully = true;
+                this.cleanupListeners("executedEnd - outputs complete despite promptId mismatch");
+                this.onFinishedFn?.(this.output, this.promptId);
+                this.resolveJob(this.output);
+                return;
+            }
+            // Try to fetch from history with retry logic
+            let hisData = null;
+            for (let retries = 0; retries < 5; retries++) {
+                hisData = await this.client.ext.history.getHistory(promptId);
+                console.log(`[CallWrapper] History query result for ${promptId.substring(0, 8)}... (attempt ${retries + 1}) - status:`, hisData?.status, 'outputs:', Object.keys(hisData?.outputs ?? {}).length);
+                if (hisData?.status?.completed && hisData.outputs) {
+                    console.log(`[CallWrapper] Found completed job in history with outputs - attempting to populate from history`);
+                    break;
+                }
+                if (retries < 4) {
+                    console.log(`[CallWrapper] History not ready yet, waiting 100ms before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, 100));
                 }
             }
-            this.emitLog("CallWrapper.executedEnd", "execution failed due to missing outputs", {
-                remainingOutput,
-                totalOutput
-            });
+            if (hisData?.status?.completed && hisData.outputs) {
+                // Try to extract outputs from history data
+                let populatedCount = 0;
+                for (const [nodeIdStr, nodeOutput] of Object.entries(hisData.outputs)) {
+                    const nodeId = parseInt(nodeIdStr, 10);
+                    const outputKey = reverseOutputMapped[nodeId];
+                    if (outputKey && nodeOutput) {
+                        // nodeOutput is typically { images: [...] } or similar - take the first property
+                        const outputValue = Array.isArray(nodeOutput) ? nodeOutput[0] : Object.values(nodeOutput)[0];
+                        if (outputValue !== undefined) {
+                            this.output[outputKey] = outputValue;
+                            this.onOutputFn?.(outputKey, outputValue, this.promptId);
+                            populatedCount++;
+                            remainingOutput--;
+                            console.log(`[CallWrapper] Populated ${outputKey} from history`);
+                        }
+                    }
+                }
+                if (remainingOutput === 0) {
+                    console.log(`[CallWrapper] Successfully populated all outputs from history for ${promptId.substring(0, 8)}...`);
+                    this.isCompletingSuccessfully = true;
+                    this.cleanupListeners("executedEnd - populated from history");
+                    this.onFinishedFn?.(this.output, this.promptId);
+                    this.resolveJob(this.output);
+                    return;
+                }
+                if (populatedCount > 0) {
+                    console.log(`[CallWrapper] Populated ${populatedCount} outputs from history (remainingOutput=${remainingOutput})`);
+                    if (remainingOutput === 0) {
+                        this.isCompletingSuccessfully = true;
+                        this.cleanupListeners("executedEnd - all outputs from history");
+                        this.onFinishedFn?.(this.output, this.promptId);
+                        this.resolveJob(this.output);
+                        return;
+                    }
+                }
+            }
+            console.log(`[CallWrapper] execution failed due to missing outputs - remainingOutput=${remainingOutput}, totalOutput=${totalOutput}`);
             this.emitFailure(new ExecutionFailedError("Execution failed"), this.promptId);
             this.resolvePromptLoad(false);
             this.cleanupListeners("executedEnd missing outputs");
@@ -676,6 +765,7 @@ export class CallWrapper {
         };
         this.executionEndSuccessOffFn = this.client.on("execution_success", executedEnd);
         this.executionHandlerOffFn = this.client.on("executed", executionHandler);
+        console.log(`[CallWrapper] Registered listeners for ${promptId.substring(0, 8)}... - executionHandler and executedEnd`);
         this.errorHandlerOffFn = this.client.on("execution_error", (ev) => this.handleError(ev, promptId));
         this.interruptionHandlerOffFn = this.client.on("execution_interrupted", (ev) => {
             if (ev.detail.prompt_id !== promptId)
@@ -709,11 +799,17 @@ export class CallWrapper {
             node_id: ev.detail?.node_id
         });
         this.emitFailure(new CustomEventError(ev.detail.exception_type, { cause: ev.detail }), ev.detail.prompt_id);
-        console.log("[debug] handleError after emitFailure");
+        if (CALL_WRAPPER_DEBUG) {
+            console.log("[debug] handleError after emitFailure");
+        }
         this.resolvePromptLoad(false);
-        console.log("[debug] handleError before cleanup");
+        if (CALL_WRAPPER_DEBUG) {
+            console.log("[debug] handleError before cleanup");
+        }
         this.cleanupListeners("execution_error received");
-        console.log("[debug] handleError after cleanup");
+        if (CALL_WRAPPER_DEBUG) {
+            console.log("[debug] handleError after cleanup");
+        }
         this.resolveJob(false);
     }
     emitLog(fnName, message, data) {

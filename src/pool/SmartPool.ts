@@ -3,6 +3,7 @@ import { JobId, JobRecord } from "./types/job.js";
 import { hashWorkflow } from "src/pool/utils/hash.js";
 import { ComfyApi } from "src/client.js";
 import { Workflow } from "src/workflow.js";
+import { PromptBuilder } from "src/prompt-builder.js";
 
 interface SmartPoolOptions {
   connectionTimeoutMs: number;
@@ -235,85 +236,207 @@ export class SmartPool {
 
     workflowHash = workflowHash || workflow.structureHash || "";
 
-    this.emit({
-      type: "workflow:executeImmediate",
-      promptId: "",
-      workflowHash,
-      clientId: selectedClient.apiHost
-    });
+    // Queue the workflow and get the prompt_id
+    // Build PromptBuilder from the workflow to get proper prompt format
+    const workflowJson = (workflow as any).json || workflow;
+    const outputNodeIds = (workflow as any).outputNodeIds || [];
+    
+    // Auto-randomize any node input field named 'seed' whose value is -1 (common ComfyUI convention)
+    const autoSeeds: Record<string, number> = {};
+    try {
+      for (const [nodeId, node] of Object.entries(workflowJson)) {
+        const n: any = node;
+        if (n && n.inputs && Object.prototype.hasOwnProperty.call(n.inputs, 'seed')) {
+          if (n.inputs.seed === -1) {
+            const val = Math.floor(Math.random() * 2_147_483_647); // 32-bit positive range typical for seeds
+            n.inputs.seed = val;
+            autoSeeds[nodeId] = val;
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
+    
+    const pb = new PromptBuilder(workflowJson as any, [], outputNodeIds as any);
+    
+    // Map output nodes
+    for (const nodeId of outputNodeIds) {
+      pb.setOutputNode(nodeId as any, nodeId) as any;
+    }
+    
+    const promptJson = pb.prompt;
+    console.log(`[SmartPool] Queuing workflow with prompt containing nodes:`, Object.keys(promptJson || {}).slice(0, 5));
+    
+    try {
+      const queueResponse = await selectedClient.ext.queue.appendPrompt(promptJson);
+      const promptId = queueResponse.prompt_id;
 
-    // Execute the workflow immediately on the selected client
-    const job = await workflow.run(selectedClient);
+      console.log(`[SmartPool] Queued workflow on ${selectedClient.apiHost} with promptId=${promptId.substring(0, 8)}...`);
 
-    job.on("start", promptId => {
       this.emit({
-        type: "job:start",
+        type: "workflow:executeImmediate",
         promptId,
         workflowHash,
         clientId: selectedClient.apiHost
       });
-    });
 
-    job.on("progress", info => {
-      this.emit({
-        type: "job:progress",
-        promptId: info.prompt_id,
-        workflowHash,
-        clientId: selectedClient.apiHost,
-        data: info
-      });
-    });
+      // Simple execution wrapper: collect outputs from executed events and handle completion
+      const result = await this.waitForExecutionCompletion(selectedClient, promptId, workflow);
 
-    job.on("progress_pct", (pct, info) => {
-      this.emit({
-        type: "job:progress_pct",
-        promptId: info.prompt_id,
-        workflowHash,
-        clientId: selectedClient.apiHost,
-        data: { pct, info }
-      });
-    });
+      console.log(`[SmartPool] Job completed with promptId: ${promptId.substring(0, 8)}...`);
 
-    job.on("preview_meta", data => {
-      this.emit({
-        type: "job:preview_meta",
-        promptId: data.metadata.prompt_id,
-        workflowHash,
-        clientId: selectedClient.apiHost,
-        data
-      });
-    });
-
-    job.on("finished", (data, promptId) => {
-      this.emit({
-        type: "job:finished",
-        promptId,
-        workflowHash,
-        clientId: selectedClient.apiHost,
-        data
-      });
-    });
-
-    const result = await job.done();
-
-    const images = [];
-
-    const aliases = result._aliases || {};
-    for (const aliasKey of Object.keys(aliases)) {
-      const aliasObject = result[aliases[aliasKey]];
-      if (aliasObject && aliasObject.images) {
-        images.push(...aliasObject.images);
+      const images = [];
+      
+      // Fetch outputs using the authoritative prompt ID
+      try {
+        const historyData = await selectedClient.ext.history.getHistory(promptId);
+        if (historyData && historyData.outputs) {
+          for (const nodeId of Object.keys(historyData.outputs)) {
+            const nodeOutput = historyData.outputs[nodeId];
+            if (nodeOutput.images && nodeOutput.images.length > 0) {
+              console.log(`[SmartPool] Found output from history node ${nodeId}: ${nodeOutput.images[0].filename}`);
+              images.push(...nodeOutput.images);
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`[SmartPool] Failed to fetch history: ${e}`);
       }
+      
+      // Fallback to result object if history didn't give us images
+      if (images.length === 0) {
+        console.log(`[SmartPool] Falling back to result object`);
+        const aliases = result._aliases || {};
+        for (const aliasKey of Object.keys(aliases)) {
+          const aliasObject = result[aliases[aliasKey]];
+          if (aliasObject && aliasObject.images) {
+            images.push(...aliasObject.images);
+          }
+        }
+      }
+
+      // Read images from the client that executed the workflow
+      const imageBlob = await selectedClient.ext.file.getImage(images[0]);
+      console.log(`[SmartPool] Fetched image blob for file: ${JSON.stringify(images[0])}`);
+
+      console.log(`Workflow executed on client ${selectedClient.apiHost} with: `, result);
+
+      return { ...result, images, imageBlob };
+    } catch (err) {
+      console.error(`[SmartPool] Failed to execute workflow:`, err);
+      throw err;
     }
+  }
 
-    // Read images from the client that executed the workflow
-    const imageBlob = await selectedClient.ext.file.getImage(images[0]);
+  private async waitForExecutionCompletion(client: ComfyApi, promptId: string, workflow: Workflow<any>): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const result: any = {
+        _promptId: promptId,
+        _aliases: {},
+        _nodes: []
+      };
 
-    console.log(`Extracted ${images.length} images from workflow result.`);
+      const collectedNodes = new Set<string>();
 
-    console.log(`Workflow executed on client ${selectedClient.apiHost} with: `, result);
+      const executedHandler = (ev: CustomEvent) => {
+        const eventPromptId = ev.detail.prompt_id;
+        
+        // Only process events for our specific prompt
+        if (eventPromptId !== promptId) {
+          return;
+        }
 
-    return { ...result, images, imageBlob };
+        const nodeId = ev.detail.node;
+        const output = ev.detail.output;
+
+        // Store output keyed by node ID
+        result[nodeId] = output;
+        collectedNodes.add(nodeId);
+        console.log(`[SmartPool.waitForExecutionCompletion] Collected output from node: ${nodeId}`);
+      };
+
+      const executionSuccessHandler = async (ev: CustomEvent) => {
+        const eventPromptId = ev.detail.prompt_id;
+        
+        // Only process events for our specific prompt
+        if (eventPromptId !== promptId) {
+          return;
+        }
+
+        console.log(`[SmartPool.waitForExecutionCompletion] execution_success fired for ${promptId.substring(0, 8)}...`);
+
+        // Try to fetch complete outputs from history
+        for (let retries = 0; retries < 5; retries++) {
+          try {
+            const historyData = await client.ext.history.getHistory(promptId);
+            if (historyData?.outputs) {
+              console.log(`[SmartPool.waitForExecutionCompletion] Found outputs in history (attempt ${retries + 1})`);
+              
+              // Populate result from history for any nodes we didn't get from websocket
+              for (const [nodeIdStr, nodeOutput] of Object.entries(historyData.outputs)) {
+                const nodeId = parseInt(nodeIdStr, 10).toString();
+                
+                // Only add if we haven't collected this node yet
+                if (!collectedNodes.has(nodeId) && nodeOutput) {
+                  // Extract the actual output value
+                  const outputValue = Array.isArray(nodeOutput) ? nodeOutput[0] : Object.values(nodeOutput)[0];
+                  if (outputValue !== undefined) {
+                    result[nodeId] = outputValue;
+                    collectedNodes.add(nodeId);
+                  }
+                }
+              }
+              
+              // Store collected node IDs
+              result._nodes = Array.from(collectedNodes);
+              
+              cleanup();
+              resolve(result);
+              return;
+            }
+          } catch (e) {
+            // Continue retrying
+          }
+
+          if (retries < 4) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+        }
+
+        // Resolve even if we didn't get all outputs
+        result._nodes = Array.from(collectedNodes);
+        cleanup();
+        resolve(result);
+      };
+
+      const executionErrorHandler = (ev: CustomEvent) => {
+        const eventPromptId = ev.detail.prompt_id;
+        if (eventPromptId !== promptId) {
+          return;
+        }
+
+        console.error(`[SmartPool.waitForExecutionCompletion] Execution error:`, ev.detail);
+        cleanup();
+        reject(new Error(`Execution failed: ${JSON.stringify(ev.detail)}`));
+      };
+
+      const cleanup = () => {
+        offExecuted?.();
+        offExecutionSuccess?.();
+        offExecutionError?.();
+        clearTimeout(timeoutHandle);
+      };
+
+      const offExecuted = client.on("executed", executedHandler as any);
+      const offExecutionSuccess = client.on("execution_success", executionSuccessHandler as any);
+      const offExecutionError = client.on("execution_error", executionErrorHandler as any);
+
+      // Timeout after 5 minutes
+      const timeoutHandle = setTimeout(() => {
+        cleanup();
+        reject(new Error("Execution timeout"));
+      }, 5 * 60 * 1000);
+    });
   }
 
 

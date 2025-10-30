@@ -26,6 +26,7 @@ export declare class ClientManager extends TypedEventTarget<WorkflowPoolEventMap
     private strategy;
     private healthCheckInterval;
     private readonly healthCheckIntervalMs;
+    private readonly debugLogs;
     /**
      * Grace period after reconnection before client is considered stable (default: 10 seconds).
      * ComfyUI sometimes quickly disconnects/reconnects after job execution.

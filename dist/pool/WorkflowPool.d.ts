@@ -172,7 +172,10 @@ export declare class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap>
     private affinities;
     private initPromise;
     private processing;
+    private processQueued;
     private activeJobs;
+    private readonly queueDebug;
+    private debugLog;
     constructor(clients: ComfyApi[], opts?: WorkflowPoolOpts);
     ready(): Promise<void>;
     setAffinity(affinity: WorkflowAffinity): void;

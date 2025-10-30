@@ -23,7 +23,14 @@ export class WorkflowPool extends TypedEventTarget {
     affinities = new Map();
     initPromise;
     processing = false;
+    processQueued = false;
     activeJobs = new Map();
+    queueDebug = process.env.WORKFLOW_POOL_DEBUG === "1";
+    debugLog(...args) {
+        if (this.queueDebug) {
+            console.log(...args);
+        }
+    }
     constructor(clients, opts) {
         super();
         this.strategy = opts?.failoverStrategy ?? new SmartFailoverStrategy();
@@ -277,9 +284,10 @@ export class WorkflowPool extends TypedEventTarget {
         });
     }
     async processQueue() {
-        console.log("[processQueue] Called");
+        this.debugLog("[processQueue] Called");
         if (this.processing) {
-            console.log("[processQueue] Already processing, returning early");
+            this.debugLog("[processQueue] Already processing, returning early");
+            this.processQueued = true;
             return;
         }
         this.processing = true;
@@ -288,17 +296,17 @@ export class WorkflowPool extends TypedEventTarget {
             let iteration = 0;
             while (true) {
                 iteration++;
-                console.log(`[processQueue] Iteration ${iteration}`);
+                this.debugLog(`[processQueue] Iteration ${iteration}`);
                 const idleClients = this.clientManager.list().filter(c => this.clientManager.isClientStable(c));
-                console.log(`[processQueue] Idle clients: [${idleClients.map(c => c.id).join(", ")}] (${idleClients.length})`);
+                this.debugLog(`[processQueue] Idle clients: [${idleClients.map(c => c.id).join(", ")}] (${idleClients.length})`);
                 if (!idleClients.length) {
-                    console.log("[processQueue] No idle clients, breaking");
+                    this.debugLog("[processQueue] No idle clients, breaking");
                     break; // No idle clients available
                 }
                 const waitingJobs = await this.queue.peek(100); // Peek at top 100 jobs
-                console.log(`[processQueue] Waiting jobs in queue: ${waitingJobs.length}`);
+                this.debugLog(`[processQueue] Waiting jobs in queue: ${waitingJobs.length}`);
                 if (!waitingJobs.length) {
-                    console.log("[processQueue] No waiting jobs, breaking");
+                    this.debugLog("[processQueue] No waiting jobs, breaking");
                     break; // No jobs in queue
                 }
                 const leasedClientIds = new Set();
@@ -307,22 +315,22 @@ export class WorkflowPool extends TypedEventTarget {
                 for (const jobPayload of waitingJobs) {
                     const job = this.jobStore.get(jobPayload.jobId);
                     if (!job) {
-                        console.log(`[processQueue] Job ${jobPayload.jobId} not in jobStore, skipping`);
+                        this.debugLog(`[processQueue] Job ${jobPayload.jobId} not in jobStore, skipping`);
                         continue;
                     }
                     const compatibleClients = idleClients
                         .filter(client => {
                         const canRun = this.clientManager.canClientRunJob(client, job);
                         if (!canRun) {
-                            console.log(`[processQueue] Job ${job.jobId.substring(0, 8)}... NOT compatible with ${client.id}. Checking why...`);
-                            console.log(`[processQueue]   - preferredClientIds: ${JSON.stringify(job.options.preferredClientIds)}`);
-                            console.log(`[processQueue]   - excludeClientIds: ${JSON.stringify(job.options.excludeClientIds)}`);
-                            console.log(`[processQueue]   - client.id: ${client.id}`);
+                            this.debugLog(`[processQueue] Job ${job.jobId.substring(0, 8)}... NOT compatible with ${client.id}. Checking why...`);
+                            this.debugLog(`[processQueue]   - preferredClientIds: ${JSON.stringify(job.options.preferredClientIds)}`);
+                            this.debugLog(`[processQueue]   - excludeClientIds: ${JSON.stringify(job.options.excludeClientIds)}`);
+                            this.debugLog(`[processQueue]   - client.id: ${client.id}`);
                         }
                         return canRun;
                     })
                         .map(client => client.id);
-                    console.log(`[processQueue] Job ${job.jobId.substring(0, 8)}... compatible with: [${compatibleClients.join(", ")}] (selectivity=${compatibleClients.length})`);
+                    this.debugLog(`[processQueue] Job ${job.jobId.substring(0, 8)}... compatible with: [${compatibleClients.join(", ")}] (selectivity=${compatibleClients.length})`);
                     if (compatibleClients.length > 0) {
                         jobMatchInfos.push({
                             jobPayload,
@@ -332,9 +340,9 @@ export class WorkflowPool extends TypedEventTarget {
                         });
                     }
                 }
-                console.log(`[processQueue] Found ${jobMatchInfos.length} compatible job matches`);
+                this.debugLog(`[processQueue] Found ${jobMatchInfos.length} compatible job matches`);
                 if (jobMatchInfos.length === 0) {
-                    console.log("[processQueue] No compatible jobs for idle clients, breaking");
+                    this.debugLog("[processQueue] No compatible jobs for idle clients, breaking");
                     break; // No compatible jobs for idle clients
                 }
                 // Sort jobs by priority first, then selectivity, to maximize throughput
@@ -365,10 +373,10 @@ export class WorkflowPool extends TypedEventTarget {
                     // Find first available compatible client
                     const availableClient = matchInfo.compatibleClients.find(clientId => !leasedClientIds.has(clientId));
                     if (!availableClient) {
-                        console.log(`[processQueue] No available client for job ${matchInfo.job.jobId.substring(0, 8)}...`);
+                        this.debugLog(`[processQueue] No available client for job ${matchInfo.job.jobId.substring(0, 8)}...`);
                         continue; // No available clients for this job
                     }
-                    console.log(`[processQueue] Reserving job ${matchInfo.job.jobId.substring(0, 8)}... for client ${availableClient}`);
+                    this.debugLog(`[processQueue] Reserving job ${matchInfo.job.jobId.substring(0, 8)}... for client ${availableClient}`);
                     const reservation = await this.queue.reserveById(matchInfo.job.jobId);
                     if (reservation) {
                         // Mark as leased/reserved for this cycle
@@ -378,7 +386,7 @@ export class WorkflowPool extends TypedEventTarget {
                         // Get the lease (which marks the client as busy)
                         const lease = this.clientManager.claim(matchInfo.job, availableClient);
                         if (lease) {
-                            console.log(`[processQueue] Starting job ${matchInfo.job.jobId.substring(0, 8)}... on client ${availableClient}`);
+                            this.debugLog(`[processQueue] Starting job ${matchInfo.job.jobId.substring(0, 8)}... on client ${availableClient}`);
                             this.runJob({ reservation, job: matchInfo.job, clientId: lease.clientId, release: lease.release }).catch((error) => {
                                 console.error("[WorkflowPool] Unhandled job error", error);
                             });
@@ -390,29 +398,42 @@ export class WorkflowPool extends TypedEventTarget {
                         }
                     }
                     else {
-                        console.log(`[processQueue] Failed to reserve job ${matchInfo.job.jobId.substring(0, 8)}...`);
+                        this.debugLog(`[processQueue] Failed to reserve job ${matchInfo.job.jobId.substring(0, 8)}...`);
                     }
                 }
-                console.log(`[processQueue] Assigned any job in this iteration: ${assignedAnyJob}`);
+                this.debugLog(`[processQueue] Assigned any job in this iteration: ${assignedAnyJob}`);
                 // If we didn't assign any jobs this iteration, no point continuing
                 if (!assignedAnyJob) {
-                    console.log("[processQueue] No jobs assigned, breaking");
+                    this.debugLog("[processQueue] No jobs assigned, breaking");
                     break;
                 }
             }
         }
         finally {
-            console.log("[processQueue] Exiting, setting processing = false");
+            this.debugLog("[processQueue] Exiting, setting processing = false");
             this.processing = false;
+            if (this.processQueued) {
+                this.debugLog("[processQueue] Pending rerun detected, draining queue again");
+                this.processQueued = false;
+                void this.processQueue();
+            }
         }
     }
     async runJob(ctx) {
         const { reservation, job, clientId, release } = ctx;
+        let released = false;
+        const safeRelease = (opts) => {
+            if (released) {
+                return;
+            }
+            released = true;
+            release(opts);
+        };
         const managed = this.clientManager.getClient(clientId);
         const client = managed?.client;
         if (!client) {
             await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
-            release({ success: false });
+            safeRelease({ success: false });
             return;
         }
         job.status = "running";
@@ -692,10 +713,11 @@ export class WorkflowPool extends TypedEventTarget {
             }
             completionError = undefined;
             this.dispatchEvent(new CustomEvent("job:completed", { detail: { job } }));
+            safeRelease({ success: true });
             resolveCompletion?.();
         });
         wrapper.onFailed((error, promptId) => {
-            console.log("[debug] wrapper.onFailed", job.jobId, error.name);
+            this.debugLog("[debug] wrapper.onFailed", job.jobId, error.name);
             if (!job.promptId && promptId) {
                 job.promptId = promptId;
             }
@@ -704,7 +726,8 @@ export class WorkflowPool extends TypedEventTarget {
             cleanupNodeTimeout();
             rejectPending?.(error);
             completionError = error;
-            console.log("[debug] resolveCompletion available", Boolean(resolveCompletion));
+            this.debugLog("[debug] resolveCompletion available", Boolean(resolveCompletion));
+            safeRelease({ success: false });
             resolveCompletion?.();
         });
         try {
@@ -735,7 +758,7 @@ export class WorkflowPool extends TypedEventTarget {
                 reservation,
                 job,
                 clientId,
-                release,
+                release: (opts) => safeRelease(opts),
                 cancel: async () => {
                     try {
                         wrapper.cancel("workflow pool cancel");
@@ -746,7 +769,7 @@ export class WorkflowPool extends TypedEventTarget {
                     finally {
                         this.activeJobs.delete(job.jobId);
                         await this.queue.discard(reservation.reservationId, new Error("cancelled"));
-                        release({ success: false });
+                        safeRelease({ success: false });
                     }
                 }
             });
@@ -760,11 +783,11 @@ export class WorkflowPool extends TypedEventTarget {
                 throw errorToThrow;
             }
             await this.queue.commit(reservation.reservationId);
-            release({ success: true });
+            safeRelease({ success: true });
         }
         catch (error) {
             // Immediately release the client on any failure
-            release({ success: false });
+            safeRelease({ success: false });
             const latestStatus = this.jobStore.get(job.jobId)?.status;
             if (latestStatus === "cancelled") {
                 return;
@@ -810,7 +833,7 @@ export class WorkflowPool extends TypedEventTarget {
         }
         finally {
             this.activeJobs.delete(job.jobId);
-            console.log(`[runJob.finally] Job ${job.jobId.substring(0, 8)}... completed, calling processQueue()`);
+            this.debugLog(`[runJob.finally] Job ${job.jobId.substring(0, 8)}... completed, calling processQueue()`);
             void this.processQueue();
         }
     }
