@@ -300,4 +300,55 @@ describe("WorkflowPool", () => {
 
         await pool.shutdown();
     });
+
+    it("respects job priority when processing queue", async () => {
+        const client = new FakeWorkflowClient("client-priority");
+        const pool = new WorkflowPool([client as any], { failoverStrategy });
+        await pool.ready();
+
+        const completionOrder: string[] = [];
+
+        pool.on("job:accepted", (ev) => {
+            const job = ev.detail.job;
+            const name = job.options.metadata?.name as string;
+            completionOrder.push(name);
+            
+            const promptId = job.promptId!;
+            setTimeout(() => {
+                void client.completePrompt(promptId, { "1": { data: { ok: true } } });
+            }, 0);
+        });
+
+        // Enqueue all jobs quickly so they're in queue before processing starts
+        const enqueuePromises = [
+            pool.enqueue({ "1": { class_type: "test" } }, { 
+                priority: 1,
+                metadata: { name: "low-priority" }
+            }),
+            pool.enqueue({ "1": { class_type: "test" } }, { 
+                priority: 10,
+                metadata: { name: "high-priority" }
+            }),
+            pool.enqueue({ "1": { class_type: "test" } }, { 
+                priority: 5,
+                metadata: { name: "medium-priority" }
+            })
+        ];
+
+        await Promise.all(enqueuePromises);
+
+        // Wait for all jobs to complete
+        await new Promise<void>((resolve) => {
+            let completed = 0;
+            pool.on("job:completed", () => {
+                completed++;
+                if (completed === 3) resolve();
+            });
+        });
+
+        // Verify execution order respects priority (high > medium > low)
+        expect(completionOrder).toEqual(["high-priority", "medium-priority", "low-priority"]);
+
+        await pool.shutdown();
+    });
 });

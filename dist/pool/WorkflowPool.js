@@ -299,15 +299,22 @@ export class WorkflowPool extends TypedEventTarget {
                     });
                 }
             }
-            // Sort jobs by selectivity (most selective first) to maximize throughput
-            // More selective jobs (fewer compatible clients) should be assigned first
-            // This prevents clients from taking jobs when there are jobs only they can run
+            // Sort jobs by priority first, then selectivity, to maximize throughput
+            // 1. Higher priority jobs execute first (explicit user priority)
+            // 2. More selective jobs (fewer compatible clients) assigned first within same priority
+            // 3. Earlier queue position as final tiebreaker
             jobMatchInfos.sort((a, b) => {
-                // Primary: selectivity (fewer compatible clients = higher priority)
+                // Primary: priority (higher priority = higher precedence)
+                const aPriority = a.job.options.priority ?? 0;
+                const bPriority = b.job.options.priority ?? 0;
+                if (aPriority !== bPriority) {
+                    return bPriority - aPriority; // Higher priority first
+                }
+                // Secondary: selectivity (fewer compatible clients = higher precedence)
                 if (a.selectivity !== b.selectivity) {
                     return a.selectivity - b.selectivity;
                 }
-                // Secondary: maintain queue order (earlier jobs first)
+                // Tertiary: maintain queue order (earlier jobs first)
                 const aIndex = waitingJobs.indexOf(a.jobPayload);
                 const bIndex = waitingJobs.indexOf(b.jobPayload);
                 return aIndex - bIndex;
