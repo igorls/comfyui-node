@@ -167,6 +167,10 @@ async function main() {
     { workflowHash: editWorkflowHash, preferredClientIds: editClientIds }
   ];
 
+  // WorkflowPool uses selectivity-based job matching for optimal throughput:
+  // - Jobs with fewer compatible clients (more selective) are assigned first
+  // - This prevents idle clients in heterogeneous clusters
+  // - Priority can also be set per job to override selectivity ordering
   const pool = new WorkflowPool(clients, { workflowAffinities: affinities });
   log(
     "WorkflowPool created with clients:",
