@@ -590,7 +590,7 @@ export class WorkflowPool extends TypedEventTarget {
         let completionError;
         // completionPromise is used to track when the wrapper completes (success or failure)
         // It's resolved in onFinished and onFailed handlers
-        new Promise((resolve) => {
+        const completionPromise = new Promise((resolve) => {
             resolveCompletion = resolve;
         });
         let jobStartedDispatched = false;
@@ -751,6 +751,8 @@ export class WorkflowPool extends TypedEventTarget {
                 }
             });
             const result = await exec;
+            // Wait for the wrapper to complete (onFinished or onFailed callback)
+            await completionPromise;
             if (result === false) {
                 const errorToThrow = (completionError instanceof Error ? completionError : undefined) ??
                     (job.lastError instanceof Error ? job.lastError : undefined) ??

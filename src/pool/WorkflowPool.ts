@@ -860,7 +860,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     let completionError: unknown;
     // completionPromise is used to track when the wrapper completes (success or failure)
     // It's resolved in onFinished and onFailed handlers
-    new Promise<void>((resolve) => {
+    const completionPromise = new Promise<void>((resolve) => {
       resolveCompletion = resolve;
     });
 
@@ -1054,6 +1054,9 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       });
 
       const result = await exec;
+      
+      // Wait for the wrapper to complete (onFinished or onFailed callback)
+      await completionPromise;
 
       if (result === false) {
         const errorToThrow =
@@ -1064,7 +1067,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       }
 
       await this.queue.commit(reservation.reservationId);
-      release({ success: true });
+      release({ success: true});
 
     } catch (error) {
       // Immediately release the client on any failure
