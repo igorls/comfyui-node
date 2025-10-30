@@ -17,8 +17,8 @@ const EDIT_HOSTS = ["http://afterpic-comfy-igor:8188", "http://afterpic-comfy-do
 
 const hosts = process.env.TWO_STAGE_HOSTS
   ? process.env.TWO_STAGE_HOSTS.split(",")
-      .map((h) => h.trim())
-      .filter(Boolean)
+    .map((h) => h.trim())
+    .filter(Boolean)
   : DEFAULT_HOSTS;
 
 if (hosts.length === 0) {
@@ -172,10 +172,14 @@ async function main() {
   // - This prevents idle clients in heterogeneous clusters
   // - Priority can also be set per job to override selectivity ordering
   const pool = new WorkflowPool(clients, { workflowAffinities: affinities });
-  log(
-    "WorkflowPool created with clients:",
-    clients.map((c) => c.id)
-  );
+
+  pool.on('job:completed', async (ev) => {
+    const stats = await pool.getQueueStats();
+    console.log('Queue stats after job completed:', stats);
+  });
+
+  log("WorkflowPool created with clients:", clients.map((c) => c.id));
+
   log("Affinities:", pool.getAffinities());
 
   const endTime = Date.now() + runtimeMs;
