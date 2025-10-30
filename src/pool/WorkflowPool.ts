@@ -204,6 +204,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
   private affinities: Map<string, WorkflowAffinity> = new Map();
   private initPromise: Promise<void>;
   private processing = false;
+  private processQueued = false;
   private activeJobs: Map<JobId, ActiveJobContext> = new Map();
 
   constructor(clients: ComfyApi[], opts?: WorkflowPoolOpts) {
@@ -488,6 +489,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     console.log("[processQueue] Called");
     if (this.processing) {
       console.log("[processQueue] Already processing, returning early");
+      this.processQueued = true;
       return;
     }
     this.processing = true;
@@ -634,6 +636,11 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     } finally {
       console.log("[processQueue] Exiting, setting processing = false");
       this.processing = false;
+      if (this.processQueued) {
+        console.log("[processQueue] Pending rerun detected, draining queue again");
+        this.processQueued = false;
+        void this.processQueue();
+      }
     }
   }
 

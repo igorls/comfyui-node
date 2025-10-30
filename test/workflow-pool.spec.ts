@@ -4,6 +4,7 @@ import { Workflow } from "../src/workflow";
 import { EnqueueFailedError, WorkflowNotSupportedError } from "../src/types/error";
 import type { WorkflowPoolEventMap } from "../src/pool/types/events";
 import type { FailoverStrategy } from "../src/pool/failover/Strategy";
+import { hashWorkflow } from "../src/pool/utils/hash";
 
 class NoopFailoverStrategy implements FailoverStrategy {
     shouldSkipClient() {
@@ -152,6 +153,11 @@ function waitForEvent<K extends keyof WorkflowPoolEventMap>(pool: WorkflowPool, 
 const SAMPLE_WORKFLOW = {
     "1": { class_type: "EmptyLatentImage", inputs: { width: 8, height: 8, batch_size: 1 } },
     "2": { class_type: "SaveImage", inputs: { images: ["1", 0], filename_prefix: "demo" } }
+};
+
+const EDIT_SAMPLE_WORKFLOW = {
+    "91": { class_type: "LoadImage", inputs: { image: "placeholder" } },
+    "207": { class_type: "SaveImage", inputs: { images: ["91", 0], filename_prefix: "edit" } }
 };
 
 describe("WorkflowPool", () => {
@@ -350,5 +356,104 @@ describe("WorkflowPool", () => {
         expect(completionOrder).toEqual(["high-priority", "medium-priority", "low-priority"]);
 
         await pool.shutdown();
+    });
+
+    it("blocks follow-up jobs when the only compatible client stays busy (regression capture)", async () => {
+        const genClient = new FakeWorkflowClient("host-gen");
+        const editClient = new FakeWorkflowClient("host-edit");
+        const spareClient = new FakeWorkflowClient("host-spare");
+
+        const generationHash = hashWorkflow(SAMPLE_WORKFLOW);
+        const editHash = hashWorkflow(EDIT_SAMPLE_WORKFLOW);
+
+        const pool = new WorkflowPool([genClient as any, editClient as any, spareClient as any], {
+            failoverStrategy,
+            workflowAffinities: [
+                { workflowHash: generationHash, preferredClientIds: ["host-gen"] },
+                { workflowHash: editHash, preferredClientIds: ["host-edit"] }
+            ]
+        });
+        await pool.ready();
+
+        const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        const offAccepted = pool.on("job:accepted", (ev) => {
+            const job = ev.detail.job;
+            const meta = job.options.metadata as Record<string, any> | undefined;
+            if (meta?.type === "gen") {
+                const promptId = job.promptId!;
+                setTimeout(() => {
+                    void genClient.completePrompt(promptId, { "2": { images: [{}] } });
+                }, 0);
+            } else if (meta?.type === "edit") {
+                const promptId = job.promptId!;
+                setTimeout(() => {
+                    void editClient.completePrompt(promptId, { "207": { images: [{}] } });
+                }, 0);
+            }
+        });
+
+        let editEnqueued = false;
+        const offCompleted = pool.on("job:completed", (ev) => {
+            const job = ev.detail.job;
+            const meta = job.options.metadata as Record<string, any> | undefined;
+            if (!editEnqueued && meta?.type === "gen" && meta.index === 1) {
+                editEnqueued = true;
+                void pool.enqueue(Workflow.from(EDIT_SAMPLE_WORKFLOW).output("207"), {
+                    includeOutputs: ["207"],
+                    metadata: { type: "edit" },
+                    preferredClientIds: ["host-edit"]
+                });
+            }
+        });
+
+        const waitForJobAccepted = async (jobId: string) => {
+            const existing = pool.getJob(jobId);
+            if (existing && existing.status !== "queued") {
+                return { detail: { job: existing } } as WorkflowPoolEventMap["job:accepted"];
+            }
+            return new Promise<WorkflowPoolEventMap["job:accepted"]>((resolve) => {
+                const off = pool.on("job:accepted", (ev) => {
+                    if (ev.detail.job.jobId === jobId) {
+                        off();
+                        resolve(ev as WorkflowPoolEventMap["job:accepted"]);
+                    }
+                });
+            });
+        };
+
+        const waitForJobCompleted = (jobId: string) =>
+            new Promise<WorkflowPoolEventMap["job:completed"]>((resolve) => {
+                const off = pool.on("job:completed", (ev) => {
+                    if (ev.detail.job.jobId === jobId) {
+                        off();
+                        resolve(ev as WorkflowPoolEventMap["job:completed"]);
+                    }
+                });
+            });
+
+        const generationWorkflowA = Workflow.from(SAMPLE_WORKFLOW).output("2");
+        const generationWorkflowB = Workflow.from(SAMPLE_WORKFLOW).output("2");
+
+        const genJobA = await pool.enqueue(generationWorkflowA, {
+            includeOutputs: ["2"],
+            metadata: { type: "gen", index: 1 }
+        });
+        const genJobB = await pool.enqueue(generationWorkflowB, {
+            includeOutputs: ["2"],
+            metadata: { type: "gen", index: 2 }
+        });
+
+        const jobBAcceptedPromise = waitForJobAccepted(genJobB).then(() => "accepted");
+
+        await waitForJobCompleted(genJobA);
+
+        const raceResult = await Promise.race([jobBAcceptedPromise, delay(200).then(() => "timeout")]);
+
+        offAccepted();
+        offCompleted();
+        await pool.shutdown();
+
+        expect(raceResult).toBe("accepted");
     });
 });
