@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { WorkflowAffinity } from "./types/affinity.js";
-import { JobId, JobRecord } from "./types/job.js";
+import { JobId, JobRecord, WorkflowJobPayload, JobStatus } from "./types/job.js";
 import { hashWorkflow } from "src/pool/utils/hash.js";
 import { ComfyApi } from "src/client.js";
 import { Workflow } from "src/workflow.js";
 import { PromptBuilder } from "src/prompt-builder.js";
+import { MemoryQueueAdapter } from "./queue/adapters/memory.js";
+import { TypedEventTarget } from "src/typed-event-target.js";
 
 interface SmartPoolOptions {
   connectionTimeoutMs: number;
@@ -26,7 +29,15 @@ interface ClientQueueState {
   runningJobs: number;
 }
 
-export class SmartPool {
+interface SmartPoolEventMap extends Record<string, CustomEvent<any>> {
+  "job:queued": CustomEvent<{ job: JobRecord }>;
+  "job:accepted": CustomEvent<{ job: JobRecord }>;
+  "job:started": CustomEvent<{ job: JobRecord }>;
+  "job:completed": CustomEvent<{ job: JobRecord }>;
+  "job:failed": CustomEvent<{ job: JobRecord; willRetry?: boolean }>;
+}
+
+export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
 
   // Clients managed by the pool
   clientMap: Map<string, ComfyApi> = new Map();
@@ -40,6 +51,12 @@ export class SmartPool {
   // Affinities mapping workflow hashes to preferred clients
   affinities: Map<string, WorkflowAffinity> = new Map();
 
+  // Queue adapter for job persistence
+  private queueAdapter: MemoryQueueAdapter;
+
+  // Flag to prevent concurrent queue processing
+  private processingNextJob = false;
+
   // Pool options
   private options: SmartPoolOptions;
 
@@ -51,11 +68,16 @@ export class SmartPool {
 
   constructor(clients: (ComfyApi | string)[], options?: Partial<SmartPoolOptions>) {
 
+    super();
+
     if (options) {
       this.options = { ...DEFAULT_SMART_POOL_OPTIONS, ...options };
     } else {
       this.options = DEFAULT_SMART_POOL_OPTIONS;
     }
+
+    // Initialize queue adapter
+    this.queueAdapter = new MemoryQueueAdapter();
 
     for (const client of clients) {
       if (typeof client === "string") {
@@ -67,7 +89,7 @@ export class SmartPool {
     }
   }
 
-  emit(event: PoolEvent) {
+  emitLegacy(event: PoolEvent) {
     if (this.hooks.any) {
       this.hooks.any(event);
     }
@@ -140,7 +162,6 @@ export class SmartPool {
       .map(value => {
         return new Promise(resolve => {
           value.getQueue().then(value1 => {
-            console.log(value1);
             this.clientQueueStates.set(value.apiHost, {
               queuedJobs: value1.queue_pending.length,
               runningJobs: value1.queue_running.length
@@ -150,7 +171,6 @@ export class SmartPool {
         });
       });
     await Promise.allSettled(promises);
-    console.log(this.clientQueueStates);
   }
 
   // Add a job record to the pool
@@ -187,145 +207,423 @@ export class SmartPool {
     this.affinities.delete(workflowHash);
   }
 
+  /**
+   * Enqueue a workflow for execution by the pool.
+   * Auto-triggers processing via setImmediate (batteries included).
+   */
+  async enqueue(workflow: Workflow<any>, opts?: {
+    preferredClientIds?: string[];
+    priority?: number;
+  }): Promise<JobId> {
+    const jobId = randomUUID();
+    const workflowHash = workflow.structureHash || hashWorkflow((workflow as any).json || workflow);
+    const workflowJson = (workflow as any).json || workflow;
+    const outputNodeIds = (workflow as any).outputNodeIds || [];
+    const outputAliases = (workflow as any).outputAliases || {};
+
+    // Create job record
+    const jobRecord: JobRecord = {
+      jobId,
+      workflow: workflowJson,
+      workflowHash,
+      options: {
+        maxAttempts: 3,
+        retryDelayMs: 1000,
+        priority: opts?.priority ?? 0,
+        preferredClientIds: opts?.preferredClientIds ?? [],
+        excludeClientIds: [],
+        metadata: {}
+      },
+      attempts: 0,
+      enqueuedAt: Date.now(),
+      workflowMeta: {
+        outputNodeIds,
+        outputAliases
+      },
+      status: "queued"
+    };
+
+    // Store in job store
+    this.jobStore.set(jobId, jobRecord);
+
+    // Create payload for queue adapter
+    const payload: WorkflowJobPayload = jobRecord;
+
+    // Enqueue with priority
+    await this.queueAdapter.enqueue(payload, {
+      priority: opts?.priority ?? 0
+    });
+
+    // Emit queued event
+    this.dispatchEvent(new CustomEvent("job:queued", { detail: { job: jobRecord } }));
+
+    // Auto-trigger queue processing immediately (not via setImmediate, so it processes right away)
+    setImmediate(() => this.processNextJobQueued());
+
+    return jobId;
+  }
+
+  /**
+   * Entry point for queue processing with deduplication guard.
+   * Prevents concurrent processing of jobs.
+   * Poll-based approach: check idle servers, collect compatible jobs, enqueue only when slots available.
+   */
+  private async processNextJobQueued(): Promise<void> {
+    if (this.processingNextJob) {
+      return;
+    }
+
+    this.processingNextJob = true;
+    try {
+      // Continuously sync queue states and process available work
+      while (true) {
+        // Update queue states from all clients
+        await this.syncQueueStates();
+
+        // Find idle servers (not running, not pending)
+        const idleServers = this.findIdleServers();
+        if (idleServers.length === 0) {
+          // No idle servers, wait a bit then check again
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+
+        // Try to assign jobs to idle servers
+        const jobsAssigned = await this.assignJobsToIdleServers(idleServers);
+        if (jobsAssigned === 0) {
+          // No jobs could be assigned, wait then try again
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+
+        // Jobs were assigned, give them time to start then re-check
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } finally {
+      this.processingNextJob = false;
+    }
+  }
+
+  /**
+   * Find servers that are currently idle (no running or pending jobs)
+   */
+  private findIdleServers(): ComfyApi[] {
+    const idleServers: ComfyApi[] = [];
+    
+    for (const [clientId, client] of this.clientMap) {
+      if (!client.isReady) continue;
+      
+      const state = this.clientQueueStates.get(clientId);
+      if (state && state.queuedJobs === 0 && state.runningJobs === 0) {
+        idleServers.push(client);
+      }
+    }
+    
+    return idleServers;
+  }
+
+  /**
+   * Assign compatible jobs from our queue to idle servers
+   * Returns number of jobs assigned
+   */
+  private async assignJobsToIdleServers(idleServers: ComfyApi[]): Promise<number> {
+    let jobsAssigned = 0;
+
+    // Peek at pending jobs
+    const pendingJobs = await this.queueAdapter.peek(100);
+    if (pendingJobs.length === 0) {
+      return 0;
+    }
+
+    // Build compatibility matrix
+    interface JobServerMatch {
+      payload: WorkflowJobPayload;
+      job: JobRecord;
+      compatibleServer: ComfyApi;
+    }
+
+    const matches: JobServerMatch[] = [];
+
+    for (const payload of pendingJobs) {
+      const job = this.jobStore.get(payload.jobId);
+      if (!job) continue;
+
+      // Find compatible idle server for this job
+      for (const server of idleServers) {
+        if (this.isJobCompatibleWithServer(payload, job, server)) {
+          matches.push({
+            payload,
+            job,
+            compatibleServer: server
+          });
+          break; // Found a compatible server, move to next job
+        }
+      }
+    }
+
+    // Sort by selectivity (jobs with fewer compatible servers first)
+    matches.sort((a, b) => {
+      const aCompatCount = idleServers.filter(s => this.isJobCompatibleWithServer(a.payload, a.job, s)).length;
+      const bCompatCount = idleServers.filter(s => this.isJobCompatibleWithServer(b.payload, b.job, s)).length;
+      return aCompatCount - bCompatCount;
+    });
+
+    // Assign jobs to idle servers
+    const assignedServers = new Set<string>();
+
+    for (const match of matches) {
+      // Skip if we already assigned to this server
+      if (assignedServers.has(match.compatibleServer.apiHost)) {
+        continue;
+      }
+
+      // Reserve this specific job
+      const reservation = await this.queueAdapter.reserveById(match.job.jobId);
+      if (!reservation) {
+        continue;
+      }
+
+      try {
+        const result = await this.enqueueJobOnServer(match.job, match.compatibleServer);
+        if (result) {
+          assignedServers.add(match.compatibleServer.apiHost);
+          jobsAssigned++;
+
+          // Commit to our queue
+          await this.queueAdapter.commit(reservation.reservationId);
+        } else {
+          // Enqueue failed, retry later
+          await this.queueAdapter.retry(reservation.reservationId, { delayMs: 1000 });
+        }
+      } catch (error) {
+        // Retry on error
+        await this.queueAdapter.retry(reservation.reservationId, { delayMs: 1000 });
+      }
+    }
+
+    return jobsAssigned;
+  }
+
+  /**
+   * Check if a job is compatible with a server
+   */
+  private isJobCompatibleWithServer(payload: WorkflowJobPayload, job: JobRecord, server: ComfyApi): boolean {
+    // Check preferred client IDs first
+    if (payload.options.preferredClientIds && payload.options.preferredClientIds.length > 0) {
+      return payload.options.preferredClientIds.includes(server.apiHost);
+    }
+
+    // Check workflow affinity
+    const affinity = this.getAffinity(payload.workflowHash);
+    if (affinity && affinity.preferredClientIds) {
+      return affinity.preferredClientIds.includes(server.apiHost);
+    }
+
+    // No constraints, compatible with any server
+    return true;
+  }
+
+  /**
+   * Enqueue a job on a specific server
+   * Returns true if successful, false if failed
+   */
+  private async enqueueJobOnServer(job: JobRecord, server: ComfyApi): Promise<boolean> {
+    try {
+      const workflowJson = job.workflow;
+      const outputNodeIds = job.workflowMeta?.outputNodeIds || [];
+
+      // Auto-randomize any seed fields set to -1
+      try {
+        for (const [_, node] of Object.entries(workflowJson)) {
+          const n: any = node;
+          if (n && n.inputs && Object.prototype.hasOwnProperty.call(n.inputs, 'seed')) {
+            if (n.inputs.seed === -1) {
+              const val = Math.floor(Math.random() * 2_147_483_647);
+              n.inputs.seed = val;
+            }
+          }
+        }
+      } catch { /* non-fatal */ }
+
+      // Build prompt
+      const pb = new PromptBuilder(workflowJson as any, [], outputNodeIds as any);
+      for (const nodeId of outputNodeIds) {
+        pb.setOutputNode(nodeId as any, nodeId) as any;
+      }
+      const promptJson = pb.prompt;
+
+      // Queue on client
+      const queueResponse = await server.ext.queue.appendPrompt(promptJson);
+      const promptId = queueResponse.prompt_id;
+
+      // Update job record
+      job.status = "running" as JobStatus;
+      job.clientId = server.apiHost;
+      job.promptId = promptId;
+      job.attempts += 1;
+
+      this.dispatchEvent(new CustomEvent("job:accepted", { detail: { job } }));
+      this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
+
+      // Run execution in background
+      this.waitForExecutionCompletion(server, promptId, { json: workflowJson } as any)
+        .then((result) => {
+          job.status = "completed" as JobStatus;
+          job.result = result;
+          job.completedAt = Date.now();
+          this.dispatchEvent(new CustomEvent("job:completed", { detail: { job } }));
+          // Trigger next processing since job completed
+          setImmediate(() => this.processNextJobQueued());
+        })
+        .catch((error) => {
+          job.status = "failed";
+          job.lastError = error;
+          job.completedAt = Date.now();
+          this.dispatchEvent(new CustomEvent("job:failed", { detail: { job, willRetry: false } }));
+          // Trigger next processing since job completed
+          setImmediate(() => this.processNextJobQueued());
+        });
+
+      return true;
+    } catch (error) {
+      console.error(`[SmartPool] Failed to enqueue job on ${server.apiHost}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Retrieve images from a completed job's execution.
+   */
+  async getJobOutputImages(jobId: JobId, nodeId?: string): Promise<Array<{ filename: string; blob: Blob }>> {
+    const job = this.jobStore.get(jobId);
+    if (!job) {
+      throw new Error(`Job ${jobId} not found`);
+    }
+
+    if (!job.clientId) {
+      throw new Error(`Job ${jobId} has no client assigned`);
+    }
+
+    if (!job.promptId) {
+      throw new Error(`Job ${jobId} has no promptId assigned`);
+    }
+
+    const client = this.clientMap.get(job.clientId);
+    if (!client) {
+      throw new Error(`Client ${job.clientId} not found`);
+    }
+
+    // Fetch history
+    const historyData = await client.ext.history.getHistory(job.promptId);
+    if (!historyData?.outputs) {
+      return [];
+    }
+
+    const images: Array<{ filename: string; blob: Blob }> = [];
+
+    // Find images in specified node or first node with images
+    const outputEntries = Object.entries(historyData.outputs);
+    for (const [nId, nodeOutput] of outputEntries) {
+      if (nodeId && nId !== nodeId) {
+        continue;
+      }
+
+      const output: any = nodeOutput;
+      if (output.images && Array.isArray(output.images)) {
+        for (const imageRef of output.images) {
+          try {
+            const blob = await client.ext.file.getImage(imageRef);
+            images.push({
+              filename: imageRef.filename || `image_${nId}`,
+              blob
+            });
+          } catch (e) {
+            console.error(`Failed to fetch image from node ${nId}:`, e);
+          }
+        }
+        if (nodeId) {
+          // Found specified node, stop searching
+          break;
+        }
+      }
+    }
+
+    return images;
+  }
+
   async executeImmediate(workflow: Workflow<any>, opts: {
     preferableClientIds?: string[];
   }): Promise<any> {
+    // Enqueue with maximum priority
+    const jobId = await this.enqueue(workflow, {
+      preferredClientIds: opts.preferableClientIds,
+      priority: 1000 // High priority for immediate execution
+    });
 
-    const candidateClients: ComfyApi[] = [];
-    let workflowHash = workflow.structureHash;
-
-    // Determine candidate clients based on preferred IDs
-    if (opts.preferableClientIds && opts.preferableClientIds.length > 0) {
-      for (const clientId of opts.preferableClientIds) {
-        const client = this.clientMap.get(clientId);
-        if (client && client.isReady) {
-          candidateClients.push(client);
+    // Wait for job completion via event listener
+    return new Promise((resolve, reject) => {
+      const onComplete = (event: Event) => {
+        const customEvent = event as CustomEvent;
+        if (customEvent.detail.job.jobId === jobId) {
+          cleanup();
+          const job = customEvent.detail.job as JobRecord;
+          this.buildExecuteImmediateResult(job)
+            .then(resolve)
+            .catch(reject);
         }
-      }
-    } else {
-      // Check for affinity based on workflow hash
-      console.log(`Looking up affinity for workflow hash: ${workflowHash}`);
-      if (workflowHash) {
-        const affinity = this.getAffinity(workflowHash);
-        if (affinity && affinity.preferredClientIds) {
-          for (const clientId of affinity.preferredClientIds) {
-            const client = this.clientMap.get(clientId);
-            if (client && client.isReady) {
-              candidateClients.push(client);
-            }
-          }
+      };
+
+      const onFailed = (event: Event) => {
+        const customEvent = event as CustomEvent;
+        if (customEvent.detail.job.jobId === jobId) {
+          cleanup();
+          reject(new Error(`Job failed: ${JSON.stringify(customEvent.detail.job.lastError)}`));
         }
-      }
-    }
+      };
 
-    if (candidateClients.length === 0) {
-      // Fallback to any available client
-      for (const client of this.clientMap.values()) {
-        if (client.isReady) {
-          candidateClients.push(client);
-        }
-      }
-    }
+      let cleanup = () => {
+        this.removeEventListener("job:completed", onComplete);
+        this.removeEventListener("job:failed", onFailed);
+        clearTimeout(timeoutHandle);
+      };
 
-    if (candidateClients.length === 0) {
-      throw new Error("No available clients match the preferred client IDs");
-    }
+      this.addEventListener("job:completed", onComplete);
+      this.addEventListener("job:failed", onFailed);
 
-    // For simplicity, pick the first available candidate client
-    const selectedClient = candidateClients[0];
+      // Timeout after 5 minutes
+      const timeoutHandle = setTimeout(() => {
+        cleanup();
+        reject(new Error("Execution timeout"));
+      }, 5 * 60 * 1000);
+    });
+  }
 
-    workflowHash = workflowHash || workflow.structureHash || "";
+  /**
+   * Build the return value for executeImmediate() with images and blob.
+   */
+  private async buildExecuteImmediateResult(job: JobRecord): Promise<any> {
+    const images: any[] = [];
+    let imageBlob: Blob | undefined;
 
-    // Queue the workflow and get the prompt_id
-    // Build PromptBuilder from the workflow to get proper prompt format
-    const workflowJson = (workflow as any).json || workflow;
-    const outputNodeIds = (workflow as any).outputNodeIds || [];
-    
-    // Auto-randomize any node input field named 'seed' whose value is -1 (common ComfyUI convention)
-    const autoSeeds: Record<string, number> = {};
+    // Fetch images from job
     try {
-      for (const [nodeId, node] of Object.entries(workflowJson)) {
-        const n: any = node;
-        if (n && n.inputs && Object.prototype.hasOwnProperty.call(n.inputs, 'seed')) {
-          if (n.inputs.seed === -1) {
-            const val = Math.floor(Math.random() * 2_147_483_647); // 32-bit positive range typical for seeds
-            n.inputs.seed = val;
-            autoSeeds[nodeId] = val;
-          }
-        }
+      const jobImages = await this.getJobOutputImages(job.jobId);
+      for (const img of jobImages) {
+        images.push({
+          filename: img.filename
+        });
+        imageBlob = img.blob;
       }
-    } catch { /* non-fatal */ }
-    
-    const pb = new PromptBuilder(workflowJson as any, [], outputNodeIds as any);
-    
-    // Map output nodes
-    for (const nodeId of outputNodeIds) {
-      pb.setOutputNode(nodeId as any, nodeId) as any;
+    } catch (e) {
+      console.log(`[SmartPool] Failed to fetch images: ${e}`);
     }
-    
-    const promptJson = pb.prompt;
-    console.log(`[SmartPool] Queuing workflow with prompt containing nodes:`, Object.keys(promptJson || {}).slice(0, 5));
-    
-    try {
-      const queueResponse = await selectedClient.ext.queue.appendPrompt(promptJson);
-      const promptId = queueResponse.prompt_id;
 
-      console.log(`[SmartPool] Queued workflow on ${selectedClient.apiHost} with promptId=${promptId.substring(0, 8)}...`);
-
-      this.emit({
-        type: "workflow:executeImmediate",
-        promptId,
-        workflowHash,
-        clientId: selectedClient.apiHost
-      });
-
-      // Simple execution wrapper: collect outputs from executed events and handle completion
-      const result = await this.waitForExecutionCompletion(selectedClient, promptId, workflow);
-
-      console.log(`[SmartPool] Job completed with promptId: ${promptId.substring(0, 8)}...`);
-
-      const images = [];
-      
-      // Fetch outputs using the authoritative prompt ID
-      try {
-        const historyData = await selectedClient.ext.history.getHistory(promptId);
-        if (historyData && historyData.outputs) {
-          for (const nodeId of Object.keys(historyData.outputs)) {
-            const nodeOutput = historyData.outputs[nodeId];
-            if (nodeOutput.images && nodeOutput.images.length > 0) {
-              console.log(`[SmartPool] Found output from history node ${nodeId}: ${nodeOutput.images[0].filename}`);
-              images.push(...nodeOutput.images);
-              break;
-            }
-          }
-        }
-      } catch (e) {
-        console.log(`[SmartPool] Failed to fetch history: ${e}`);
-      }
-      
-      // Fallback to result object if history didn't give us images
-      if (images.length === 0) {
-        console.log(`[SmartPool] Falling back to result object`);
-        const aliases = result._aliases || {};
-        for (const aliasKey of Object.keys(aliases)) {
-          const aliasObject = result[aliases[aliasKey]];
-          if (aliasObject && aliasObject.images) {
-            images.push(...aliasObject.images);
-          }
-        }
-      }
-
-      // Read images from the client that executed the workflow
-      const imageBlob = await selectedClient.ext.file.getImage(images[0]);
-      console.log(`[SmartPool] Fetched image blob for file: ${JSON.stringify(images[0])}`);
-
-      console.log(`Workflow executed on client ${selectedClient.apiHost} with: `, result);
-
-      return { ...result, images, imageBlob };
-    } catch (err) {
-      console.error(`[SmartPool] Failed to execute workflow:`, err);
-      throw err;
-    }
+    return {
+      ...job.result,
+      images,
+      imageBlob,
+      _promptId: job.promptId
+    };
   }
 
   private async waitForExecutionCompletion(client: ComfyApi, promptId: string, workflow: Workflow<any>): Promise<any> {
@@ -352,7 +650,6 @@ export class SmartPool {
         // Store output keyed by node ID
         result[nodeId] = output;
         collectedNodes.add(nodeId);
-        console.log(`[SmartPool.waitForExecutionCompletion] Collected output from node: ${nodeId}`);
       };
 
       const executionSuccessHandler = async (ev: CustomEvent) => {
@@ -363,15 +660,11 @@ export class SmartPool {
           return;
         }
 
-        console.log(`[SmartPool.waitForExecutionCompletion] execution_success fired for ${promptId.substring(0, 8)}...`);
-
         // Try to fetch complete outputs from history
         for (let retries = 0; retries < 5; retries++) {
           try {
             const historyData = await client.ext.history.getHistory(promptId);
             if (historyData?.outputs) {
-              console.log(`[SmartPool.waitForExecutionCompletion] Found outputs in history (attempt ${retries + 1})`);
-              
               // Populate result from history for any nodes we didn't get from websocket
               for (const [nodeIdStr, nodeOutput] of Object.entries(historyData.outputs)) {
                 const nodeId = parseInt(nodeIdStr, 10).toString();
