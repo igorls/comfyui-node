@@ -91,8 +91,12 @@ export class WorkflowPool extends TypedEventTarget {
             };
         }
         const affinity = this.affinities.get(workflowHash);
-        const preferredClientIds = options?.preferredClientIds ?? (affinity?.preferredClientIds ? [...affinity.preferredClientIds] : []);
-        const excludeClientIds = options?.excludeClientIds ?? (affinity?.excludeClientIds ? [...affinity.excludeClientIds] : []);
+        const preferredClientIds = options?.preferredClientIds
+            ? [...options.preferredClientIds]
+            : (affinity?.preferredClientIds ? [...affinity.preferredClientIds] : []);
+        const excludeClientIds = options?.excludeClientIds
+            ? [...options.excludeClientIds]
+            : (affinity?.excludeClientIds ? [...affinity.excludeClientIds] : []);
         const payload = {
             jobId,
             workflow: workflowJson,
@@ -112,6 +116,12 @@ export class WorkflowPool extends TypedEventTarget {
         };
         const record = {
             ...payload,
+            options: {
+                ...payload.options,
+                preferredClientIds: payload.options.preferredClientIds ? [...payload.options.preferredClientIds] : [],
+                excludeClientIds: payload.options.excludeClientIds ? [...payload.options.excludeClientIds] : [],
+                includeOutputs: payload.options.includeOutputs ? [...payload.options.includeOutputs] : []
+            },
             attachments: options?.attachments,
             status: "queued"
         };
