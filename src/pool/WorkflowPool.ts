@@ -480,95 +480,109 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     }
     this.processing = true;
     try {
-      const idleClients = this.clientManager.list().filter(c => this.clientManager.isClientStable(c));
-      if (!idleClients.length) {
-        return;
-      }
-
-      const waitingJobs = await this.queue.peek(100); // Peek at top 100 jobs
-      if (!waitingJobs.length) {
-        return;
-      }
-
-      const leasedClientIds = new Set<string>();
-      const reservedJobIds = new Set<string>();
-
-      // Build compatibility matrix and calculate job selectivity
-      interface JobMatchInfo {
-        jobPayload: typeof waitingJobs[0];
-        job: JobRecord;
-        compatibleClients: string[];
-        selectivity: number; // Lower is more selective (fewer compatible clients)
-      }
-
-      const jobMatchInfos: JobMatchInfo[] = [];
-      for (const jobPayload of waitingJobs) {
-        const job = this.jobStore.get(jobPayload.jobId);
-        if (!job) continue;
-
-        const compatibleClients = idleClients
-          .filter(client => this.clientManager.canClientRunJob(client, job))
-          .map(client => client.id);
-
-        if (compatibleClients.length > 0) {
-          jobMatchInfos.push({
-            jobPayload,
-            job,
-            compatibleClients,
-            selectivity: compatibleClients.length
-          });
+      // Continue processing until no more jobs can be assigned
+      while (true) {
+        const idleClients = this.clientManager.list().filter(c => this.clientManager.isClientStable(c));
+        if (!idleClients.length) {
+          break; // No idle clients available
         }
-      }
 
-      // Sort jobs by priority first, then selectivity, to maximize throughput
-      // 1. Higher priority jobs execute first (explicit user priority)
-      // 2. More selective jobs (fewer compatible clients) assigned first within same priority
-      // 3. Earlier queue position as final tiebreaker
-      jobMatchInfos.sort((a, b) => {
-        // Primary: priority (higher priority = higher precedence)
-        const aPriority = a.job.options.priority ?? 0;
-        const bPriority = b.job.options.priority ?? 0;
-        if (aPriority !== bPriority) {
-          return bPriority - aPriority; // Higher priority first
+        const waitingJobs = await this.queue.peek(100); // Peek at top 100 jobs
+        if (!waitingJobs.length) {
+          break; // No jobs in queue
         }
-        // Secondary: selectivity (fewer compatible clients = higher precedence)
-        if (a.selectivity !== b.selectivity) {
-          return a.selectivity - b.selectivity;
+
+        const leasedClientIds = new Set<string>();
+        const reservedJobIds = new Set<string>();
+
+        // Build compatibility matrix and calculate job selectivity
+        interface JobMatchInfo {
+          jobPayload: typeof waitingJobs[0];
+          job: JobRecord;
+          compatibleClients: string[];
+          selectivity: number; // Lower is more selective (fewer compatible clients)
         }
-        // Tertiary: maintain queue order (earlier jobs first)
-        const aIndex = waitingJobs.indexOf(a.jobPayload);
-        const bIndex = waitingJobs.indexOf(b.jobPayload);
-        return aIndex - bIndex;
-      });
 
-      // Assign jobs to clients using the selectivity-based ordering
-      for (const matchInfo of jobMatchInfos) {
-        if (reservedJobIds.has(matchInfo.job.jobId)) continue;
+        const jobMatchInfos: JobMatchInfo[] = [];
+        for (const jobPayload of waitingJobs) {
+          const job = this.jobStore.get(jobPayload.jobId);
+          if (!job) continue;
 
-        // Find first available compatible client
-        const availableClient = matchInfo.compatibleClients.find(
-          clientId => !leasedClientIds.has(clientId)
-        );
+          const compatibleClients = idleClients
+            .filter(client => this.clientManager.canClientRunJob(client, job))
+            .map(client => client.id);
 
-        if (!availableClient) continue; // No available clients for this job
-
-        const reservation = await this.queue.reserveById(matchInfo.job.jobId);
-        if (reservation) {
-          // Mark as leased/reserved for this cycle
-          leasedClientIds.add(availableClient);
-          reservedJobIds.add(matchInfo.job.jobId);
-
-          // Get the lease (which marks the client as busy)
-          const lease = this.clientManager.claim(matchInfo.job, availableClient);
-          if (lease) {
-            this.runJob({ reservation, job: matchInfo.job, clientId: lease.clientId, release: lease.release }).catch((error) => {
-              console.error("[WorkflowPool] Unhandled job error", error);
+          if (compatibleClients.length > 0) {
+            jobMatchInfos.push({
+              jobPayload,
+              job,
+              compatibleClients,
+              selectivity: compatibleClients.length
             });
-          } else {
-            // This should not happen since we checked canClientRunJob, but handle defensively
-            console.error(`[WorkflowPool.processQueue] CRITICAL: Failed to claim client ${availableClient} for job ${matchInfo.job.jobId} after successful check.`);
-             await this.queue.retry(reservation.reservationId, { delayMs: matchInfo.job.options.retryDelayMs });
           }
+        }
+
+        if (jobMatchInfos.length === 0) {
+          break; // No compatible jobs for idle clients
+        }
+
+        // Sort jobs by priority first, then selectivity, to maximize throughput
+        // 1. Higher priority jobs execute first (explicit user priority)
+        // 2. More selective jobs (fewer compatible clients) assigned first within same priority
+        // 3. Earlier queue position as final tiebreaker
+        jobMatchInfos.sort((a, b) => {
+          // Primary: priority (higher priority = higher precedence)
+          const aPriority = a.job.options.priority ?? 0;
+          const bPriority = b.job.options.priority ?? 0;
+          if (aPriority !== bPriority) {
+            return bPriority - aPriority; // Higher priority first
+          }
+          // Secondary: selectivity (fewer compatible clients = higher precedence)
+          if (a.selectivity !== b.selectivity) {
+            return a.selectivity - b.selectivity;
+          }
+          // Tertiary: maintain queue order (earlier jobs first)
+          const aIndex = waitingJobs.indexOf(a.jobPayload);
+          const bIndex = waitingJobs.indexOf(b.jobPayload);
+          return aIndex - bIndex;
+        });
+
+        // Assign jobs to clients using the selectivity-based ordering
+        let assignedAnyJob = false;
+        for (const matchInfo of jobMatchInfos) {
+          if (reservedJobIds.has(matchInfo.job.jobId)) continue;
+
+          // Find first available compatible client
+          const availableClient = matchInfo.compatibleClients.find(
+            clientId => !leasedClientIds.has(clientId)
+          );
+
+          if (!availableClient) continue; // No available clients for this job
+
+          const reservation = await this.queue.reserveById(matchInfo.job.jobId);
+          if (reservation) {
+            // Mark as leased/reserved for this cycle
+            leasedClientIds.add(availableClient);
+            reservedJobIds.add(matchInfo.job.jobId);
+            assignedAnyJob = true;
+
+            // Get the lease (which marks the client as busy)
+            const lease = this.clientManager.claim(matchInfo.job, availableClient);
+            if (lease) {
+              this.runJob({ reservation, job: matchInfo.job, clientId: lease.clientId, release: lease.release }).catch((error) => {
+                console.error("[WorkflowPool] Unhandled job error", error);
+              });
+            } else {
+              // This should not happen since we checked canClientRunJob, but handle defensively
+              console.error(`[WorkflowPool.processQueue] CRITICAL: Failed to claim client ${availableClient} for job ${matchInfo.job.jobId} after successful check.`);
+              await this.queue.retry(reservation.reservationId, { delayMs: matchInfo.job.options.retryDelayMs });
+            }
+          }
+        }
+
+        // If we didn't assign any jobs this iteration, no point continuing
+        if (!assignedAnyJob) {
+          break;
         }
       }
 
