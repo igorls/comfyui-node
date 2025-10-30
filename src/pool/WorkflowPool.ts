@@ -493,37 +493,74 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       const leasedClientIds = new Set<string>();
       const reservedJobIds = new Set<string>();
 
-      for (const client of idleClients) {
-        if (leasedClientIds.has(client.id)) continue; // Skip if already leased in this cycle
+      // Build compatibility matrix and calculate job selectivity
+      interface JobMatchInfo {
+        jobPayload: typeof waitingJobs[0];
+        job: JobRecord;
+        compatibleClients: string[];
+        selectivity: number; // Lower is more selective (fewer compatible clients)
+      }
 
-        // Find the first job that this client can run
-        for (const jobPayload of waitingJobs) {
-          if (reservedJobIds.has(jobPayload.jobId)) continue; // Skip if already reserved
+      const jobMatchInfos: JobMatchInfo[] = [];
+      for (const jobPayload of waitingJobs) {
+        const job = this.jobStore.get(jobPayload.jobId);
+        if (!job) continue;
 
-          const job = this.jobStore.get(jobPayload.jobId);
-          if (!job) continue; // Job not found in store, skip
+        const compatibleClients = idleClients
+          .filter(client => this.clientManager.canClientRunJob(client, job))
+          .map(client => client.id);
 
-          const canRun = this.clientManager.canClientRunJob(client, job);
-          if (canRun) {
-            const reservation = await this.queue.reserveById(jobPayload.jobId);
-            if (reservation) {
-              // Mark as leased/reserved for this cycle
-              leasedClientIds.add(client.id);
-              reservedJobIds.add(job.jobId);
+        if (compatibleClients.length > 0) {
+          jobMatchInfos.push({
+            jobPayload,
+            job,
+            compatibleClients,
+            selectivity: compatibleClients.length
+          });
+        }
+      }
 
-              // Get the lease (which marks the client as busy)
-              const lease = this.clientManager.claim(job, client.id);
-              if (lease) {
-                this.runJob({ reservation, job, clientId: lease.clientId, release: lease.release }).catch((error) => {
-                  console.error("[WorkflowPool] Unhandled job error", error);
-                });
-              } else {
-                 // This should not happen since we checked canClientRunJob, but handle defensively
-                 console.error(`[WorkflowPool.processQueue] CRITICAL: Failed to claim client ${client.id} for job ${job.jobId} after successful check.`);
-                 await this.queue.retry(reservation.reservationId, { delayMs: job.options.retryDelayMs });
-              }
-              break; // Move to the next idle client
-            }
+      // Sort jobs by selectivity (most selective first) to maximize throughput
+      // More selective jobs (fewer compatible clients) should be assigned first
+      // This prevents clients from taking jobs when there are jobs only they can run
+      jobMatchInfos.sort((a, b) => {
+        // Primary: selectivity (fewer compatible clients = higher priority)
+        if (a.selectivity !== b.selectivity) {
+          return a.selectivity - b.selectivity;
+        }
+        // Secondary: maintain queue order (earlier jobs first)
+        const aIndex = waitingJobs.indexOf(a.jobPayload);
+        const bIndex = waitingJobs.indexOf(b.jobPayload);
+        return aIndex - bIndex;
+      });
+
+      // Assign jobs to clients using the selectivity-based ordering
+      for (const matchInfo of jobMatchInfos) {
+        if (reservedJobIds.has(matchInfo.job.jobId)) continue;
+
+        // Find first available compatible client
+        const availableClient = matchInfo.compatibleClients.find(
+          clientId => !leasedClientIds.has(clientId)
+        );
+
+        if (!availableClient) continue; // No available clients for this job
+
+        const reservation = await this.queue.reserveById(matchInfo.job.jobId);
+        if (reservation) {
+          // Mark as leased/reserved for this cycle
+          leasedClientIds.add(availableClient);
+          reservedJobIds.add(matchInfo.job.jobId);
+
+          // Get the lease (which marks the client as busy)
+          const lease = this.clientManager.claim(matchInfo.job, availableClient);
+          if (lease) {
+            this.runJob({ reservation, job: matchInfo.job, clientId: lease.clientId, release: lease.release }).catch((error) => {
+              console.error("[WorkflowPool] Unhandled job error", error);
+            });
+          } else {
+             // This should not happen since we checked canClientRunJob, but handle defensively
+             console.error(`[WorkflowPool.processQueue] CRITICAL: Failed to claim client ${availableClient} for job ${matchInfo.job.jobId} after successful check.`);
+             await this.queue.retry(reservation.reservationId, { delayMs: matchInfo.job.options.retryDelayMs });
           }
         }
       }
