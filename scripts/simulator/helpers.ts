@@ -1,8 +1,21 @@
 import type { ComfyApi } from "../../src/index.ts";
 
-export function log(...args: any[]) {
+// ANSI color codes for terminal output
+const COLORS = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m"
+};
+
+export function log(color: keyof typeof COLORS | string, ...args: any[]) {
   // eslint-disable-next-line no-console
-  console.log(`[${new Date().toISOString()}]`, ...args);
+  const colorCode = COLORS[color as keyof typeof COLORS] || COLORS.reset;
+  console.log(`${colorCode}[${new Date().toISOString()}]`, ...args, COLORS.reset);
 }
 
 export function randomInt(min: number, max: number) {
@@ -45,7 +58,7 @@ export async function uploadImage(imageUrl: string, uploadName: string, client: 
   }
   const arrayBuffer = await response.arrayBuffer();
   const blob = new Blob([arrayBuffer]);
-  await client.ext.file.uploadImage(blob, uploadName, { overwrite: true });
+  await client.ext.file.uploadImage(blob, uploadName, { override: true });
 }
 
 export function nextSeed(seedStrategy: "random" | "auto" | "fixed") {

@@ -29,6 +29,14 @@ interface ClientQueueState {
   runningJobs: number;
 }
 
+interface ServerPerformanceMetrics {
+  clientId: string;
+  totalJobsCompleted: number;
+  totalExecutionTimeMs: number;
+  averageExecutionTimeMs: number;
+  lastJobDurationMs?: number;
+}
+
 interface SmartPoolEventMap extends Record<string, CustomEvent<any>> {
   "job:queued": CustomEvent<{ job: JobRecord }>;
   "job:accepted": CustomEvent<{ job: JobRecord }>;
@@ -50,6 +58,9 @@ export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
 
   // Affinities mapping workflow hashes to preferred clients
   affinities: Map<string, WorkflowAffinity> = new Map();
+
+  // Server performance metrics tracking
+  serverPerformance: Map<string, ServerPerformanceMetrics> = new Map();
 
   // Queue adapter for job persistence
   private queueAdapter: MemoryQueueAdapter;
@@ -97,6 +108,42 @@ export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
     if (specificHook) {
       specificHook(event);
     }
+  }
+
+  /**
+   * Adds an event listener for the specified event type.
+   * Properly typed wrapper around EventTarget.addEventListener.
+   */
+  on<K extends keyof SmartPoolEventMap>(
+    type: K,
+    handler: (ev: SmartPoolEventMap[K]) => void,
+    options?: AddEventListenerOptions | boolean
+  ) {
+    super.on(type, handler, options);
+    return () => this.off(type, handler, options);
+  }
+
+  /**
+   * Removes an event listener for the specified event type.
+   * Properly typed wrapper around EventTarget.removeEventListener.
+   */
+  off<K extends keyof SmartPoolEventMap>(
+    type: K,
+    handler: (ev: SmartPoolEventMap[K]) => void,
+    options?: EventListenerOptions | boolean
+  ) {
+    super.off(type, handler as any, options);
+  }
+
+  /**
+   * Adds a one-time event listener for the specified event type.
+   */
+  once<K extends keyof SmartPoolEventMap>(
+    type: K,
+    handler: (ev: SmartPoolEventMap[K]) => void,
+    options?: AddEventListenerOptions | boolean
+  ) {
+    return super.once(type, handler, options);
   }
 
   async connect() {
@@ -205,6 +252,53 @@ export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
   // Remove the affinity for a workflow
   removeAffinity(workflowHash: string) {
     this.affinities.delete(workflowHash);
+  }
+
+  /**
+   * Track server performance metrics for job execution
+   */
+  private updateServerPerformance(clientId: string, executionTimeMs: number) {
+    let metrics = this.serverPerformance.get(clientId);
+    
+    if (!metrics) {
+      metrics = {
+        clientId,
+        totalJobsCompleted: 0,
+        totalExecutionTimeMs: 0,
+        averageExecutionTimeMs: 0,
+        lastJobDurationMs: 0
+      };
+      this.serverPerformance.set(clientId, metrics);
+    }
+
+    metrics.totalJobsCompleted++;
+    metrics.totalExecutionTimeMs += executionTimeMs;
+    metrics.lastJobDurationMs = executionTimeMs;
+    metrics.averageExecutionTimeMs = metrics.totalExecutionTimeMs / metrics.totalJobsCompleted;
+  }
+
+  /**
+   * Get server performance metrics
+   */
+  getServerPerformance(clientId: string): ServerPerformanceMetrics | undefined {
+    return this.serverPerformance.get(clientId);
+  }
+
+  /**
+   * Get sorted list of servers by performance (fastest first) within a given set
+   */
+  sortServersByPerformance(serverIds: string[]): string[] {
+    return [...serverIds].sort((a, b) => {
+      const metricsA = this.serverPerformance.get(a);
+      const metricsB = this.serverPerformance.get(b);
+      
+      // Servers with no metrics go to end (untracked/slow startup)
+      if (!metricsA) return 1;
+      if (!metricsB) return -1;
+      
+      // Sort by average execution time (fastest first)
+      return metricsA.averageExecutionTimeMs - metricsB.averageExecutionTimeMs;
+    });
   }
 
   /**
@@ -339,7 +433,7 @@ export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
     interface JobServerMatch {
       payload: WorkflowJobPayload;
       job: JobRecord;
-      compatibleServer: ComfyApi;
+      compatibleServers: ComfyApi[];
     }
 
     const matches: JobServerMatch[] = [];
@@ -348,32 +442,42 @@ export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
       const job = this.jobStore.get(payload.jobId);
       if (!job) continue;
 
-      // Find compatible idle server for this job
-      for (const server of idleServers) {
-        if (this.isJobCompatibleWithServer(payload, job, server)) {
-          matches.push({
-            payload,
-            job,
-            compatibleServer: server
-          });
-          break; // Found a compatible server, move to next job
-        }
+      // Find all compatible idle servers for this job
+      const compatibleServers = idleServers.filter(s => this.isJobCompatibleWithServer(payload, job, s));
+      
+      if (compatibleServers.length > 0) {
+        // Sort compatible servers by performance (fastest first)
+        const sortedServers = this.sortServersByPerformance(compatibleServers.map(s => s.apiHost))
+          .map(id => idleServers.find(s => s.apiHost === id))
+          .filter((s): s is ComfyApi => s !== undefined);
+
+        matches.push({
+          payload,
+          job,
+          compatibleServers: sortedServers
+        });
       }
     }
 
     // Sort by selectivity (jobs with fewer compatible servers first)
     matches.sort((a, b) => {
-      const aCompatCount = idleServers.filter(s => this.isJobCompatibleWithServer(a.payload, a.job, s)).length;
-      const bCompatCount = idleServers.filter(s => this.isJobCompatibleWithServer(b.payload, b.job, s)).length;
-      return aCompatCount - bCompatCount;
+      return a.compatibleServers.length - b.compatibleServers.length;
     });
 
     // Assign jobs to idle servers
     const assignedServers = new Set<string>();
 
     for (const match of matches) {
-      // Skip if we already assigned to this server
-      if (assignedServers.has(match.compatibleServer.apiHost)) {
+      // Use the fastest compatible server that hasn't been assigned yet
+      let targetServer: ComfyApi | undefined;
+      for (const server of match.compatibleServers) {
+        if (!assignedServers.has(server.apiHost)) {
+          targetServer = server;
+          break;
+        }
+      }
+
+      if (!targetServer) {
         continue;
       }
 
@@ -384,9 +488,9 @@ export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
       }
 
       try {
-        const result = await this.enqueueJobOnServer(match.job, match.compatibleServer);
+        const result = await this.enqueueJobOnServer(match.job, targetServer);
         if (result) {
-          assignedServers.add(match.compatibleServer.apiHost);
+          assignedServers.add(targetServer.apiHost);
           jobsAssigned++;
 
           // Commit to our queue
@@ -461,6 +565,7 @@ export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
       job.clientId = server.apiHost;
       job.promptId = promptId;
       job.attempts += 1;
+      job.startedAt = Date.now(); // Track when job starts executing
 
       this.dispatchEvent(new CustomEvent("job:accepted", { detail: { job } }));
       this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
@@ -471,6 +576,11 @@ export class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
           job.status = "completed" as JobStatus;
           job.result = result;
           job.completedAt = Date.now();
+          
+          // Track server performance
+          const executionTimeMs = job.completedAt - (job.startedAt || job.completedAt);
+          this.updateServerPerformance(server.apiHost, executionTimeMs);
+          
           this.dispatchEvent(new CustomEvent("job:completed", { detail: { job } }));
           // Trigger next processing since job completed
           setImmediate(() => this.processNextJobQueued());

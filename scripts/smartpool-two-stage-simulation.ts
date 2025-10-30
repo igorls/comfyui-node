@@ -1,19 +1,24 @@
-import { SmartPool, JobRecord, Workflow } from "../src/index.ts";
+import { JobRecord, SmartPool } from "../src/index.ts";
+import { hashWorkflow } from "../src/pool/utils/hash.ts";
+import { log, nextSeed, pickRandom, randomInt, uploadImage } from "./simulator/helpers.ts";
+import { buildEditWorkflow, buildGenerationWorkflow } from "./simulator/workflows.ts";
 import GenerationGraph from "./workflows/T2I-anime-nova-xl.json" assert { type: "json" };
 import EditGraph from "./workflows/quick-edit-test.json" assert { type: "json" };
-import { delay } from "../src/tools.ts";
-import { log, pickRandom, uploadImage, nextSeed, randomInt } from "./simulator/helpers.ts";
-import { buildEditWorkflow, buildGenerationWorkflow } from "./simulator/workflows.ts";
-import { hashWorkflow } from "../src/pool/utils/hash.ts";
 
 const DEFAULT_HOSTS = [
     "http://afterpic-comfy-igor:8188",
     "http://afterpic-comfy-aero16:8188",
-    "http://afterpic-comfy-domi:8188"
+    "http://afterpic-comfy-domi:8188",
+    "http://afterpic-comfy-patrick:8188"
 ];
 
 const GEN_HOST = "http://afterpic-comfy-aero16:8188";
-const EDIT_HOSTS = ["http://afterpic-comfy-igor:8188", "http://afterpic-comfy-domi:8188"];
+
+const EDIT_HOSTS = [
+    "http://afterpic-comfy-igor:8188",
+    "http://afterpic-comfy-domi:8188",
+    "http://afterpic-comfy-patrick:8188"
+];
 
 const hosts = process.env.TWO_STAGE_HOSTS
     ? process.env.TWO_STAGE_HOSTS.split(",")
@@ -28,15 +33,15 @@ if (hosts.length === 0) {
 
 const runtimeMs = Number.isFinite(Number(process.env.TWO_STAGE_RUNTIME_MS))
     ? Number(process.env.TWO_STAGE_RUNTIME_MS)
-    : 6 * 60 * 60 * 1000; // 6 hours
+    : 1 * 60 * 60 * 1000; // 1 hour
 
 let minDelayMs = Number.isFinite(Number(process.env.TWO_STAGE_MIN_DELAY_MS))
     ? Number(process.env.TWO_STAGE_MIN_DELAY_MS)
-    : 1000; // 1 second
+    : 10000; // 10 seconds
 
 let maxDelayMs = Number.isFinite(Number(process.env.TWO_STAGE_MAX_DELAY_MS))
     ? Number(process.env.TWO_STAGE_MAX_DELAY_MS)
-    : 5000; // 5 seconds
+    : 25000; // 25 seconds
 
 if (minDelayMs > maxDelayMs) {
     console.warn(`Swapping min/max delay: ${minDelayMs} > ${maxDelayMs}`);
@@ -157,13 +162,13 @@ function waitForSmartPoolJob(pool: SmartPool, jobId: string): Promise<JobRecord>
             }
         };
         const cleanUp = () => {
-            pool.removeEventListener("job:completed", completedListener as any);
-            pool.removeEventListener("job:failed", failedListener as any);
-            pool.removeEventListener("job:cancelled", cancelledListener as any);
+            pool.off("job:completed", completedListener as any);
+            pool.off("job:failed", failedListener as any);
+            pool.off("job:cancelled", cancelledListener as any);
         };
-        pool.addEventListener("job:completed", completedListener as any);
-        pool.addEventListener("job:failed", failedListener as any);
-        pool.addEventListener("job:cancelled", cancelledListener as any);
+        pool.on("job:completed", completedListener as any);
+        pool.on("job:failed", failedListener as any);
+        pool.on("job:cancelled", cancelledListener as any);
     });
 }
 
@@ -194,42 +199,51 @@ async function runSimulation() {
     log("green", `  Edit (${editWorkflowHash.substring(0, 8)}...): ${EDIT_HOSTS.join(", ")}`);
 
     // Listen to job events for logging
-    pool.addEventListener("job:queued", (e: any) => {
+    pool.on("job:queued", (e: any) => {
         jobCount++;
         log("cyan", `[Job ${jobCount}] Queued: ${e.detail.job.jobId.substring(0, 8)}...`);
     });
 
-    pool.addEventListener("job:completed", (e: any) => {
+    pool.on("job:completed", (e: any) => {
         successCount++;
         log("green", `[✓ Success ${successCount}] Job ${e.detail.job.jobId.substring(0, 8)}... completed`);
     });
 
-    pool.addEventListener("job:failed", (e: any) => {
+    pool.on("job:failed", (e: any) => {
         failCount++;
         log("red", `[✗ Failed ${failCount}] Job ${e.detail.job.jobId.substring(0, 8)}... failed: ${e.detail.job.lastError}`);
     });
 
     const runtimeEnd = startTime + runtimeMs;
     const generatedImages: Array<{ jobId: string; genClientId: string; imageRecord: any; prompts: string[] }> = [];
-    const editsPerGeneration = 2; // Each generation gets 2 edits
-    let generationTasksStarted = 0;
+    let currentlyQueuedGenJobs = 0; // Track jobs currently queued in SmartPool
     let enqueueGenContinuously = true;
-    const maxPrefill = 5; // Limit prefill to 5 generations max
+    const maxPrefill = 2; // Max number of generation jobs to keep queued in SmartPool (safety limit for ComfyUI queue)
 
     // Producer task: continuously enqueue generation jobs
     const producerTask = (async () => {
         try {
-            while (enqueueGenContinuously && Date.now() < runtimeEnd && generationTasksStarted < maxPrefill) {
+            while (enqueueGenContinuously && Date.now() < runtimeEnd) {
+                // Only enqueue if we haven't exceeded maxPrefill
+                if (currentlyQueuedGenJobs >= maxPrefill) {
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                    continue;
+                }
+
                 const genPrompt = pickRandom(generationPrompts);
                 const genNegative = pickRandom(generationNegatives);
-                const genSeed = nextSeed();
+                const genSeed = nextSeed("random");
                 const genWorkflow = buildGenerationWorkflow(genPrompt, genNegative, genSeed);
 
                 log("yellow", `[Gen] Enqueuing generation: "${genPrompt.substring(0, 40)}..."`);
                 const genJobId = await pool.enqueue(genWorkflow, {
                     preferredClientIds: [GEN_HOST]
                 });
-                generationTasksStarted++;
+                currentlyQueuedGenJobs++;
+
+                // Random user think time between generation requests (simulates real-world usage)
+                const userThinkTime = randomInt(minDelayMs, maxDelayMs);
+                await new Promise((resolve) => setTimeout(resolve, userThinkTime));
 
                 // Fire-and-forget: wait for generation in background and add to queue
                 waitForSmartPoolJob(pool, genJobId)
@@ -247,6 +261,8 @@ async function runSimulation() {
                                     : [];
 
                         if (records.length > 0) {
+                            // Randomize number of edits per generation (1-3)
+                            const editsPerGeneration = randomInt(1, 3);
                             // Store generated image with associated edit prompts
                             const editPromptList = Array.from({ length: editsPerGeneration }, () =>
                                 pickRandom(editPrompts)
@@ -259,9 +275,14 @@ async function runSimulation() {
                             });
                             log("cyan", `[Queue] Image ${genJobId.substring(0, 8)}... queued for ${editsPerGeneration} edits`);
                         }
+
+                        // Decrement queued count now that this job is done
+                        currentlyQueuedGenJobs--;
                     })
                     .catch((e) => {
                         log("red", `[Gen] Generation failed: ${e}`);
+                        // Decrement queued count on failure too
+                        currentlyQueuedGenJobs--;
                     });
 
                 // Small delay between generation enqueues to spread load
@@ -322,11 +343,15 @@ async function runSimulation() {
                         log("cyan", `[Edit] Uploaded image to ${uploadName} on ${targetEditClientId}`);
 
                         // Create and enqueue edit workflow
-                        const editWorkflow = buildEditWorkflow(uploadName, editPrompt, nextSeed());
+                        const editWorkflow = buildEditWorkflow(uploadName, editPrompt, nextSeed("random"));
                         const editJobId = await pool.enqueue(editWorkflow, {
                             preferredClientIds: [targetEditClientId]
                         });
                         log("cyan", `[Edit] Enqueued edit job ${editJobId.substring(0, 8)}...`);
+
+                        // Random user think time before next edit request (simulates user reviewing results)
+                        const userEditThinkTime = randomInt(Math.floor(minDelayMs * 0.5), Math.floor(maxDelayMs * 0.5));
+                        await new Promise((resolve) => setTimeout(resolve, userEditThinkTime));
 
                         // Wait for edit to complete (non-blocking)
                         waitForSmartPoolJob(pool, editJobId)

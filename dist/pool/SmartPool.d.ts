@@ -17,6 +17,13 @@ interface ClientQueueState {
     queuedJobs: number;
     runningJobs: number;
 }
+interface ServerPerformanceMetrics {
+    clientId: string;
+    totalJobsCompleted: number;
+    totalExecutionTimeMs: number;
+    averageExecutionTimeMs: number;
+    lastJobDurationMs?: number;
+}
 interface SmartPoolEventMap extends Record<string, CustomEvent<any>> {
     "job:queued": CustomEvent<{
         job: JobRecord;
@@ -40,6 +47,7 @@ export declare class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
     clientQueueStates: Map<string, ClientQueueState>;
     jobStore: Map<JobId, JobRecord>;
     affinities: Map<string, WorkflowAffinity>;
+    serverPerformance: Map<string, ServerPerformanceMetrics>;
     private queueAdapter;
     private processingNextJob;
     private options;
@@ -49,6 +57,20 @@ export declare class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
     };
     constructor(clients: (ComfyApi | string)[], options?: Partial<SmartPoolOptions>);
     emitLegacy(event: PoolEvent): void;
+    /**
+     * Adds an event listener for the specified event type.
+     * Properly typed wrapper around EventTarget.addEventListener.
+     */
+    on<K extends keyof SmartPoolEventMap>(type: K, handler: (ev: SmartPoolEventMap[K]) => void, options?: AddEventListenerOptions | boolean): () => void;
+    /**
+     * Removes an event listener for the specified event type.
+     * Properly typed wrapper around EventTarget.removeEventListener.
+     */
+    off<K extends keyof SmartPoolEventMap>(type: K, handler: (ev: SmartPoolEventMap[K]) => void, options?: EventListenerOptions | boolean): void;
+    /**
+     * Adds a one-time event listener for the specified event type.
+     */
+    once<K extends keyof SmartPoolEventMap>(type: K, handler: (ev: SmartPoolEventMap[K]) => void, options?: AddEventListenerOptions | boolean): () => void;
     connect(): Promise<void>;
     shutdown(): void;
     syncQueueStates(): Promise<void>;
@@ -58,6 +80,18 @@ export declare class SmartPool extends TypedEventTarget<SmartPoolEventMap> {
     setAffinity(workflow: object, affinity: Omit<WorkflowAffinity, "workflowHash">): void;
     getAffinity(workflowHash: string): WorkflowAffinity | undefined;
     removeAffinity(workflowHash: string): void;
+    /**
+     * Track server performance metrics for job execution
+     */
+    private updateServerPerformance;
+    /**
+     * Get server performance metrics
+     */
+    getServerPerformance(clientId: string): ServerPerformanceMetrics | undefined;
+    /**
+     * Get sorted list of servers by performance (fastest first) within a given set
+     */
+    sortServersByPerformance(serverIds: string[]): string[];
     /**
      * Enqueue a workflow for execution by the pool.
      * Auto-triggers processing via setImmediate (batteries included).

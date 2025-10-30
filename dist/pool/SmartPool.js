@@ -16,6 +16,8 @@ export class SmartPool extends TypedEventTarget {
     jobStore = new Map();
     // Affinities mapping workflow hashes to preferred clients
     affinities = new Map();
+    // Server performance metrics tracking
+    serverPerformance = new Map();
     // Queue adapter for job persistence
     queueAdapter;
     // Flag to prevent concurrent queue processing
@@ -52,6 +54,27 @@ export class SmartPool extends TypedEventTarget {
         if (specificHook) {
             specificHook(event);
         }
+    }
+    /**
+     * Adds an event listener for the specified event type.
+     * Properly typed wrapper around EventTarget.addEventListener.
+     */
+    on(type, handler, options) {
+        super.on(type, handler, options);
+        return () => this.off(type, handler, options);
+    }
+    /**
+     * Removes an event listener for the specified event type.
+     * Properly typed wrapper around EventTarget.removeEventListener.
+     */
+    off(type, handler, options) {
+        super.off(type, handler, options);
+    }
+    /**
+     * Adds a one-time event listener for the specified event type.
+     */
+    once(type, handler, options) {
+        return super.once(type, handler, options);
     }
     async connect() {
         const connectionPromises = [];
@@ -150,6 +173,48 @@ export class SmartPool extends TypedEventTarget {
     // Remove the affinity for a workflow
     removeAffinity(workflowHash) {
         this.affinities.delete(workflowHash);
+    }
+    /**
+     * Track server performance metrics for job execution
+     */
+    updateServerPerformance(clientId, executionTimeMs) {
+        let metrics = this.serverPerformance.get(clientId);
+        if (!metrics) {
+            metrics = {
+                clientId,
+                totalJobsCompleted: 0,
+                totalExecutionTimeMs: 0,
+                averageExecutionTimeMs: 0,
+                lastJobDurationMs: 0
+            };
+            this.serverPerformance.set(clientId, metrics);
+        }
+        metrics.totalJobsCompleted++;
+        metrics.totalExecutionTimeMs += executionTimeMs;
+        metrics.lastJobDurationMs = executionTimeMs;
+        metrics.averageExecutionTimeMs = metrics.totalExecutionTimeMs / metrics.totalJobsCompleted;
+    }
+    /**
+     * Get server performance metrics
+     */
+    getServerPerformance(clientId) {
+        return this.serverPerformance.get(clientId);
+    }
+    /**
+     * Get sorted list of servers by performance (fastest first) within a given set
+     */
+    sortServersByPerformance(serverIds) {
+        return [...serverIds].sort((a, b) => {
+            const metricsA = this.serverPerformance.get(a);
+            const metricsB = this.serverPerformance.get(b);
+            // Servers with no metrics go to end (untracked/slow startup)
+            if (!metricsA)
+                return 1;
+            if (!metricsB)
+                return -1;
+            // Sort by average execution time (fastest first)
+            return metricsA.averageExecutionTimeMs - metricsB.averageExecutionTimeMs;
+        });
     }
     /**
      * Enqueue a workflow for execution by the pool.
@@ -264,29 +329,36 @@ export class SmartPool extends TypedEventTarget {
             const job = this.jobStore.get(payload.jobId);
             if (!job)
                 continue;
-            // Find compatible idle server for this job
-            for (const server of idleServers) {
-                if (this.isJobCompatibleWithServer(payload, job, server)) {
-                    matches.push({
-                        payload,
-                        job,
-                        compatibleServer: server
-                    });
-                    break; // Found a compatible server, move to next job
-                }
+            // Find all compatible idle servers for this job
+            const compatibleServers = idleServers.filter(s => this.isJobCompatibleWithServer(payload, job, s));
+            if (compatibleServers.length > 0) {
+                // Sort compatible servers by performance (fastest first)
+                const sortedServers = this.sortServersByPerformance(compatibleServers.map(s => s.apiHost))
+                    .map(id => idleServers.find(s => s.apiHost === id))
+                    .filter((s) => s !== undefined);
+                matches.push({
+                    payload,
+                    job,
+                    compatibleServers: sortedServers
+                });
             }
         }
         // Sort by selectivity (jobs with fewer compatible servers first)
         matches.sort((a, b) => {
-            const aCompatCount = idleServers.filter(s => this.isJobCompatibleWithServer(a.payload, a.job, s)).length;
-            const bCompatCount = idleServers.filter(s => this.isJobCompatibleWithServer(b.payload, b.job, s)).length;
-            return aCompatCount - bCompatCount;
+            return a.compatibleServers.length - b.compatibleServers.length;
         });
         // Assign jobs to idle servers
         const assignedServers = new Set();
         for (const match of matches) {
-            // Skip if we already assigned to this server
-            if (assignedServers.has(match.compatibleServer.apiHost)) {
+            // Use the fastest compatible server that hasn't been assigned yet
+            let targetServer;
+            for (const server of match.compatibleServers) {
+                if (!assignedServers.has(server.apiHost)) {
+                    targetServer = server;
+                    break;
+                }
+            }
+            if (!targetServer) {
                 continue;
             }
             // Reserve this specific job
@@ -295,9 +367,9 @@ export class SmartPool extends TypedEventTarget {
                 continue;
             }
             try {
-                const result = await this.enqueueJobOnServer(match.job, match.compatibleServer);
+                const result = await this.enqueueJobOnServer(match.job, targetServer);
                 if (result) {
-                    assignedServers.add(match.compatibleServer.apiHost);
+                    assignedServers.add(targetServer.apiHost);
                     jobsAssigned++;
                     // Commit to our queue
                     await this.queueAdapter.commit(reservation.reservationId);
@@ -365,6 +437,7 @@ export class SmartPool extends TypedEventTarget {
             job.clientId = server.apiHost;
             job.promptId = promptId;
             job.attempts += 1;
+            job.startedAt = Date.now(); // Track when job starts executing
             this.dispatchEvent(new CustomEvent("job:accepted", { detail: { job } }));
             this.dispatchEvent(new CustomEvent("job:started", { detail: { job } }));
             // Run execution in background
@@ -373,6 +446,9 @@ export class SmartPool extends TypedEventTarget {
                 job.status = "completed";
                 job.result = result;
                 job.completedAt = Date.now();
+                // Track server performance
+                const executionTimeMs = job.completedAt - (job.startedAt || job.completedAt);
+                this.updateServerPerformance(server.apiHost, executionTimeMs);
                 this.dispatchEvent(new CustomEvent("job:completed", { detail: { job } }));
                 // Trigger next processing since job completed
                 setImmediate(() => this.processNextJobQueued());
