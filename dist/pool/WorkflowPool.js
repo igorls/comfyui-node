@@ -91,8 +91,8 @@ export class WorkflowPool extends TypedEventTarget {
             };
         }
         const affinity = this.affinities.get(workflowHash);
-        const preferredClientIds = options?.preferredClientIds ?? affinity?.preferredClientIds ?? [];
-        const excludeClientIds = options?.excludeClientIds ?? affinity?.excludeClientIds ?? [];
+        const preferredClientIds = options?.preferredClientIds ?? (affinity?.preferredClientIds ? [...affinity.preferredClientIds] : []);
+        const excludeClientIds = options?.excludeClientIds ?? (affinity?.excludeClientIds ? [...affinity.excludeClientIds] : []);
         const payload = {
             jobId,
             workflow: workflowJson,
@@ -789,6 +789,7 @@ export class WorkflowPool extends TypedEventTarget {
         }
         finally {
             this.activeJobs.delete(job.jobId);
+            console.log(`[runJob.finally] Job ${job.jobId.substring(0, 8)}... completed, calling processQueue()`);
             void this.processQueue();
         }
     }
