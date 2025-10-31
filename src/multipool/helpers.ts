@@ -35,8 +35,8 @@ export function classifyFailure(error: any): { type: 'connection' | 'workflow_in
   }
 
   // Check for missing custom nodes (invalid_prompt type)
-  if (responseData.error?.type === "invalid_prompt" && 
-      responseData.error?.message?.includes("does not exist")) {
+  if (responseData.error?.type === "invalid_prompt" &&
+    (responseData.error?.message?.includes("does not exist") || responseData.error?.message?.includes("Node type not found"))) {
     return { type: 'workflow_incompatibility', message: responseData.error.message };
   }
 
