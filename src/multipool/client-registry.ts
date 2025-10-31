@@ -1,6 +1,7 @@
 import { MultiWorkflowPool } from "src/multipool/multi-workflow-pool.js";
 import { ComfyApi } from "src/client.js";
 import { Workflow } from "./workflow.js";
+import { Logger } from "./logger.js";
 
 export type ClientState = "idle" | "busy" | "offline";
 
@@ -16,14 +17,16 @@ export interface EnhancedClient {
 export class ClientRegistry {
 
   pool: MultiWorkflowPool;
+  private logger: Logger;
 
   clients: Map<string, EnhancedClient> = new Map();
 
   // Maps a workflow structure hash to a set of client URLs that have affinity for that workflow
   workflowAffinityMap: Map<string, Set<string>> = new Map();
 
-  constructor(pool: MultiWorkflowPool) {
+  constructor(pool: MultiWorkflowPool, logger: Logger) {
     this.pool = pool;
+    this.logger = logger;
   }
 
   addClient(clientUrl: string, options?: { workflowAffinity: Workflow[], priority?: number }) {
@@ -90,11 +93,11 @@ export class ClientRegistry {
     }
 
     if (suitableClients.length === 0) {
-      console.log(`No suitable clients found for workflow ${workflowHash}.`);
+      this.logger.debug(`No suitable clients found for workflow ${workflowHash}.`);
       return null;
     }
 
-    console.log(`Suitable clients for workflow ${workflowHash}:`, suitableClients.map(value => value.nodeName).join(","));
+    this.logger.debug(`Suitable clients for workflow ${workflowHash}: ${suitableClients.map(value => value.nodeName).join(",")}`);
 
     // sort suitable clients by priority
     suitableClients.sort((a, b) => {
@@ -114,7 +117,7 @@ export class ClientRegistry {
   // Get an optimal idle client for a given workflow (used for general queue)
   async getOptimalIdleClient(workflow: Workflow) {
 
-    console.log(`Searching for idle clients for workflow ${workflow.structureHash}...`);
+    this.logger.debug(`Searching for idle clients for workflow ${workflow.structureHash}...`);
 
     // We can infer model capabilities from workflow and try to get the best idle client, based on other workflow affinities, for now lets pick any idle client
     const idleClients: EnhancedClient[] = [];
@@ -123,13 +126,13 @@ export class ClientRegistry {
         // For the general queue, we need to check the actual queue state
         await this.checkClientQueueState(client);
         if (client.state === "idle") {
-          console.log(`Client ${client.nodeName} is idle.`);
+          this.logger.debug(`Client ${client.nodeName} is idle.`);
           idleClients.push(client);
         }
       }
     }
 
-    console.log(`Idle clients available:`, idleClients.map(value => value.nodeName).join(","));
+    this.logger.debug(`Idle clients available: ${idleClients.map(value => value.nodeName).join(",")}`);
 
     // sort idle clients by priority
     idleClients.sort((a, b) => {
@@ -150,7 +153,7 @@ export class ClientRegistry {
         client.state = "idle";
       }
     } catch (error) {
-      console.error(`Error checking queue state for client ${client.nodeName}:`, error);
+      this.logger.error(`Error checking queue state for client ${client.nodeName}:`, error);
       client.state = "offline";
     }
   }

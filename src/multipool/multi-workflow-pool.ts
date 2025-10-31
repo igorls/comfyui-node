@@ -45,7 +45,7 @@ export class MultiWorkflowPool {
     this.logger = createLogger("MultiWorkflowPool", this.options.logLevel);
 
     this.events = new PoolEventManager(this);
-    this.clientRegistry = new ClientRegistry(this);
+    this.clientRegistry = new ClientRegistry(this, this.logger);
     this.jobRegistry = new JobStateRegistry(this, this.clientRegistry);
 
     // Create general queue for workflows without specific hashes
@@ -118,6 +118,9 @@ export class MultiWorkflowPool {
   }
 
   async shutdown() {
+
+    this.logger.info("Shutting down MultiWorkflowPool...");
+
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
     }
