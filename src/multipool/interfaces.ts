@@ -10,4 +10,5 @@ export interface MultiWorkflowPoolOptions {
   enableMonitoring?: boolean;
   monitoringIntervalMs?: number;
   logLevel?: LogLevel;
+  enableProfiling?: boolean;
 }

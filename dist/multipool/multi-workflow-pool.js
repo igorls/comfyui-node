@@ -27,11 +27,12 @@ export class MultiWorkflowPool {
             connectionTimeoutMs: options?.connectionTimeoutMs ?? 10000,
             enableMonitoring: options?.enableMonitoring ?? false,
             monitoringIntervalMs: options?.monitoringIntervalMs ?? 60000,
-            logLevel: options?.logLevel ?? "warn"
+            logLevel: options?.logLevel ?? "warn",
+            enableProfiling: options?.enableProfiling ?? false
         };
         this.logger = createLogger("MultiWorkflowPool", this.options.logLevel);
         this.events = new PoolEventManager(this);
-        this.clientRegistry = new ClientRegistry(this);
+        this.clientRegistry = new ClientRegistry(this, this.logger);
         this.jobRegistry = new JobStateRegistry(this, this.clientRegistry);
         // Create general queue for workflows without specific hashes
         this.queues.set("general", new JobQueueProcessor(this.jobRegistry, this.clientRegistry, "general", this.logger));
@@ -99,6 +100,7 @@ export class MultiWorkflowPool {
         this.logger.info(`Initialization complete. ${this.clientRegistry.clients.size - failedConnections.length} client(s) connected successfully.`);
     }
     async shutdown() {
+        this.logger.info("Shutting down MultiWorkflowPool...");
         if (this.monitoringInterval) {
             clearInterval(this.monitoringInterval);
         }
@@ -222,11 +224,37 @@ export class MultiWorkflowPool {
         client.api.on("progress", event => {
             const prompt_id = event.detail.prompt_id;
             if (prompt_id) {
-                this.jobRegistry.updateJobProgress(prompt_id, event.detail.value, event.detail.max);
+                const nodeId = event.detail.node;
+                this.jobRegistry.updateJobProgress(prompt_id, event.detail.value, event.detail.max, nodeId !== null ? nodeId : undefined);
                 this.logger.debug(`[${event.type}@${client.nodeName}] Progress for prompt ID: ${prompt_id} | ${Math.round(event.detail.value / event.detail.max * 100)}%`);
             }
             else {
                 this.logger.warn(`[${event.type}@${client.nodeName}] Progress event received without prompt ID.`);
+            }
+        });
+        // Track node execution for profiling
+        client.api.on("executing", event => {
+            const prompt_id = event.detail.prompt_id;
+            const nodeId = event.detail.node;
+            if (prompt_id) {
+                if (nodeId === null) {
+                    // Execution completed (node: null event)
+                    this.logger.debug(`[${event.type}@${client.nodeName}] Execution complete for prompt ID: ${prompt_id}`);
+                }
+                else {
+                    // Node started executing
+                    this.jobRegistry.onNodeExecuting(prompt_id, String(nodeId));
+                    this.logger.debug(`[${event.type}@${client.nodeName}] Node ${nodeId} executing for prompt ID: ${prompt_id}`);
+                }
+            }
+        });
+        // Track cached nodes for profiling
+        client.api.on("execution_cached", event => {
+            const prompt_id = event.detail.prompt_id;
+            const nodeIds = event.detail.nodes;
+            if (prompt_id && nodeIds && Array.isArray(nodeIds)) {
+                this.jobRegistry.onCachedNodes(prompt_id, nodeIds.map(String));
+                this.logger.debug(`[${event.type}@${client.nodeName}] ${nodeIds.length} nodes cached for prompt ID: ${prompt_id}`);
             }
         });
         client.api.on("execution_success", event => {

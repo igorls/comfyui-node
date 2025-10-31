@@ -2,6 +2,7 @@ import { MultiWorkflowPool } from "src/multipool/multi-workflow-pool.js";
 import { Workflow } from "src/multipool/workflow.js";
 import { ImageInfo } from "src/types/api.js";
 import { ClientRegistry } from "src/multipool/client-registry.js";
+import { JobProfiler, JobProfileStats } from "./job-profiler.js";
 export type JobStatus = "pending" | "assigned" | "running" | "completed" | "failed" | "canceled" | "no_clients";
 export type JobResultStatus = "completed" | "failed" | "canceled";
 export interface JobState {
@@ -16,6 +17,7 @@ export interface JobState {
     images?: ImageInfo[];
     onProgress?: (progress: any) => void;
     onPreview?: (preview: any) => void;
+    profiler?: JobProfiler;
 }
 export interface JobResults {
     status: JobResultStatus;
@@ -23,6 +25,7 @@ export interface JobResults {
     prompt_id: string;
     images: string[];
     error?: any;
+    profileStats?: JobProfileStats;
 }
 export declare class JobStateRegistry {
     pool: MultiWorkflowPool;
@@ -49,8 +52,16 @@ export declare class JobStateRegistry {
         metadata: any;
         blob: Blob;
     }) => void): void;
-    updateJobProgress(prompt_id: string, value: number, max: number): void;
+    updateJobProgress(prompt_id: string, value: number, max: number, nodeId?: string | number): void;
     updateJobPreviewMetadata(prompt_id: any, metadata: any, blob: Blob): void;
     setJobFailure(jobId: string, bodyJSON: any): void;
+    /**
+     * Track node execution start for profiling
+     */
+    onNodeExecuting(prompt_id: string, nodeId: string): void;
+    /**
+     * Track cached nodes for profiling
+     */
+    onCachedNodes(prompt_id: string, nodeIds: string[]): void;
 }
 //# sourceMappingURL=job-state-registry.d.ts.map

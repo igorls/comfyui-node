@@ -6,5 +6,5 @@ export declare function promptGenerator(): string;
  * Generate a random prompt specifically for the Anime XL model. Using more anime-focused elements and danbooru-style tags.
  */
 export declare function animeXLPromptGenerator(): string;
-export declare const NEGATIVE_PROMPT = "\nlowres, bad anatomy, error body, error arm, error hand, error fingers,\nerror legs, error feet, missing fingers, extra digit, fewer digits, cropped,\nworst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated,\nout of frame, worst quality, low quality, naked, watermark, text, error, nsfw, nude\n";
+export declare const NEGATIVE_PROMPT = "modern, recent, old, oldest, cartoon, graphic, text, painting, crayon, graphite, abstract, glitch, deformed, mutated, ugly, disfigured, long body, lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cropped, very displeasing, (worst quality, bad quality:1.2), bad anatomy, sketch, jpeg artifacts, signature, watermark, username, signature, simple background, conjoined,bad ai-generated";
 //# sourceMappingURL=prompt-generator.d.ts.map

@@ -39,7 +39,10 @@ const editPrompts = [
 // ============================================================================
 // POOL SETUP
 // ============================================================================
-const pool = new MultiWorkflowPool({ enableMonitoring: true });
+const pool = new MultiWorkflowPool({
+    enableMonitoring: true,
+    logLevel: "info"
+});
 const genWorkflow = Workflow.fromAugmented(GenerationGraph);
 const editWorkflow = Workflow.fromAugmented(EditGraph);
 console.log(`Generation Workflow Hash: ${genWorkflow.structureHash}`);
@@ -127,7 +130,7 @@ export class TwoStageUser {
         const workflow = Workflow.fromAugmented(GenerationGraph)
             .input("1", "value", prompt)
             .input("2", "value", NEGATIVE_PROMPT)
-            .input("10", "steps", 15)
+            .input("10", "steps", 30)
             .input("10", "seed", seed);
         this.stats.generationsStarted++;
         const jobId = await pool.submitJob(workflow);
@@ -286,8 +289,11 @@ async function runSimulation() {
         await pool.shutdown();
     }
 }
-runSimulation().catch(error => {
-    console.error("Fatal error:", error);
+runSimulation().then(() => {
+    console.log("\n✅ Test script completed, exiting...");
+    process.exit(0);
+}).catch(error => {
+    console.error("\n❌ Fatal error:", error);
     process.exit(1);
 });
 //# sourceMappingURL=two-stage-edit-simulation.js.map

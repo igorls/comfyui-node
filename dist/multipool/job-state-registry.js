@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { JobProfiler } from "./job-profiler.js";
 export class JobStateRegistry {
     pool;
     clients;
@@ -24,6 +25,10 @@ export class JobStateRegistry {
             resolver,
             resultsPromise
         };
+        // Initialize profiler if enabled
+        if (this.pool.options.enableProfiling) {
+            jobState.profiler = new JobProfiler(Date.now(), workflow.toJSON());
+        }
         this.jobs.set(jobId, jobState);
         return jobId;
     }
@@ -115,6 +120,10 @@ export class JobStateRegistry {
         }
         jobState.prompt_id = prompt_id;
         this.promptIdToJobId.set(prompt_id, jobId);
+        // Notify profiler of execution start
+        if (jobState.profiler) {
+            jobState.profiler.onExecutionStart(prompt_id);
+        }
     }
     completeJob(prompt_id) {
         const jobState = this.jobs.get(this.promptIdToJobId.get(prompt_id) || "");
@@ -123,6 +132,10 @@ export class JobStateRegistry {
         }
         if (jobState.prompt_id === prompt_id) {
             jobState.status = "completed";
+            // Notify profiler of completion
+            if (jobState.profiler) {
+                jobState.profiler.onExecutionComplete();
+            }
             if (jobState.resolver) {
                 const results = {
                     status: "completed",
@@ -140,6 +153,10 @@ export class JobStateRegistry {
                             results.images.push(imageUrl);
                         }
                     }
+                }
+                // Add profiler stats if available
+                if (jobState.profiler) {
+                    results.profileStats = jobState.profiler.getStats();
                 }
                 jobState.resolver(results);
                 jobState.resolver = null;
@@ -194,7 +211,7 @@ export class JobStateRegistry {
         }
         jobState.onPreview = previewListener;
     }
-    updateJobProgress(prompt_id, value, max) {
+    updateJobProgress(prompt_id, value, max, nodeId) {
         const state = this.jobs.get(this.promptIdToJobId.get(prompt_id) || "");
         if (!state) {
             console.warn(`No job state found for prompt_id ${prompt_id} when updating progress.`);
@@ -202,6 +219,10 @@ export class JobStateRegistry {
         }
         if (state.onProgress && state.prompt_id === prompt_id) {
             state.onProgress({ value, max });
+        }
+        // Notify profiler
+        if (state.profiler && nodeId !== undefined) {
+            state.profiler.onProgress(nodeId, value, max);
         }
     }
     updateJobPreviewMetadata(prompt_id, metadata, blob) {
@@ -220,6 +241,10 @@ export class JobStateRegistry {
             throw new Error(`Job with ID ${jobId} not found.`);
         }
         jobState.status = "failed";
+        // Notify profiler of completion (even on failure)
+        if (jobState.profiler) {
+            jobState.profiler.onExecutionComplete();
+        }
         if (jobState.resolver) {
             const results = {
                 status: "failed",
@@ -228,8 +253,30 @@ export class JobStateRegistry {
                 images: [],
                 error: bodyJSON
             };
+            // Add profiler stats even on failure
+            if (jobState.profiler) {
+                results.profileStats = jobState.profiler.getStats();
+            }
             jobState.resolver(results);
             jobState.resolver = null;
+        }
+    }
+    /**
+     * Track node execution start for profiling
+     */
+    onNodeExecuting(prompt_id, nodeId) {
+        const state = this.jobs.get(this.promptIdToJobId.get(prompt_id) || "");
+        if (state?.profiler && state.prompt_id === prompt_id) {
+            state.profiler.onNodeExecuting(nodeId);
+        }
+    }
+    /**
+     * Track cached nodes for profiling
+     */
+    onCachedNodes(prompt_id, nodeIds) {
+        const state = this.jobs.get(this.promptIdToJobId.get(prompt_id) || "");
+        if (state?.profiler && state.prompt_id === prompt_id) {
+            state.profiler.onCachedNodes(nodeIds);
         }
     }
 }

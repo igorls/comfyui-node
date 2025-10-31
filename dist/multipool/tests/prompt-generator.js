@@ -20,12 +20,7 @@ export function animeXLPromptGenerator() {
     const subject = subjects[Math.floor(Math.random() * subjects.length)];
     const style = styles[Math.floor(Math.random() * styles.length)];
     const action = actions[Math.floor(Math.random() * actions.length)];
-    return `${subject}, ${action}, ${style}, masterpiece, absurdres`;
+    return `score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime, BREAK, ${subject}, ${action}, ${style}`;
 }
-export const NEGATIVE_PROMPT = `
-lowres, bad anatomy, error body, error arm, error hand, error fingers,
-error legs, error feet, missing fingers, extra digit, fewer digits, cropped,
-worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated,
-out of frame, worst quality, low quality, naked, watermark, text, error, nsfw, nude
-`;
+export const NEGATIVE_PROMPT = `modern, recent, old, oldest, cartoon, graphic, text, painting, crayon, graphite, abstract, glitch, deformed, mutated, ugly, disfigured, long body, lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cropped, very displeasing, (worst quality, bad quality:1.2), bad anatomy, sketch, jpeg artifacts, signature, watermark, username, signature, simple background, conjoined,bad ai-generated`;
 //# sourceMappingURL=prompt-generator.js.map

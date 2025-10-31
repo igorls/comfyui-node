@@ -8,5 +8,6 @@ export interface MultiWorkflowPoolOptions {
     enableMonitoring?: boolean;
     monitoringIntervalMs?: number;
     logLevel?: LogLevel;
+    enableProfiling?: boolean;
 }
 //# sourceMappingURL=interfaces.d.ts.map

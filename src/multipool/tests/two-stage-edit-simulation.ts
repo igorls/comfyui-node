@@ -172,7 +172,7 @@ export class TwoStageUser {
     const workflow = Workflow.fromAugmented(GenerationGraph)
       .input("1", "value", prompt)
       .input("2", "value", NEGATIVE_PROMPT)
-      .input("10", "steps", 15)
+      .input("10", "steps", 30)
       .input("10", "seed", seed);
 
     this.stats.generationsStarted++;

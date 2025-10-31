@@ -12,7 +12,7 @@ export declare class MultiWorkflowPool {
     private clientRegistry;
     private jobRegistry;
     queues: Map<string, JobQueueProcessor>;
-    private options;
+    options: Required<MultiWorkflowPoolOptions>;
     private logger;
     monitoringInterval?: Timer;
     constructor(options?: MultiWorkflowPoolOptions);
