@@ -4,19 +4,23 @@ import GenerationGraph from "../../../scripts/workflows/T2I-anime-nova-xl.json" 
 import EditGraph from "../../../scripts/workflows/quick-edit-test.json" with { type: "json" };
 import { randomUUID } from "node:crypto";
 import { animeXLPromptGenerator, NEGATIVE_PROMPT } from "src/multipool/tests/prompt-generator.js";
+import { pickRandom, randomInt, randomSeed } from "./test-helpers.js";
 
 /**
  * Two-Stage Edit Simulation for MultiWorkflowPool
  *
  * This test simulates real-world usage where users:
- * 1. Generate images using text-to-image workflows
- * 2. Edit those generated images using image editing workflows
+ * 1. Generate images using text-to-image workflows on a dedicated generation server
+ * 2. Edit those generated images using image editing workflows on dedicated edit servers
  *
- * The simulation supports multiple concurrent users and tests the pool's
- * ability to handle heterogeneous workflows with different client affinities.
- */
-
-// ============================================================================
+ * The simulation demonstrates:
+ * - Proper workflow affinity routing (generation → GEN_HOST, edits → EDIT_HOSTS)
+ * - Concurrent multi-user workflows
+ * - Image blob handling through the pool's public API (no direct host access)
+ * - Event-driven queue processing and client state management
+ *
+ * Each TwoStageUser class instance simulates an independent user generating and editing images.
+ */// ============================================================================
 // CONFIGURATION
 // ============================================================================
 
@@ -36,18 +40,6 @@ const editPrompts = [
   "Turn into a bioluminescent jungle with fog and glowing flora",
   "Adapt into a desert oasis at twilight with swirling dust and warm rim light"
 ];
-
-function pickRandom<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function randomSeed(): number {
-  return Math.floor(Math.random() * 2147483647);
-}
 
 // ============================================================================
 // POOL SETUP
@@ -105,8 +97,7 @@ export class TwoStageUser {
     generationsFailed: 0,
     editsStarted: 0,
     editsCompleted: 0,
-    editsFailed: 0,
-    uploadsFailed: 0
+    editsFailed: 0
   };
 
   constructor(
@@ -188,8 +179,6 @@ export class TwoStageUser {
     try {
       const result = await pool.waitForJobCompletion(jobId);
 
-      console.log(result);
-
       if (result.status === "completed") {
         this.stats.generationsCompleted++;
 
@@ -204,8 +193,6 @@ export class TwoStageUser {
           throw new Error(`Failed to fetch generated image from ${imageUrl}: ${response.statusText}`);
         }
         const blob = await response.blob();
-
-        console.log(`[${this.userId}] 🎨 Generated image fetched: ${imageUrl} (size: ${blob.size} bytes)`);
 
         // Queue this image for editing
         this.generatedImages.push({
@@ -236,13 +223,12 @@ export class TwoStageUser {
       const editPrompt = pickRandom(editPrompts);
 
       try {
-        // Create edit workflow
+        // Create edit workflow with the generated image attached as a blob
+        // The pool will handle uploading the image to the assigned edit server
         const editWorkflowInstance = Workflow.fromAugmented(EditGraph)
           .attachImage("97", "image", genImage.imageRecord.blob, `${randomUUID()}.png`)
           .input("91", "prompt", editPrompt)
-          .input("51", "seed", -1); // Use -1 to auto-generate seed
-
-        this.stats.editsStarted++;
+          .input("51", "seed", -1); // Auto-generate seed        this.stats.editsStarted++;
         const editJobId = await pool.submitJob(editWorkflowInstance);
         console.log(`[${this.userId}] ✏️  Edit ${i + 1}/${this.editsPerImage} started: "${editPrompt.substring(0, 40)}..." (job: ${editJobId.substring(0, 8)})`);
 
@@ -278,7 +264,6 @@ export class TwoStageUser {
     console.log(`\n[${this.userId}] === Final Statistics ===`);
     console.log(`  Generations: ${this.stats.generationsCompleted}/${this.stats.generationsStarted} (${this.stats.generationsFailed} failed)`);
     console.log(`  Edits:       ${this.stats.editsCompleted}/${this.stats.editsStarted} (${this.stats.editsFailed} failed)`);
-    console.log(`  Uploads:     ${this.stats.uploadsFailed} failed`);
     const totalSuccess = this.stats.generationsCompleted + this.stats.editsCompleted;
     const totalStarted = this.stats.generationsStarted + this.stats.editsStarted;
     const successRate = totalStarted > 0 ? ((totalSuccess / totalStarted) * 100).toFixed(1) : "0.0";
@@ -339,20 +324,18 @@ async function runSimulation() {
       generationsFailed: user1.stats.generationsFailed + user2.stats.generationsFailed + user3.stats.generationsFailed,
       editsCompleted: user1.stats.editsCompleted + user2.stats.editsCompleted + user3.stats.editsCompleted,
       editsStarted: user1.stats.editsStarted + user2.stats.editsStarted + user3.stats.editsStarted,
-      editsFailed: user1.stats.editsFailed + user2.stats.editsFailed + user3.stats.editsFailed,
-      uploadsFailed: user1.stats.uploadsFailed + user2.stats.uploadsFailed + user3.stats.uploadsFailed
+      editsFailed: user1.stats.editsFailed + user2.stats.editsFailed + user3.stats.editsFailed
     };
 
     console.log("\n=== Combined Statistics ===");
     console.log(`  Generations: ${totalStats.generationsCompleted}/${totalStats.generationsStarted} (${totalStats.generationsFailed} failed)`);
     console.log(`  Edits:       ${totalStats.editsCompleted}/${totalStats.editsStarted} (${totalStats.editsFailed} failed)`);
-    console.log(`  Uploads:     ${totalStats.uploadsFailed} failed`);
     const totalSuccess = totalStats.generationsCompleted + totalStats.editsCompleted;
     const totalAttempted = totalStats.generationsStarted + totalStats.editsStarted;
     const successRate = totalAttempted > 0 ? ((totalSuccess / totalAttempted) * 100).toFixed(1) : "0.0";
     console.log(`  Overall Success Rate: ${successRate}%\n`);
 
-    const hasFailures = totalStats.generationsFailed > 0 || totalStats.editsFailed > 0 || totalStats.uploadsFailed > 0;
+    const hasFailures = totalStats.generationsFailed > 0 || totalStats.editsFailed > 0;
     if (hasFailures) {
       console.log("⚠️  Some operations failed during the simulation");
       process.exitCode = 1;

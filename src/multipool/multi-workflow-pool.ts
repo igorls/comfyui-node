@@ -91,13 +91,47 @@ export class MultiWorkflowPool {
         })
       );
     }
-    await Promise.allSettled(connectionPromises);
+    const promiseResults = await Promise.allSettled(connectionPromises);
+    const failedConnections = promiseResults.filter(result => result.status === "rejected");
+    if (failedConnections.length > 0) {
+      console.warn(`[MultiWorkflowPool] Warning: ${failedConnections.length} client(s) failed to connect.`);
+      failedConnections.forEach((result) => {
+        if (result.status === "rejected") {
+          console.error(result.reason);
+        }
+      });
+    }
+
+    // Throw error if all connections failed
+    if (failedConnections.length === this.clientRegistry.clients.size) {
+      throw new Error("All clients failed to connect. Pool initialization failed.");
+    }
+
+    console.log(`[MultiWorkflowPool] Initialization complete. ${this.clientRegistry.clients.size - failedConnections.length} client(s) connected successfully.`);
   }
 
   async shutdown() {
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
     }
+
+    // Disconnect all clients
+    const disconnectPromises: Promise<void>[] = [];
+    for (const client of this.clientRegistry.clients.values()) {
+      disconnectPromises.push(
+        new Promise<void>(async (resolve) => {
+          try {
+            client.api.destroy();
+            console.log(`[MultiWorkflowPool] Disconnected from client ${client.url}`);
+          } catch (e) {
+            console.error(`[MultiWorkflowPool] Error disconnecting from client ${client.url}:`, e);
+          } finally {
+            resolve();
+          }
+        })
+      );
+    }
+    await Promise.allSettled(disconnectPromises);
   }
 
   addClient(clientUrl: string, options?: {
