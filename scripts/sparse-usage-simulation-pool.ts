@@ -9,7 +9,7 @@ import { delay } from "../src/tools.ts";
  * random intervals. Targets multi-hour soak tests for connection stability.
  */
 
-const DEFAULT_HOSTS = ["http://afterpic-comfy-igor:8188", "http://afterpic-comfy-aero16:8188"];
+const DEFAULT_HOSTS = ["http://server1:8188", "http://server2:8188"];
 
 const hosts = process.env.SPARSE_HOSTS
   ? process.env.SPARSE_HOSTS.split(",")

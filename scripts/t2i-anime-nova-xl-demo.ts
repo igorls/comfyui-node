@@ -5,7 +5,7 @@ import Graph from "./workflows/T2I-anime-nova-xl.json" assert { type: "json" };
  * Quick smoke test for the T2I Anime Nova XL workflow across two hosts.
  *
  * Defaults:
- *  - Hosts: http://localhost:8188 and http://afterpic-comfy-aero16:8188
+ *  - Hosts: http://server1:8188 and http://server2:8188
  *  - Positive prompt: stylised anime portrait
  *  - Negative prompt: standard quality filters
  *
@@ -19,8 +19,8 @@ import Graph from "./workflows/T2I-anime-nova-xl.json" assert { type: "json" };
  */
 
 const HOSTS = [
-  process.env.NOVA_HOST_A || "http://localhost:8188",
-  process.env.NOVA_HOST_B || "http://afterpic-comfy-aero16:8188"
+  process.env.NOVA_HOST_A || "http://server1:8188",
+  process.env.NOVA_HOST_B || "http://server2:8188"
 ];
 
 const POSITIVE_PROMPT =

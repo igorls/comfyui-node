@@ -11,7 +11,7 @@
 import { ComfyApi, Workflow, WorkflowPool } from "../src/index.js";
 import fs from "fs";
 
-const COMFY_HOST = "http://afterpic-comfy-igor:8188";
+const COMFY_HOST = "http://localhost:8188";
 const WORKFLOW_PATH = "./scripts/simple-txt2img.json";
 
 async function main() {

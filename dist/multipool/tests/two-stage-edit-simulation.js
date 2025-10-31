@@ -22,8 +22,8 @@ import { pickRandom, randomInt, randomSeed } from "./test-helpers.js";
  */ // ============================================================================
 // CONFIGURATION
 // ============================================================================
-const GEN_HOST = "http://afterpic-comfy-aero16:8188";
-const EDIT_HOSTS = ["http://afterpic-comfy-igor:8188", "http://afterpic-comfy-domi:8188"];
+const GEN_HOST = "http://server1:8188";
+const EDIT_HOSTS = ["http://server2:8188", "http://server3:8188"];
 // ============================================================================
 // PROMPT GENERATORS
 // ============================================================================

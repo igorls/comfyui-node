@@ -13,17 +13,17 @@ const w2 = Workflow.fromAugmented(GenerationGraph2);
 console.log(`Workflow 2 Hash: ${w2.structureHash}`);
 
 // Set affinity mapping
-pool.addClient("http://afterpic-comfy-igor:8188", {
+pool.addClient("http://server1:8188", {
   workflowAffinity: [w1, w2],
   priority: 1
 });
 
-pool.addClient("http://afterpic-comfy-domi:8188", {
+pool.addClient("http://server2:8188", {
   workflowAffinity: [w1],
   priority: 1
 });
 
-pool.addClient("http://afterpic-comfy-aero16:8188", {
+pool.addClient("http://server3:8188", {
   workflowAffinity: [w1],
   priority: 1
 });

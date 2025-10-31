@@ -8,13 +8,13 @@ import { waitForJob } from "./simulator/pool.ts";
 import { hashWorkflow } from "../src/pool/utils/hash.ts";
 
 const DEFAULT_HOSTS = [
-  "http://afterpic-comfy-igor:8188",
-  "http://afterpic-comfy-aero16:8188",
-  "http://afterpic-comfy-domi:8188"
+  "http://server1:8188",
+  "http://server2:8188",
+  "http://server3:8188"
 ];
 
-const GEN_HOST = "http://afterpic-comfy-aero16:8188";
-const EDIT_HOSTS = ["http://afterpic-comfy-igor:8188", "http://afterpic-comfy-domi:8188"];
+const GEN_HOST = "http://server1:8188";
+const EDIT_HOSTS = ["http://server2:8188", "http://server3:8188"];
 
 const hosts = process.env.TWO_STAGE_HOSTS
   ? process.env.TWO_STAGE_HOSTS.split(",")

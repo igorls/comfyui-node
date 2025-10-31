@@ -5,8 +5,8 @@
  */
 import { MultiWorkflowPool } from "../multi-workflow-pool.js";
 import { Workflow } from "../workflow.js";
-import GenerationGraph from "../../../scripts/workflows/T2I-anime-nova-xl.json" with { type: "json" };
-const GEN_HOST = "http://afterpic-comfy-aero16:8188";
+import GenerationGraph from "../../../scripts/workflows/T2I-one-obsession.json" with { type: "json" };
+const GEN_HOST = "http://server1:8188";
 // Create pool with profiling enabled
 const pool = new MultiWorkflowPool({
     enableProfiling: true,
@@ -26,10 +26,10 @@ console.log("=".repeat(80) + "\n");
 await pool.init();
 // Run a single generation job with profiling
 const workflow = Workflow.fromAugmented(GenerationGraph)
-    .input("1", "value", "1girl, anime style, beautiful landscape, high quality")
+    .input("1", "value", "1girl, anime style, beautiful landscape, high quality, vibrant colors")
     .input("2", "value", "ugly, blurry, low quality")
-    .input("10", "steps", 20)
-    .input("10", "seed", 42);
+    .input("10", "steps", 30)
+    .input("10", "seed", -1);
 console.log("Submitting job with profiling enabled...\n");
 const jobId = await pool.submitJob(workflow);
 const result = await pool.waitForJobCompletion(jobId);

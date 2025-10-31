@@ -10,7 +10,7 @@ import { delay } from "../src/tools.ts";
  * disconnect fixes over multi-hour periods.
  */
 
-const DEFAULT_HOSTS = ["http://afterpic-comfy-aero16:8188"];
+const DEFAULT_HOSTS = ["http://localhost:8188"];
 
 const hosts = process.env.SPARSE_HOSTS
   ? process.env.SPARSE_HOSTS.split(",")

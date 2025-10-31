@@ -1,5 +1,96 @@
 # Changelog
 
+## 1.6.2
+
+**What's New:**
+
+* **MultiWorkflowPool** – Event-driven heterogeneous cluster management for ComfyUI workers
+  * Manage pools of ComfyUI servers with different workflow capabilities (e.g., SDXL servers, Flux servers, ControlNet servers)
+  * **Workflow Affinity Routing** – Automatically route jobs to servers with matching workflow capabilities based on workflow hash
+  * **Zero Polling Architecture** – Fully event-driven design with no polling loops for maximum responsiveness and scalability
+  * **Per-Workflow Queues** – Separate job queues per workflow type with intelligent fallback to general queue
+  * **Client Priority System** – Configure server priority for workflow assignments
+  * **Structured Logging** – Built-in logger with configurable log levels (`debug`, `info`, `warn`, `error`, `silent`)
+  * **Integrated Profiling** – Optional per-node execution profiling adapted from WorkflowPool
+  * **Progress & Preview Events** – Real-time job progress tracking and preview image streaming
+  * **Smart Client Management** – Automatic idle/busy state tracking and failover handling
+
+**Architecture:**
+
+```typescript
+const pool = new MultiWorkflowPool({
+  logLevel: "info",           // Structured logging
+  enableProfiling: true,      // Per-node timing stats
+  enableMonitoring: true,     // Periodic status summaries
+  connectionTimeoutMs: 10000  // Connection timeout per client
+});
+
+// Add clients with workflow affinity
+pool.addClient("http://server1:8188", {
+  workflowAffinity: [sdxlWorkflow],  // Routes SDXL jobs here
+  priority: 1
+});
+
+pool.addClient("http://server2:8188", {
+  workflowAffinity: [fluxWorkflow],  // Routes Flux jobs here
+  priority: 2
+});
+
+await pool.init();
+
+// Submit jobs - automatic routing to appropriate server
+const jobId = await pool.submitJob(sdxlWorkflow);
+
+// Track progress and get results
+pool.attachJobProgressListener(jobId, ({ value, max }) => {
+  console.log(`Progress: ${Math.round(value/max*100)}%`);
+});
+
+const result = await pool.waitForJobCompletion(jobId);
+console.log('Profile Stats:', result.profileStats);
+```
+
+**Key Features:**
+
+* **ClientRegistry** – Manages client connections, states (idle/busy/offline), and workflow affinity matching
+* **JobQueueProcessor** – Per-workflow queue processing with event-driven job assignment
+* **JobStateRegistry** – Centralized job lifecycle management with profiling integration
+* **PoolEventManager** – Extensible event system for custom monitoring and integration
+
+**Events Supported:**
+
+* Job lifecycle: `job:queued`, `job:started`, `job:completed`, `job:failed`, `job:cancelled`
+* Progress tracking: Real-time progress updates with node execution tracking
+* Preview streaming: `b_preview_meta` events with blob and metadata
+* Client state: Automatic idle/busy transitions, offline detection
+
+**Performance:**
+
+* Event-driven architecture eliminates polling overhead
+* O(1) workflow hash lookup for client routing
+* Separate queues prevent head-of-line blocking
+* Profiling shows cache hit rates, node timing, and execution bottlenecks
+
+**Documentation:**
+
+* `docs/multipool-profiling.md` – Profiling guide for MultiWorkflowPool
+* `src/multipool/tests/profiling-demo.ts` – Complete profiling demonstration
+* `src/multipool/tests/two-stage-edit-simulation.ts` – Multi-user workflow simulation
+
+**New Exports:**
+
+* `MultiWorkflowPool` – Main pool class
+* `JobProfiler` – Per-job execution profiling (MultiWorkflowPool variant)
+* `Logger` / `createLogger` – Structured logging infrastructure
+* Types: `MultiWorkflowPoolOptions`, `JobResults`, `JobState`, `JobProfileStats`
+
+**Use Cases:**
+
+* Multi-tenant SaaS platforms with heterogeneous server capabilities
+* Workflow-specific server pools (image generation, video, upscaling, etc.)
+* Development/testing with mixed local and cloud ComfyUI instances
+* Load balancing across geographically distributed servers
+
 ## 1.5.0
 
 **What's New:**

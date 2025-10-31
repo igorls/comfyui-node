@@ -17,17 +17,17 @@ import { Workflow } from "src/multipool/workflow.js";
 const pool = new MultiWorkflowPool();
 
 // Add your real ComfyUI servers here
-pool.addClient("http://afterpic-comfy-igor:8188", {
+pool.addClient("http://server1:8188", {
   workflowAffinity: [],
   priority: 1
 });
 
-pool.addClient("http://afterpic-comfy-domi:8188", {
+pool.addClient("http://server2:8188", {
   workflowAffinity: [],
   priority: 1
 });
 
-pool.addClient("http://afterpic-comfy-aero16:8188", {
+pool.addClient("http://server3:8188", {
   workflowAffinity: [],
   priority: 1
 });
