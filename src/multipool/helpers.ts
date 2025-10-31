@@ -11,12 +11,20 @@ export function classifyFailure(error: any): { type: 'connection' | 'workflow_in
     for (const nodeError of Object.values(responseData.node_errors) as any) {
       for (const err of nodeError.errors) {
         // Missing custom nodes
-        if (err.type.includes("FileNotFoundError") || err.details.includes("cannot be found")) {
+        if (err.type.includes("FileNotFoundError") || err.details?.includes("cannot be found")) {
           return { type: 'workflow_incompatibility', message: `Missing file or model: ${err.details}` };
         }
-        // Missing model files (checkpoints, LoRAs, etc.)
-        if (err.type === "value_not_in_list" && (err.details.includes("ckpt_name") || err.details.includes("lora_name"))) {
-          return { type: 'workflow_incompatibility', message: `Missing model file: ${err.details}` };
+        // Missing model files (checkpoints, LoRAs, etc.) - also covers other value_not_in_list that reference files
+        if (err.type === "value_not_in_list") {
+          const details = err.details || "";
+          // Check for common model/file input names
+          if (details.includes("ckpt_name") || details.includes("lora_name") || 
+              details.includes("model_name") || details.includes("vae_name") ||
+              details.includes("embedding_name") || details.includes("controlnet") ||
+              details.includes(".safetensors") || details.includes(".ckpt") || 
+              details.includes(".pt") || details.includes(".pth")) {
+            return { type: 'workflow_incompatibility', message: `Missing model file: ${details}` };
+          }
         }
         // Errors during model loading
         if (err.message && (err.message.includes("KeyError: '") || err.message.includes("safetensors_load"))) {
@@ -24,6 +32,12 @@ export function classifyFailure(error: any): { type: 'connection' | 'workflow_in
         }
       }
     }
+  }
+
+  // Check for missing custom nodes (invalid_prompt type)
+  if (responseData.error?.type === "invalid_prompt" && 
+      responseData.error?.message?.includes("does not exist")) {
+    return { type: 'workflow_incompatibility', message: responseData.error.message };
   }
 
   // Check for python exception for missing nodes
