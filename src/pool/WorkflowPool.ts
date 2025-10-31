@@ -292,7 +292,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
     const affinity = this.affinities.get(workflowHash);
 
-    const preferredClientIds = options?.preferredClientIds 
+    const preferredClientIds = options?.preferredClientIds
       ? [...options.preferredClientIds]
       : (affinity?.preferredClientIds ? [...affinity.preferredClientIds] : []);
     const excludeClientIds = options?.excludeClientIds
@@ -506,7 +506,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       while (true) {
         iteration++;
         this.debugLog(`[processQueue] Iteration ${iteration}`);
-        
+
         const idleClients = this.clientManager.list().filter(c => this.clientManager.isClientStable(c));
         this.debugLog(`[processQueue] Idle clients: [${idleClients.map(c => c.id).join(", ")}] (${idleClients.length})`);
         if (!idleClients.length) {
@@ -619,7 +619,12 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
             const lease = this.clientManager.claim(matchInfo.job, availableClient);
             if (lease) {
               this.debugLog(`[processQueue] Starting job ${matchInfo.job.jobId.substring(0, 8)}... on client ${availableClient}`);
-              this.runJob({ reservation, job: matchInfo.job, clientId: lease.clientId, release: lease.release }).catch((error) => {
+              this.runJob({
+                reservation,
+                job: matchInfo.job,
+                clientId: lease.clientId,
+                release: lease.release
+              }).catch((error) => {
                 console.error("[WorkflowPool] Unhandled job error", error);
               });
             } else {
@@ -746,7 +751,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
           const nodeInfo = currentExecutingNode ? ` (node: ${currentExecutingNode})` : "";
           completionError = new Error(
             `Node execution timeout: took longer than ${nodeExecutionTimeout}ms${nodeInfo}. ` +
-              `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`
+            `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`
           );
           resolveCompletion?.();
         }, nodeExecutionTimeout);
@@ -1035,7 +1040,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
               reject(
                 new Error(
                   `Execution failed to start within ${executionStartTimeout}ms. ` +
-                    `Server may be stuck or unresponsive.`
+                  `Server may be stuck or unresponsive.`
                 )
               );
             }, executionStartTimeout);
@@ -1071,7 +1076,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       });
 
       const result = await exec;
-      
+
       // Wait for the wrapper to complete (onFinished or onFailed callback)
       await completionPromise;
 
@@ -1084,7 +1089,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       }
 
       await this.queue.commit(reservation.reservationId);
-      safeRelease({ success: true});
+      safeRelease({ success: true });
 
     } catch (error) {
       // Immediately release the client on any failure

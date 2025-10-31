@@ -387,7 +387,12 @@ export class WorkflowPool extends TypedEventTarget {
                         const lease = this.clientManager.claim(matchInfo.job, availableClient);
                         if (lease) {
                             this.debugLog(`[processQueue] Starting job ${matchInfo.job.jobId.substring(0, 8)}... on client ${availableClient}`);
-                            this.runJob({ reservation, job: matchInfo.job, clientId: lease.clientId, release: lease.release }).catch((error) => {
+                            this.runJob({
+                                reservation,
+                                job: matchInfo.job,
+                                clientId: lease.clientId,
+                                release: lease.release
+                            }).catch((error) => {
                                 console.error("[WorkflowPool] Unhandled job error", error);
                             });
                         }

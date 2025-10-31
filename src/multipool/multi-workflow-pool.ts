@@ -4,6 +4,7 @@ import { JobResults, JobStateRegistry } from "./job-state-registry.js";
 import { JobQueueProcessor } from "./job-queue-processor.js";
 import { Workflow } from "./workflow.js";
 import { MultiWorkflowPoolOptions, PoolEvent } from "./interfaces.js";
+import { Logger, createLogger } from "./logger.js";
 
 /**
  * MultiWorkflowPool class to manage heterogeneous clusters of ComfyUI workers with different workflow capabilities.
@@ -27,6 +28,9 @@ export class MultiWorkflowPool {
   // Pool configuration
   private options: Required<MultiWorkflowPoolOptions>;
 
+  // Logger instance
+  private logger: Logger;
+
   monitoringInterval?: Timer;
 
   constructor(options?: MultiWorkflowPoolOptions) {
@@ -34,15 +38,18 @@ export class MultiWorkflowPool {
     this.options = {
       connectionTimeoutMs: options?.connectionTimeoutMs ?? 10000,
       enableMonitoring: options?.enableMonitoring ?? false,
-      monitoringIntervalMs: options?.monitoringIntervalMs ?? 60000
+      monitoringIntervalMs: options?.monitoringIntervalMs ?? 60000,
+      logLevel: options?.logLevel ?? "warn"
     };
+
+    this.logger = createLogger("MultiWorkflowPool", this.options.logLevel);
 
     this.events = new PoolEventManager(this);
     this.clientRegistry = new ClientRegistry(this);
     this.jobRegistry = new JobStateRegistry(this, this.clientRegistry);
 
     // Create general queue for workflows without specific hashes
-    this.queues.set("general", new JobQueueProcessor(this.jobRegistry, this.clientRegistry, "general"));
+    this.queues.set("general", new JobQueueProcessor(this.jobRegistry, this.clientRegistry, "general", this.logger));
 
     // Monitoring
     if (this.options.enableMonitoring) {
@@ -69,12 +76,12 @@ export class MultiWorkflowPool {
             const readyApi = await client.api.init(1);
             clearTimeout(timeout);
             timeout = null;
-            console.log(`[MultiWorkflowPool]Connected to ${client.url}`);
+            this.logger.info(`Connected to ${client.url}`);
             client.api = readyApi;
             this.attachHandlersToClient(client);
             const queueStatus = await client.api.getQueue();
             if (queueStatus.queue_running.length === 0 && queueStatus.queue_pending.length === 0) {
-              console.log(`[MultiWorkflowPool] Client ${client.url} is idle.`);
+              this.logger.debug(`Client ${client.url} is idle.`);
               client.state = "idle";
             } else {
               client.state = "busy";
@@ -94,10 +101,10 @@ export class MultiWorkflowPool {
     const promiseResults = await Promise.allSettled(connectionPromises);
     const failedConnections = promiseResults.filter(result => result.status === "rejected");
     if (failedConnections.length > 0) {
-      console.warn(`[MultiWorkflowPool] Warning: ${failedConnections.length} client(s) failed to connect.`);
+      this.logger.warn(`Warning: ${failedConnections.length} client(s) failed to connect.`);
       failedConnections.forEach((result) => {
         if (result.status === "rejected") {
-          console.error(result.reason);
+          this.logger.error("Connection failed:", result.reason);
         }
       });
     }
@@ -107,7 +114,7 @@ export class MultiWorkflowPool {
       throw new Error("All clients failed to connect. Pool initialization failed.");
     }
 
-    console.log(`[MultiWorkflowPool] Initialization complete. ${this.clientRegistry.clients.size - failedConnections.length} client(s) connected successfully.`);
+    this.logger.info(`Initialization complete. ${this.clientRegistry.clients.size - failedConnections.length} client(s) connected successfully.`);
   }
 
   async shutdown() {
@@ -122,9 +129,9 @@ export class MultiWorkflowPool {
         new Promise<void>(async (resolve) => {
           try {
             client.api.destroy();
-            console.log(`[MultiWorkflowPool] Disconnected from client ${client.url}`);
+            this.logger.debug(`Disconnected from client ${client.url}`);
           } catch (e) {
-            console.error(`[MultiWorkflowPool] Error disconnecting from client ${client.url}:`, e);
+            this.logger.error(`Error disconnecting from client ${client.url}:`, e);
           } finally {
             resolve();
           }
@@ -159,7 +166,7 @@ export class MultiWorkflowPool {
       queue = this.assertQueue(workflowHash);
     } else {
       queue = this.queues.get("general")!;
-      console.log(`No clients with affinity for workflow hash ${workflowHash}, using general queue.`);
+      this.logger.debug(`No clients with affinity for workflow hash ${workflowHash}, using general queue.`);
     }
 
     if (!queue) {
@@ -192,7 +199,7 @@ export class MultiWorkflowPool {
     }
     let queue = this.queues.get(workflowHash);
     if (!queue) {
-      queue = new JobQueueProcessor(this.jobRegistry, this.clientRegistry, workflowHash);
+      queue = new JobQueueProcessor(this.jobRegistry, this.clientRegistry, workflowHash, this.logger);
       this.queues.set(workflowHash, queue);
     }
     return queue;
@@ -205,17 +212,17 @@ export class MultiWorkflowPool {
     // });
 
     client.api.on("status", event => {
-      console.log(`[${event.type}@${client.nodeName}] Queue Remaining: ${event.detail.status.exec_info.queue_remaining}`);
+      this.logger.client(client.nodeName, event.type, `Queue Remaining: ${event.detail.status.exec_info.queue_remaining}`);
       // Update client state based on status
       if (event.detail.status.exec_info.queue_remaining === 0) {
         client.state = "idle";
         // Trigger queue processing
         client.workflowAffinity?.forEach(value => {
-          console.log(`Triggering queue processing for workflow hash ${value} due to client ${client.nodeName} becoming idle.`);
+          this.logger.debug(`Triggering queue processing for workflow hash ${value} due to client ${client.nodeName} becoming idle.`);
           const queue = this.queues.get(value);
           if (queue) {
             queue.processQueue().catch(reason => {
-              console.error(`Error processing job queue for workflow hash ${value}:`, reason);
+              this.logger.error(`Error processing job queue for workflow hash ${value}:`, reason);
             });
           }
         });
@@ -228,9 +235,9 @@ export class MultiWorkflowPool {
       const prompt_id = event.detail.metadata.prompt_id;
       if (prompt_id) {
         this.jobRegistry.updateJobPreviewMetadata(prompt_id, event.detail.metadata, event.detail.blob);
-        // console.log(`[${event.type}@${client.nodeName}] Preview metadata for prompt ID: ${prompt_id} | blob size: ${event.detail.blob.size} (${event.detail.metadata.image_type})`);
+        this.logger.debug(`[${event.type}@${client.nodeName}] Preview metadata for prompt ID: ${prompt_id} | blob size: ${event.detail.blob.size} (${event.detail.metadata.image_type})`);
       } else {
-        console.log(`[${event.type}@${client.nodeName}] ⚠️⚠️⚠️  Preview metadata received without prompt ID.`);
+        this.logger.warn(`[${event.type}@${client.nodeName}] Preview metadata received without prompt ID.`);
       }
     });
 
@@ -242,9 +249,9 @@ export class MultiWorkflowPool {
         if (output && output.images) {
           this.jobRegistry.addJobImages(prompt_id, output.images);
         }
-        // console.log(`[${event.type}@${client.nodeName}] Node executed for prompt ID: ${prompt_id} | Node`, event.detail.output);
+        this.logger.debug(`[${event.type}@${client.nodeName}] Node executed for prompt ID: ${prompt_id}`, event.detail.output);
       } else {
-        console.log(`[${event.type}@${client.nodeName}] ⚠️⚠️⚠️  Executed event received without prompt ID.`);
+        this.logger.warn(`[${event.type}@${client.nodeName}] Executed event received without prompt ID.`);
       }
     });
 
@@ -252,16 +259,16 @@ export class MultiWorkflowPool {
       const prompt_id = event.detail.prompt_id;
       if (prompt_id) {
         this.jobRegistry.updateJobProgress(prompt_id, event.detail.value, event.detail.max);
-        // console.log(`[${event.type}@${client.nodeName}] Progress for prompt ID: ${prompt_id} | ${Math.round(event.detail.value / event.detail.max * 100)}%`);
+        this.logger.debug(`[${event.type}@${client.nodeName}] Progress for prompt ID: ${prompt_id} | ${Math.round(event.detail.value / event.detail.max * 100)}%`);
       } else {
-        console.log(`[${event.type}@${client.nodeName}] ⚠️⚠️⚠️  Progress event received without prompt ID.`);
+        this.logger.warn(`[${event.type}@${client.nodeName}] Progress event received without prompt ID.`);
       }
     });
 
     client.api.on("execution_success", event => {
       const prompt_id = event.detail.prompt_id;
       if (prompt_id) {
-        console.log(`[${event.type}@${client.nodeName}] Execution success for prompt ID: ${prompt_id}`);
+        this.logger.client(client.nodeName, event.type, `Execution success for prompt ID: ${prompt_id}`);
         // Mark client as idle first
         client.state = "idle";
         // Mark job as completed, it will trigger queue processing

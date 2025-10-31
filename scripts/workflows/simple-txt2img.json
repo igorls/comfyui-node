@@ -19,7 +19,7 @@
   },
   "4": {
     "inputs": {
-      "ckpt_name": "realismByStableYogi_v60FP16.safetensors"
+      "ckpt_name": ""
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {

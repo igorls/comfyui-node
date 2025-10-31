@@ -1,6 +1,4 @@
 export { WorkflowPool } from "./WorkflowPool.js";
-export { SmartPool } from "./SmartPool.js";
-export { SmartPoolV2 } from "./SmartPoolV2.js";
 export type { WorkflowPoolOpts } from "./WorkflowPool.js";
 export type { WorkflowPoolEventMap } from "./types/events.js";
 export type { JobRecord, JobStatus, WorkflowJobOptions } from "./types/job.js";

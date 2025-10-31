@@ -348,7 +348,10 @@ async function runSimulation() {
   }
 }
 
-runSimulation().catch(error => {
-  console.error("Fatal error:", error);
+runSimulation().then(() => {
+  console.log("\n✅ Test script completed, exiting...");
+  process.exit(0);
+}).catch(error => {
+  console.error("\n❌ Fatal error:", error);
   process.exit(1);
 });

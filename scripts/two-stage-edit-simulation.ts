@@ -1,6 +1,6 @@
 import { ComfyApi, WorkflowPool, JobRecord, WorkflowAffinity } from "../src/index.ts";
-import GenerationGraph from "./workflows/T2I-anime-nova-xl.json" assert { type: "json" };
-import EditGraph from "./workflows/quick-edit-test.json" assert { type: "json" };
+import GenerationGraph from "./workflows/T2I-anime-nova-xl.json" with { type: "json" };
+import EditGraph from "./workflows/quick-edit-test.json" with { type: "json" };
 import { delay } from "../src/tools.ts";
 import { log, pickRandom, uploadImage, nextSeed, randomInt } from "./simulator/helpers.ts";
 import { buildEditWorkflow, buildGenerationWorkflow } from "./simulator/workflows.ts";

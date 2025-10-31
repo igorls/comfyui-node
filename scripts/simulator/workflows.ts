@@ -1,7 +1,7 @@
-import { Workflow } from "../../src/index.ts";
-import GenerationGraph from "../workflows/T2I-anime-nova-xl.json" assert { type: "json" };
-import EditGraph from "../workflows/quick-edit-test.json" assert { type: "json" };
-import { clone } from "./helpers.ts";
+import GenerationGraph from "../workflows/T2I-anime-nova-xl.json" with { type: "json" };
+import EditGraph from "../workflows/quick-edit-test.json" with { type: "json" };
+import { Workflow } from "../../src/workflow.js";
+import { clone } from "./helpers.js";
 
 export function buildGenerationWorkflow(prompt: string, negative: string, seed: number) {
   const wf = Workflow.from(clone(GenerationGraph));

@@ -1,4 +1,4 @@
-import { hashWorkflow } from '../pool/utils/hash.js';
+import { hashWorkflow } from "../pool/utils/hash.js";
 class TinyEmitter {
     listeners = new Map();
     on(evt, fn) {
@@ -7,12 +7,21 @@ class TinyEmitter {
         this.listeners.get(evt).add(fn);
         return () => this.off(evt, fn);
     }
-    off(evt, fn) { this.listeners.get(evt)?.delete(fn); }
-    emit(evt, ...args) { this.listeners.get(evt)?.forEach(fn => { try {
-        fn(...args);
+    off(evt, fn) {
+        this.listeners.get(evt)?.delete(fn);
     }
-    catch { } }); }
-    removeAll() { this.listeners.clear(); }
+    emit(evt, ...args) {
+        this.listeners.get(evt)?.forEach(fn => {
+            try {
+                fn(...args);
+            }
+            catch {
+            }
+        });
+    }
+    removeAll() {
+        this.listeners.clear();
+    }
 }
 export class WorkflowJob {
     emitter = new TinyEmitter();
@@ -21,18 +30,38 @@ export class WorkflowJob {
     doneReject;
     lastProgressPct = -1;
     constructor() {
-        this.donePromise = new Promise((res, rej) => { this.doneResolve = res; this.doneReject = rej; });
+        this.donePromise = new Promise((res, rej) => {
+            this.doneResolve = res;
+            this.doneReject = rej;
+        });
         // Prevent unhandled rejection warnings by attaching a catch handler
         // The actual error handling happens when user calls done()
-        this.donePromise.catch(() => { });
+        this.donePromise.catch(() => {
+        });
     }
-    on(evt, fn) { this.emitter.on(evt, fn); return this; }
-    off(evt, fn) { this.emitter.off(evt, fn); return this; }
+    on(evt, fn) {
+        this.emitter.on(evt, fn);
+        return this;
+    }
+    off(evt, fn) {
+        this.emitter.off(evt, fn);
+        return this;
+    }
     /** Await final mapped outputs */
-    done() { return this.donePromise; }
-    _emit(evt, ...args) { this.emitter.emit(evt, ...args); }
-    _finish(data) { this.doneResolve(data); this.emitter.emit('finished', data, data._promptId); }
-    _fail(err, promptId) { this.doneReject(err); this.emitter.emit('failed', err, promptId); }
+    done() {
+        return this.donePromise;
+    }
+    _emit(evt, ...args) {
+        this.emitter.emit(evt, ...args);
+    }
+    _finish(data) {
+        this.doneResolve(data);
+        this.emitter.emit("finished", data, data._promptId);
+    }
+    _fail(err, promptId) {
+        this.doneReject(err);
+        this.emitter.emit("failed", err, promptId);
+    }
 }
 export class Workflow {
     json;
@@ -45,13 +74,13 @@ export class Workflow {
     /** Structural hash of the workflow JSON for compatibility tracking in failover scenarios */
     structureHash;
     static from(data, opts) {
-        if (typeof data === 'string') {
+        if (typeof data === "string") {
             try {
                 const parsed = JSON.parse(data);
                 return new Workflow(parsed, opts);
             }
             catch (e) {
-                throw new Error('Failed to parse workflow JSON string', { cause: e });
+                throw new Error("Failed to parse workflow JSON string", { cause: e });
             }
         }
         return new Workflow(structuredClone(data), opts);
@@ -72,7 +101,7 @@ export class Workflow {
     }
     /** Set a nested input path on a node e.g. set('9.inputs.text','hello') */
     set(path, value) {
-        const keys = path.split('.');
+        const keys = path.split(".");
         let cur = this.json;
         for (let i = 0; i < keys.length - 1; i++) {
             if (cur[keys[i]] === undefined)
@@ -85,7 +114,14 @@ export class Workflow {
     /** Attach a single image buffer to a node input (e.g., LoadImage.image). Will upload on run() then set the input to the filename. */
     attachImage(nodeId, inputName, data, fileName, opts) {
         const blob = toBlob(data, fileName);
-        this._pendingImageInputs.push({ nodeId: String(nodeId), inputName, blob, fileName, subfolder: opts?.subfolder, override: opts?.override });
+        this._pendingImageInputs.push({
+            nodeId: String(nodeId),
+            inputName,
+            blob,
+            fileName,
+            subfolder: opts?.subfolder,
+            override: opts?.override
+        });
         return this;
     }
     /** Attach multiple files into a server subfolder (useful for LoadImageSetFromFolderNode). */
@@ -121,7 +157,7 @@ export class Workflow {
     }
     batchInputs(a, b, c) {
         // Form 1: (nodeId, values, opts)
-        if (typeof a === 'string') {
+        if (typeof a === "string") {
             const nodeId = a;
             const values = b || {};
             const opts = c || {};
@@ -162,7 +198,8 @@ export class Workflow {
                 try {
                     console.warn(`Workflow.output called as output(nodeId, alias). Interpreting as output(alias,nodeId): '${alias}:${nodeId}'`);
                 }
-                catch { }
+                catch {
+                }
             }
             else {
                 alias = String(a);
@@ -171,8 +208,8 @@ export class Workflow {
         }
         else {
             // single param variant: maybe "alias:node" or just node
-            if (a.includes(':')) {
-                const [al, id] = a.split(':');
+            if (a.includes(":")) {
+                const [al, id] = a.split(":");
                 if (al && id) {
                     alias = al;
                     nodeId = id;
@@ -232,7 +269,32 @@ export class Workflow {
         return this;
     }
     /** IDE helper returning empty object typed as final result (aliases + metadata). */
-    typedResult() { return {}; }
+    typedResult() {
+        return {};
+    }
+    /** Get the raw workflow JSON structure. */
+    toJSON() {
+        return structuredClone(this.json);
+    }
+    /** Upload pending images to client */
+    async uploadAssets(api) {
+        // Upload any pending assets first, then patch JSON inputs
+        if (this._pendingFolderFiles.length || this._pendingImageInputs.length) {
+            // Upload folder files
+            for (const f of this._pendingFolderFiles) {
+                await api.ext.file.uploadImage(f.blob, f.fileName, { subfolder: f.subfolder, override: f.override });
+            }
+            // Upload and set single-image inputs
+            for (const it of this._pendingImageInputs) {
+                await api.ext.file.uploadImage(it.blob, it.fileName, { subfolder: it.subfolder, override: it.override });
+                // Prefer just the filename; many LoadImage nodes look up by filename (subfolder managed server-side)
+                this.input(it.nodeId, it.inputName, it.fileName);
+            }
+            // Clear pending once applied
+            this._pendingFolderFiles = [];
+            this._pendingImageInputs = [];
+        }
+    }
 }
 // Helper: normalize to Blob for upload
 function toBlob(src, fileName) {
@@ -240,7 +302,7 @@ function toBlob(src, fileName) {
         return src;
     // Normalize everything to a plain ArrayBuffer for reliable BlobPart typing
     let ab;
-    if (typeof Buffer !== 'undefined' && src instanceof Buffer) {
+    if (typeof Buffer !== "undefined" && src instanceof Buffer) {
         const u8 = new Uint8Array(src);
         ab = u8.slice(0).buffer;
     }
@@ -261,12 +323,12 @@ function mimeFromName(name) {
     if (!name)
         return undefined;
     const n = name.toLowerCase();
-    if (n.endsWith('.png'))
-        return 'image/png';
-    if (n.endsWith('.jpg') || n.endsWith('.jpeg'))
-        return 'image/jpeg';
-    if (n.endsWith('.webp'))
-        return 'image/webp';
+    if (n.endsWith(".png"))
+        return "image/png";
+    if (n.endsWith(".jpg") || n.endsWith(".jpeg"))
+        return "image/jpeg";
+    if (n.endsWith(".webp"))
+        return "image/webp";
     return undefined;
 }
 //# sourceMappingURL=workflow.js.map

@@ -1,4 +1,5 @@
-import type { AugmentNodes } from '../node-type-hints.js';
+import type { AugmentNodes } from "../node-type-hints.js";
+import { ComfyApi } from "src/client.js";
 type WorkflowJSON = Record<string, any>;
 export interface WorkflowResultMeta {
     _promptId?: string;
@@ -49,9 +50,9 @@ type NodeInputs<T> = T extends {
     inputs: infer I;
 } ? I : never;
 type OutputMap = Record<string, any>;
-type OutputShapeFor<C extends string> = C extends 'SaveImage' | 'SaveImageAdvanced' ? {
+type OutputShapeFor<C extends string> = C extends "SaveImage" | "SaveImageAdvanced" ? {
     images?: any[];
-} : C extends 'KSampler' ? {
+} : C extends "KSampler" ? {
     samples?: any;
 } : any;
 type NodeOutputFor<T extends WorkflowJSON, K extends keyof T & string> = T[K] extends {
@@ -162,6 +163,10 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     updateHash(): this;
     /** IDE helper returning empty object typed as final result (aliases + metadata). */
     typedResult(): WorkflowResult & O;
+    /** Get the raw workflow JSON structure. */
+    toJSON(): T;
+    /** Upload pending images to client */
+    uploadAssets(api: ComfyApi): Promise<void>;
 }
 export interface Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap = {}> {
     output<NodeId extends keyof T & string>(nodeId: NodeId): Workflow<T, O & Record<NodeId, NodeOutputFor<T, NodeId>>>;

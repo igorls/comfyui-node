@@ -3,6 +3,7 @@ import { JobStateRegistry } from "./job-state-registry.js";
 import { ClientRegistry, EnhancedClient } from "./client-registry.js";
 import { classifyFailure } from "src/multipool/helpers.js";
 import { ComfyApi } from "src/client.js";
+import { Logger } from "./logger.js";
 
 export interface QueueJob {
   jobId: string;
@@ -14,13 +15,15 @@ export class JobQueueProcessor {
 
   private jobs: JobStateRegistry;
   private clientRegistry: ClientRegistry;
+  private logger: Logger;
   queue: Array<QueueJob> = [];
   workflowHash: string = "";
   isProcessing: boolean = false;
   maxAttempts: number = 3;
 
-  constructor(stateRegistry: JobStateRegistry, clientRegistry: ClientRegistry, workflowHash: string) {
-    console.log(`Creating JobQueueProcessor for workflow hash: '${workflowHash}'`);
+  constructor(stateRegistry: JobStateRegistry, clientRegistry: ClientRegistry, workflowHash: string, logger: Logger) {
+    this.logger = logger;
+    this.logger.debug(`Creating JobQueueProcessor for workflow hash: '${workflowHash}'`);
     this.clientRegistry = clientRegistry;
     this.jobs = stateRegistry;
     this.workflowHash = workflowHash;
@@ -34,14 +37,14 @@ export class JobQueueProcessor {
     }
     this.queue.push({ jobId: newJobId, workflow, attempts: 1 });
     this.processQueue().catch(reason => {
-      console.error(`Error processing job queue for workflow hash ${this.workflowHash}:`, reason);
+      this.logger.error(`Error processing job queue for workflow hash ${this.workflowHash}:`, reason);
     });
   }
 
   async processQueue() {
 
     if (this.isProcessing) {
-      console.log(`⚠️ Job queue for workflow hash ${this.workflowHash} is already being processed, skipping.`);
+      this.logger.debug(`Job queue for workflow hash ${this.workflowHash} is already being processed, skipping.`);
       return;
     }
 
@@ -50,7 +53,7 @@ export class JobQueueProcessor {
     // Get the next job in the queue
     const nextJob = this.queue.shift();
     if (nextJob) {
-      console.log(`Processing job ${nextJob.jobId}`);
+      this.logger.debug(`Processing job ${nextJob.jobId}`);
       let preferredClient: EnhancedClient | null;
       // If this processor is for the general queue, try to find a preferred client
       if (this.workflowHash === "general") {
@@ -59,7 +62,7 @@ export class JobQueueProcessor {
         preferredClient = this.clientRegistry.getOptimalClient(nextJob.workflow);
       }
       if (!preferredClient) {
-        console.log(`No idle clients available for job ${nextJob.jobId}.`);
+        this.logger.debug(`No idle clients available for job ${nextJob.jobId}.`);
         // Mark as pending again
         this.jobs.setJobStatus(nextJob.jobId, "pending");
         // Re-add the job to the front of the queue for later processing
@@ -67,7 +70,7 @@ export class JobQueueProcessor {
         this.isProcessing = false;
         return;
       } else {
-        console.log(`✅  Assigning job ${nextJob.jobId} to client ${preferredClient.nodeName}`);
+        this.logger.info(`Assigning job ${nextJob.jobId} to client ${preferredClient.nodeName}`);
         this.jobs.setJobStatus(nextJob.jobId, "assigned", preferredClient.url);
         await this.runJobOnClient(nextJob, preferredClient);
       }
@@ -79,17 +82,17 @@ export class JobQueueProcessor {
     if (this.queue.length > 0) {
       let idleCount = 0;
       for (const client of this.clientRegistry.clients.values()) {
-        console.log(`Client ${client.nodeName} state: ${client.state}`);
+        this.logger.debug(`Client ${client.nodeName} state: ${client.state}`);
         if (client.state === "idle") {
           idleCount++;
         }
       }
       if (idleCount > 0) {
-        console.log(`Continuing to process next job in queue for workflow hash ${this.workflowHash}.`);
+        this.logger.debug(`Continuing to process next job in queue for workflow hash ${this.workflowHash}.`);
         try {
           await this.processQueue();
         } catch (e) {
-          console.error(`Error processing job queue for workflow hash ${this.workflowHash}:`, e);
+          this.logger.error(`Error processing job queue for workflow hash ${this.workflowHash}:`, e);
         }
       }
     }
@@ -117,7 +120,7 @@ export class JobQueueProcessor {
       // Check if client is idle before sending job
       const queueStatus = await api.getQueue();
       if (queueStatus.queue_running.length !== 0 || queueStatus.queue_pending.length !== 0) {
-        console.log(`Client ${preferredClient.nodeName} is busy, re-adding job ${nextJob.jobId} to queue.`);
+        this.logger.debug(`Client ${preferredClient.nodeName} is busy, re-adding job ${nextJob.jobId} to queue.`);
         this.jobs.setJobStatus(nextJob.jobId, "pending");
         this.queue.unshift(nextJob);
         return;
@@ -128,7 +131,7 @@ export class JobQueueProcessor {
       const workflowJson = nextJob.workflow.toJSON();
       const autoSeeds = this.applyAutoSeed(workflowJson);
       if (Object.keys(autoSeeds).length > 0) {
-        this.queueLog(`Applied auto seeds for job ${nextJob.jobId}: ${JSON.stringify(autoSeeds)}`);
+        this.logger.queue(this.workflowHash, `Applied auto seeds for job ${nextJob.jobId}: ${JSON.stringify(autoSeeds)}`);
         this.jobs.updateJobAutoSeeds(nextJob.jobId, autoSeeds);
         // Update the workflow json with the new seeds before sending
         const nodeIds = Object.keys(autoSeeds);
@@ -137,7 +140,7 @@ export class JobQueueProcessor {
         }
       }
 
-      this.queueLog(`Starting job ${nextJob.jobId} on client ${preferredClient.nodeName}`);
+      this.logger.queue(this.workflowHash, `Starting job ${nextJob.jobId} on client ${preferredClient.nodeName}`);
 
       const result = await api.ext.queue.queuePrompt(null, workflowJson);
 
@@ -145,24 +148,19 @@ export class JobQueueProcessor {
       if (result.prompt_id) {
         this.jobs.setPromptId(nextJob.jobId, result.prompt_id);
         this.jobs.setJobStatus(nextJob.jobId, "running");
-        this.queueLog(`⚡ Job ${nextJob.jobId} is now queued on client ${preferredClient.nodeName} with prompt ID ${result.prompt_id}`);
+        this.logger.queue(this.workflowHash, `Job ${nextJob.jobId} is now queued on client ${preferredClient.nodeName} with prompt ID ${result.prompt_id}`);
         // we also mark the client as busy, to prevent new jobs being assigned until we detect completion
         preferredClient.state = "busy";
-        console.log(Array.from(this.clientRegistry.clients.values()).map((c) => `${c.nodeName}: ${c.state}`).join(", "));
+        this.logger.debug(Array.from(this.clientRegistry.clients.values()).map((c) => `${c.nodeName}: ${c.state}`).join(", "));
       } else {
-        console.error(`❌  Failed to enqueue job ${nextJob.jobId} on client ${preferredClient.nodeName}: No prompt_id returned.`);
+        this.logger.error(`Failed to enqueue job ${nextJob.jobId} on client ${preferredClient.nodeName}: No prompt_id returned.`);
         this.jobs.setJobStatus(nextJob.jobId, "failed");
       }
 
     } catch (e: any) {
-      console.error(`❌  Failed to run job ${nextJob.jobId} on client ${preferredClient.nodeName}`);
+      this.logger.error(`Failed to run job ${nextJob.jobId} on client ${preferredClient.nodeName}`);
       this.handleFailure(preferredClient, nextJob, e);
     }
-  }
-
-  queueLog(message: string) {
-    const formattedDate = new Date().toISOString();
-    console.log(`[${formattedDate}] [queue::${this.workflowHash.substring(0, 16)}] ${message}`);
   }
 
   dequeueJob(jobId: string) {
@@ -172,40 +170,40 @@ export class JobQueueProcessor {
   private handleFailure(preferredClient: EnhancedClient, nextJob: QueueJob, e: any) {
 
     const { type, message } = classifyFailure(e);
-    this.queueLog(`Job ${nextJob.jobId} failed on ${preferredClient.nodeName}. Failure type: ${type}. Reason: ${message}`);
+    this.logger.queue(this.workflowHash, `Job ${nextJob.jobId} failed on ${preferredClient.nodeName}. Failure type: ${type}. Reason: ${message}`);
 
     switch (type) {
       case "connection":
         preferredClient.state = "offline"; // Mark as offline to be re-checked later
-        this.queueLog(`Re-queuing job ${nextJob.jobId} due to connection error.`);
+        this.logger.queue(this.workflowHash, `Re-queuing job ${nextJob.jobId} due to connection error.`);
         this.jobs.setJobStatus(nextJob.jobId, "pending");
         this.queue.unshift(nextJob); // Re-queue without incrementing attempts
         break;
 
       case "workflow_incompatibility":
         preferredClient.state = "idle";
-        this.queueLog(`Marking client ${preferredClient.nodeName} as incompatible with workflow ${nextJob.workflow.structureHash}.`);
+        this.logger.queue(this.workflowHash, `Marking client ${preferredClient.nodeName} as incompatible with workflow ${nextJob.workflow.structureHash}.`);
         this.clientRegistry.markClientIncompatibleWithWorkflow(preferredClient.url, nextJob.workflow.structureHash);
         this.retryOrMarkFailed(nextJob, e);
         break;
 
       case "transient":
         preferredClient.state = "idle";
-        this.queueLog(`Job ${nextJob.jobId} failed with a transient error. It will not be retried.`);
+        this.logger.queue(this.workflowHash, `Job ${nextJob.jobId} failed with a transient error. It will not be retried.`);
         this.jobs.setJobFailure(nextJob.jobId, { error: message, details: e.bodyJSON });
         break;
     }
 
     // Trigger processing for the next job in the queue
     this.processQueue().catch(reason => {
-      console.error(`Error processing job queue for workflow hash ${this.workflowHash}:`, reason);
+      this.logger.error(`Error processing job queue for workflow hash ${this.workflowHash}:`, reason);
     });
   }
 
   private retryOrMarkFailed(nextJob: QueueJob, originalError: any) {
     // Check if the job has exceeded its max attempts
     if (nextJob.attempts >= this.maxAttempts) {
-      this.queueLog(`Job ${nextJob.jobId} has reached max attempts (${this.maxAttempts}). Marking as failed.`);
+      this.logger.queue(this.workflowHash, `Job ${nextJob.jobId} has reached max attempts (${this.maxAttempts}). Marking as failed.`);
       this.jobs.setJobFailure(nextJob.jobId, originalError.bodyJSON);
       return;
     }
@@ -214,13 +212,13 @@ export class JobQueueProcessor {
     const eligibleClients = this.clientRegistry.getAllEligibleClientsForWorkflow(nextJob.workflow);
 
     if (eligibleClients.length > 0) {
-      this.queueLog(`Re-queuing job ${nextJob.jobId} (attempt ${nextJob.attempts + 1}) as there are other eligible clients available.`);
+      this.logger.queue(this.workflowHash, `Re-queuing job ${nextJob.jobId} (attempt ${nextJob.attempts + 1}) as there are other eligible clients available.`);
       this.jobs.setJobStatus(nextJob.jobId, "pending");
       // Increment attempts and re-add to the front of the queue
       nextJob.attempts++;
       this.queue.unshift(nextJob);
     } else {
-      this.queueLog(`No other eligible clients for job ${nextJob.jobId}, marking as failed.`);
+      this.logger.queue(this.workflowHash, `No other eligible clients for job ${nextJob.jobId}, marking as failed.`);
       this.jobs.setJobFailure(nextJob.jobId, originalError.bodyJSON);
     }
   }
