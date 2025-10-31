@@ -56,6 +56,13 @@ console.log('Profile Stats:', result.profileStats);
 * **JobQueueProcessor** – Per-workflow queue processing with event-driven job assignment
 * **JobStateRegistry** – Centralized job lifecycle management with profiling integration
 * **PoolEventManager** – Extensible event system for custom monitoring and integration
+* **Public Client Registry API** – Safe access to client information and pool statistics
+  * `getClients()` – Get all registered clients with their current state
+  * `getClient(url)` – Get specific client information by URL
+  * `getClientsForWorkflow(workflow)` – Find clients with affinity for a workflow
+  * `getIdleClients()` – Get all currently available workers
+  * `hasClientsForWorkflow(workflow)` – Check if workflow can be executed
+  * `getPoolStats()` – Comprehensive pool statistics (client counts, queue depths)
 
 **Events Supported:**
 
@@ -63,6 +70,10 @@ console.log('Profile Stats:', result.profileStats);
 * Progress tracking: Real-time progress updates with node execution tracking
 * Preview streaming: `b_preview_meta` events with blob and metadata
 * Client state: Automatic idle/busy transitions, offline detection
+* **All ComfyUI Events**: Every WebSocket event from clients is forwarded with `client:` prefix
+  * Examples: `client:status`, `client:progress`, `client:executing`, `client:execution_cached`, `client:executed`, `client:execution_success`
+  * Use `pool.attachEventHook(eventType, listener)` to subscribe to any client event
+  * Event payload includes `clientUrl`, `clientName`, `eventType`, and original `eventData`
 
 **Performance:**
 
@@ -75,6 +86,8 @@ console.log('Profile Stats:', result.profileStats);
 
 * `docs/multipool-profiling.md` – Profiling guide for MultiWorkflowPool
 * `src/multipool/tests/profiling-demo.ts` – Complete profiling demonstration
+* `src/multipool/tests/event-forwarding-demo.ts` – Event system demonstration
+* `src/multipool/tests/client-registry-api-demo.ts` – Client registry API examples
 * `src/multipool/tests/two-stage-edit-simulation.ts` – Multi-user workflow simulation
 
 **New Exports:**
@@ -82,7 +95,7 @@ console.log('Profile Stats:', result.profileStats);
 * `MultiWorkflowPool` – Main pool class
 * `JobProfiler` – Per-job execution profiling (MultiWorkflowPool variant)
 * `Logger` / `createLogger` – Structured logging infrastructure
-* Types: `MultiWorkflowPoolOptions`, `JobResults`, `JobState`, `JobProfileStats`
+* Types: `MultiWorkflowPoolOptions`, `JobResults`, `JobState`, `JobProfileStats`, `PoolEvent`, `ClientEventPayload`
 
 **Use Cases:**
 

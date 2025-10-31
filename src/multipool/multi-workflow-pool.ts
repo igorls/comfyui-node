@@ -3,7 +3,7 @@ import { PoolEventManager } from "./pool-event-manager.js";
 import { JobResults, JobStateRegistry } from "./job-state-registry.js";
 import { JobQueueProcessor } from "./job-queue-processor.js";
 import { Workflow } from "./workflow.js";
-import { MultiWorkflowPoolOptions, PoolEvent } from "./interfaces.js";
+import { MultiWorkflowPoolOptions, PoolEvent, ClientEventPayload } from "./interfaces.js";
 import { Logger, createLogger } from "./logger.js";
 
 /**
@@ -211,9 +211,19 @@ export class MultiWorkflowPool {
 
   private attachHandlersToClient(client: EnhancedClient) {
 
-    // client.api.on("all", event => {
-    //   console.log(client.nodeName, event.detail.type, event.detail.data);
-    // });
+    // Forward all client events through the pool event manager
+    client.api.on("all", event => {
+      const payload: ClientEventPayload = {
+        clientUrl: client.url,
+        clientName: client.nodeName,
+        eventType: event.detail.type,
+        eventData: event.detail.data
+      };
+      this.events.emitEvent({
+        type: `client:${event.detail.type}`,
+        payload
+      });
+    });
 
     client.api.on("status", event => {
       this.logger.client(client.nodeName, event.type, `Queue Remaining: ${event.detail.status.exec_info.queue_remaining}`);
@@ -362,5 +372,139 @@ export class MultiWorkflowPool {
     metadata: any;
   }) => void) {
     this.jobRegistry.attachJobPreviewListener(jobId, previewListener);
+  }
+
+  // CLIENT REGISTRY ACCESS METHODS
+  /**
+   * Get a list of all registered clients with their current state
+   * @returns Array of client information objects
+   */
+  getClients(): Array<{
+    url: string;
+    nodeName: string;
+    state: "idle" | "busy" | "offline";
+    priority?: number;
+    workflowAffinityHashes?: string[];
+  }> {
+    return Array.from(this.clientRegistry.clients.values()).map(client => ({
+      url: client.url,
+      nodeName: client.nodeName,
+      state: client.state,
+      priority: client.priority,
+      workflowAffinityHashes: client.workflowAffinity 
+        ? Array.from(client.workflowAffinity) 
+        : undefined
+    }));
+  }
+
+  /**
+   * Get information about a specific client by URL
+   * @param clientUrl - The URL of the client to query
+   * @returns Client information or null if not found
+   */
+  getClient(clientUrl: string): {
+    url: string;
+    nodeName: string;
+    state: "idle" | "busy" | "offline";
+    priority?: number;
+    workflowAffinityHashes?: string[];
+  } | null {
+    const client = this.clientRegistry.clients.get(clientUrl);
+    if (!client) {
+      return null;
+    }
+    return {
+      url: client.url,
+      nodeName: client.nodeName,
+      state: client.state,
+      priority: client.priority,
+      workflowAffinityHashes: client.workflowAffinity 
+        ? Array.from(client.workflowAffinity) 
+        : undefined
+    };
+  }
+
+  /**
+   * Get all clients that have affinity for a specific workflow
+   * @param workflow - The workflow to check affinity for
+   * @returns Array of client URLs that can handle this workflow
+   */
+  getClientsForWorkflow(workflow: Workflow<any>): string[] {
+    let workflowHash = workflow.structureHash;
+    if (!workflowHash) {
+      workflow.updateHash();
+      workflowHash = workflow.structureHash;
+    }
+    if (!workflowHash) {
+      return [];
+    }
+    const clientSet = this.clientRegistry.workflowAffinityMap.get(workflowHash);
+    return clientSet ? Array.from(clientSet) : [];
+  }
+
+  /**
+   * Get all idle clients currently available for work
+   * @returns Array of idle client information
+   */
+  getIdleClients(): Array<{
+    url: string;
+    nodeName: string;
+    priority?: number;
+  }> {
+    return Array.from(this.clientRegistry.clients.values())
+      .filter(client => client.state === "idle")
+      .map(client => ({
+        url: client.url,
+        nodeName: client.nodeName,
+        priority: client.priority
+      }));
+  }
+
+  /**
+   * Check if there are any clients available for a specific workflow
+   * @param workflow - The workflow to check
+   * @returns True if at least one client has affinity for this workflow
+   */
+  hasClientsForWorkflow(workflow: Workflow<any>): boolean {
+    let workflowHash = workflow.structureHash;
+    if (!workflowHash) {
+      workflow.updateHash();
+      workflowHash = workflow.structureHash;
+    }
+    if (!workflowHash) {
+      return false;
+    }
+    return this.clientRegistry.hasClientsForWorkflow(workflowHash);
+  }
+
+  /**
+   * Get statistics about the pool's current state
+   * @returns Pool statistics including client counts and queue depths
+   */
+  getPoolStats(): {
+    totalClients: number;
+    idleClients: number;
+    busyClients: number;
+    offlineClients: number;
+    totalQueues: number;
+    queues: Array<{
+      workflowHash: string;
+      pendingJobs: number;
+      type: "general" | "specific";
+    }>;
+  } {
+    const clients = Array.from(this.clientRegistry.clients.values());
+    return {
+      totalClients: clients.length,
+      idleClients: clients.filter(c => c.state === "idle").length,
+      busyClients: clients.filter(c => c.state === "busy").length,
+      offlineClients: clients.filter(c => c.state === "offline").length,
+      totalQueues: this.queues.size,
+      queues: Array.from(this.queues.entries()).map(([hash, queue]) => ({
+        workflowHash: hash,
+        pendingJobs: queue.queue.length,
+        type: hash === "general" ? "general" : "specific"
+      }))
+    };
   }
 }

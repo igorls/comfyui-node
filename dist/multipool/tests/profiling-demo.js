@@ -6,7 +6,7 @@
 import { MultiWorkflowPool } from "../multi-workflow-pool.js";
 import { Workflow } from "../workflow.js";
 import GenerationGraph from "../../../scripts/workflows/T2I-one-obsession.json" with { type: "json" };
-const GEN_HOST = "http://server1:8188";
+const GEN_HOST = "http://localhost:8188";
 // Create pool with profiling enabled
 const pool = new MultiWorkflowPool({
     enableProfiling: true,

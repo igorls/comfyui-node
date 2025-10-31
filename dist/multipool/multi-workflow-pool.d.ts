@@ -39,5 +39,65 @@ export declare class MultiWorkflowPool {
         blob: Blob;
         metadata: any;
     }) => void): void;
+    /**
+     * Get a list of all registered clients with their current state
+     * @returns Array of client information objects
+     */
+    getClients(): Array<{
+        url: string;
+        nodeName: string;
+        state: "idle" | "busy" | "offline";
+        priority?: number;
+        workflowAffinityHashes?: string[];
+    }>;
+    /**
+     * Get information about a specific client by URL
+     * @param clientUrl - The URL of the client to query
+     * @returns Client information or null if not found
+     */
+    getClient(clientUrl: string): {
+        url: string;
+        nodeName: string;
+        state: "idle" | "busy" | "offline";
+        priority?: number;
+        workflowAffinityHashes?: string[];
+    } | null;
+    /**
+     * Get all clients that have affinity for a specific workflow
+     * @param workflow - The workflow to check affinity for
+     * @returns Array of client URLs that can handle this workflow
+     */
+    getClientsForWorkflow(workflow: Workflow<any>): string[];
+    /**
+     * Get all idle clients currently available for work
+     * @returns Array of idle client information
+     */
+    getIdleClients(): Array<{
+        url: string;
+        nodeName: string;
+        priority?: number;
+    }>;
+    /**
+     * Check if there are any clients available for a specific workflow
+     * @param workflow - The workflow to check
+     * @returns True if at least one client has affinity for this workflow
+     */
+    hasClientsForWorkflow(workflow: Workflow<any>): boolean;
+    /**
+     * Get statistics about the pool's current state
+     * @returns Pool statistics including client counts and queue depths
+     */
+    getPoolStats(): {
+        totalClients: number;
+        idleClients: number;
+        busyClients: number;
+        offlineClients: number;
+        totalQueues: number;
+        queues: Array<{
+            workflowHash: string;
+            pendingJobs: number;
+            type: "general" | "specific";
+        }>;
+    };
 }
 //# sourceMappingURL=multi-workflow-pool.d.ts.map
