@@ -2,11 +2,7 @@ import { Workflow } from "./workflow.js";
 import { JobStateRegistry } from "./job-state-registry.js";
 import { ClientRegistry } from "./client-registry.js";
 import { Logger } from "./logger.js";
-export interface QueueJob {
-    jobId: string;
-    workflow: Workflow;
-    attempts: number;
-}
+import { QueueJob } from "./interfaces.js";
 export declare class JobQueueProcessor {
     private jobs;
     private clientRegistry;

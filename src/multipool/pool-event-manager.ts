@@ -1,5 +1,5 @@
-import { MultiWorkflowPool } from "src/multipool/multi-workflow-pool.js";
-import { PoolEvent } from "src/multipool/interfaces.js";
+import { PoolEvent } from "./interfaces.js";
+import { MultiWorkflowPool } from "./multi-workflow-pool.js";
 
 export class PoolEventManager {
 

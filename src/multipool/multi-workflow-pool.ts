@@ -1,9 +1,9 @@
-import { ClientRegistry, EnhancedClient } from "./client-registry.js";
+import { ClientRegistry } from "./client-registry.js";
 import { PoolEventManager } from "./pool-event-manager.js";
-import { JobResults, JobStateRegistry } from "./job-state-registry.js";
+import { JobStateRegistry } from "./job-state-registry.js";
 import { JobQueueProcessor } from "./job-queue-processor.js";
 import { Workflow } from "./workflow.js";
-import { MultiWorkflowPoolOptions, PoolEvent, ClientEventPayload } from "./interfaces.js";
+import { MultiWorkflowPoolOptions, PoolEvent, ClientEventPayload, EnhancedClient, JobResults } from "./interfaces.js";
 import { Logger, createLogger } from "./logger.js";
 
 /**

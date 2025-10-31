@@ -1,4 +1,4 @@
-import { classifyFailure } from "src/multipool/helpers.js";
+import { classifyFailure } from "./helpers.js";
 export class JobQueueProcessor {
     jobs;
     clientRegistry;

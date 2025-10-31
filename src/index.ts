@@ -29,5 +29,5 @@ export { seed } from "./tools.js";
 export { MultiWorkflowPool } from "./multipool/index.js";
 export { Workflow as MultiWorkflow } from "./multipool/workflow.js";
 export type { PoolEvent, ClientEventPayload, MultiWorkflowPoolOptions } from "./multipool/interfaces.js";
-export type { JobResults, JobState, JobStatus as MultiJobStatus, JobResultStatus } from "./multipool/job-state-registry.js";
-export type { JobProfileStats as MultiJobProfileStats } from "./multipool/job-profiler.js";
+export type { JobResults, JobState, JobStatus as MultiJobStatus, JobResultStatus } from "./multipool/interfaces.js";
+export type { JobProfileStats as MultiJobProfileStats } from "./multipool/interfaces.js";

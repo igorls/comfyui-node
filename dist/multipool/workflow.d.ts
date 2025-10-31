@@ -1,5 +1,5 @@
 import type { AugmentNodes } from "../node-type-hints.js";
-import { ComfyApi } from "src/client.js";
+import { ComfyApi } from "../client.js";
 type WorkflowJSON = Record<string, any>;
 export interface WorkflowResultMeta {
     _promptId?: string;

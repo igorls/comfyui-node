@@ -1,16 +1,7 @@
-import { MultiWorkflowPool } from "src/multipool/multi-workflow-pool.js";
-import { ComfyApi } from "src/client.js";
+import { MultiWorkflowPool } from "./multi-workflow-pool.js";
 import { Workflow } from "./workflow.js";
 import { Logger } from "./logger.js";
-export type ClientState = "idle" | "busy" | "offline";
-export interface EnhancedClient {
-    url: string;
-    state: ClientState;
-    nodeName: string;
-    priority?: number;
-    api: ComfyApi;
-    workflowAffinity?: Set<string>;
-}
+import { EnhancedClient } from "./interfaces.js";
 export declare class ClientRegistry {
     pool: MultiWorkflowPool;
     private logger;

@@ -1,36 +1,10 @@
-import { MultiWorkflowPool } from "src/multipool/multi-workflow-pool.js";
-import { Workflow } from "src/multipool/workflow.js";
 import { randomUUID } from "node:crypto";
-import { ImageInfo } from "src/types/api.js";
-import { ClientRegistry } from "src/multipool/client-registry.js";
-import { JobProfiler, JobProfileStats } from "./job-profiler.js";
-
-export type JobStatus = "pending" | "assigned" | "running" | "completed" | "failed" | "canceled" | "no_clients";
-export type JobResultStatus = "completed" | "failed" | "canceled";
-
-export interface JobState {
-  jobId: string;
-  prompt_id?: string;
-  assignedClientUrl?: string;
-  workflow: Workflow;
-  status: JobStatus;
-  autoSeeds?: Record<string, number>;
-  resolver: ((results: JobResults) => void) | null;
-  resultsPromise?: Promise<JobResults>;
-  images?: ImageInfo[];
-  onProgress?: (progress: any) => void;
-  onPreview?: (preview: any) => void;
-  profiler?: JobProfiler;
-}
-
-export interface JobResults {
-  status: JobResultStatus;
-  jobId: string;
-  prompt_id: string;
-  images: string[];
-  error?: any;
-  profileStats?: JobProfileStats;
-}
+import { JobProfiler } from "./job-profiler.js";
+import { JobResults, JobState, JobStatus } from "./interfaces.js";
+import { MultiWorkflowPool } from "./multi-workflow-pool.js";
+import { ClientRegistry } from "./client-registry.js";
+import { Workflow } from "./workflow.js";
+import { ImageInfo } from "../types/api.js";
 
 export class JobStateRegistry {
 

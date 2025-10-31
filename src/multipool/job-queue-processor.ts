@@ -1,15 +1,10 @@
 import { Workflow } from "./workflow.js";
 import { JobStateRegistry } from "./job-state-registry.js";
-import { ClientRegistry, EnhancedClient } from "./client-registry.js";
-import { classifyFailure } from "src/multipool/helpers.js";
-import { ComfyApi } from "src/client.js";
+import { ClientRegistry } from "./client-registry.js";
+import { classifyFailure } from "./helpers.js";
+import { ComfyApi } from "../client.js";
 import { Logger } from "./logger.js";
-
-export interface QueueJob {
-  jobId: string;
-  workflow: Workflow;
-  attempts: number;
-}
+import { EnhancedClient, QueueJob } from "./interfaces.js";
 
 export class JobQueueProcessor {
 

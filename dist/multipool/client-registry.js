@@ -1,4 +1,4 @@
-import { ComfyApi } from "src/client.js";
+import { ComfyApi } from "../client.js";
 export class ClientRegistry {
     pool;
     logger;
