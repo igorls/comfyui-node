@@ -29,3 +29,10 @@ export function animeXLPromptGenerator(): string {
 
   return `${subject}, ${action}, ${style}, masterpiece, absurdres`;
 }
+
+export const NEGATIVE_PROMPT = `
+lowres, bad anatomy, error body, error arm, error hand, error fingers,
+error legs, error feet, missing fingers, extra digit, fewer digits, cropped,
+worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated,
+out of frame, worst quality, low quality, naked, watermark, text, error, nsfw, nude
+`;

@@ -112,13 +112,14 @@ export class MultiWorkflowPool {
   }
 
   async submitJob(workflow: Workflow<any>) {
+
     let workflowHash = workflow.structureHash;
     if (!workflowHash) {
       workflow.updateHash();
       workflowHash = workflow.structureHash;
     }
 
-    // check if there are clients with affinity forthis workflow
+    // check if there are clients with affinity for this workflow
     let queue: JobQueueProcessor | null;
     if (workflowHash && this.clientRegistry.hasClientsForWorkflow(workflowHash)) {
       queue = this.assertQueue(workflowHash);

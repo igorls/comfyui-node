@@ -3,6 +3,7 @@ import { Workflow } from "../workflow.js";
 import GenerationGraph from "../../../scripts/workflows/T2I-anime-nova-xl.json" with { type: "json" };
 import EditGraph from "../../../scripts/workflows/quick-edit-test.json" with { type: "json" };
 import { randomUUID } from "node:crypto";
+import { animeXLPromptGenerator, NEGATIVE_PROMPT } from "src/multipool/tests/prompt-generator.js";
 
 /**
  * Two-Stage Edit Simulation for MultiWorkflowPool
@@ -25,23 +26,6 @@ const EDIT_HOSTS = ["http://afterpic-comfy-igor:8188", "http://afterpic-comfy-do
 // ============================================================================
 // PROMPT GENERATORS
 // ============================================================================
-
-const generationPrompts = [
-  "cinematic portrait of a spacefarer gazing at a nebula",
-  "lush forest clearing at dawn with crystalline waterfalls",
-  "retro-futuristic city skyline at sunset with hovering ships",
-  "battle-ready mage summoning luminous glyphs in a ruined cathedral",
-  "steampunk explorer overlooking a floating archipelago",
-  "mythic beast emerging from misty mountains",
-  "mecha pilot preparing for launch on an illuminated runway",
-  "ancient library guarded by arcane spirits"
-];
-
-const generationNegatives = [
-  "lowres, blurry, bad anatomy, extra limbs, watermark, text, signature",
-  "poor lighting, washed out colors, distorted perspective",
-  "cropped face, missing fingers, artifacts, posterization"
-];
 
 const editPrompts = [
   "Shift to a nighttime scene with glowing lanterns and gentle rain, add reflective puddles",
@@ -188,13 +172,12 @@ export class TwoStageUser {
   }
 
   private async generateImage() {
-    const prompt = pickRandom(generationPrompts);
-    const negative = pickRandom(generationNegatives);
+    const prompt = animeXLPromptGenerator();
     const seed = randomSeed();
 
     const workflow = Workflow.fromAugmented(GenerationGraph)
       .input("1", "value", prompt)
-      .input("2", "value", negative)
+      .input("2", "value", NEGATIVE_PROMPT)
       .input("10", "steps", 15)
       .input("10", "seed", seed);
 

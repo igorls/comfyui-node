@@ -2,6 +2,7 @@ import { Workflow } from "./workflow.js";
 import { JobStateRegistry } from "./job-state-registry.js";
 import { ClientRegistry, EnhancedClient } from "./client-registry.js";
 import { classifyFailure } from "src/multipool/helpers.js";
+import { ComfyApi } from "src/client.js";
 
 export interface QueueJob {
   jobId: string;
@@ -122,6 +123,8 @@ export class JobQueueProcessor {
         return;
       }
 
+      await this.processAttachedMedia(nextJob.workflow, api);
+
       const workflowJson = nextJob.workflow.toJSON();
       const autoSeeds = this.applyAutoSeed(workflowJson);
       if (Object.keys(autoSeeds).length > 0) {
@@ -220,5 +223,9 @@ export class JobQueueProcessor {
       this.queueLog(`No other eligible clients for job ${nextJob.jobId}, marking as failed.`);
       this.jobs.setJobFailure(nextJob.jobId, originalError.bodyJSON);
     }
+  }
+
+  private async processAttachedMedia(workflow: Workflow, api: ComfyApi) {
+    await workflow.uploadAssets(api);
   }
 }

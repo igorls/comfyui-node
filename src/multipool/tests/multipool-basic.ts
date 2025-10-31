@@ -1,15 +1,8 @@
-import { MultiWorkflowPool } from "src/multipool/multi-workflow-pool.js";
+import { MultiWorkflowPool } from "../multi-workflow-pool.js";
 import GenerationGraph from "../../../scripts/workflows/T2I-anime-nova-xl.json" with { type: "json" };
 import GenerationGraph2 from "../../../scripts/workflows/T2I-one-obsession.json" with { type: "json" };
-import { Workflow } from "src/multipool/workflow.js";
-import { animeXLPromptGenerator, promptGenerator } from "src/multipool/tests/prompt-generator.js";
-
-const NEGATIVE_PROMPT = `
-lowres, bad anatomy, error body, error arm, error hand, error fingers,
-error legs, error feet, missing fingers, extra digit, fewer digits, cropped,
-worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated,
-out of frame, worst quality, low quality, naked, watermark, text, error, nsfw, nude
-`;
+import { Workflow } from "../workflow.js";
+import { animeXLPromptGenerator, NEGATIVE_PROMPT, promptGenerator } from "./prompt-generator.js";
 
 const pool = new MultiWorkflowPool();
 
