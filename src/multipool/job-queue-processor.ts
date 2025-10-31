@@ -1,10 +1,12 @@
 import { Workflow } from "./workflow.js";
 import { JobStateRegistry } from "./job-state-registry.js";
 import { ClientRegistry, EnhancedClient } from "./client-registry.js";
+import { classifyFailure } from "src/multipool/helpers.js";
 
 export interface QueueJob {
   jobId: string;
   workflow: Workflow;
+  attempts: number;
 }
 
 export class JobQueueProcessor {
@@ -14,6 +16,7 @@ export class JobQueueProcessor {
   queue: Array<QueueJob> = [];
   workflowHash: string = "";
   isProcessing: boolean = false;
+  maxAttempts: number = 3;
 
   constructor(stateRegistry: JobStateRegistry, clientRegistry: ClientRegistry, workflowHash: string) {
     console.log(`Creating JobQueueProcessor for workflow hash: '${workflowHash}'`);
@@ -28,7 +31,7 @@ export class JobQueueProcessor {
     if (jobStatus !== "pending") {
       throw new Error(`Cannot enqueue job ${newJobId} with status ${jobStatus}`);
     }
-    this.queue.push({ jobId: newJobId, workflow });
+    this.queue.push({ jobId: newJobId, workflow, attempts: 1 });
     this.processQueue().catch(reason => {
       console.error(`Error processing job queue for workflow hash ${this.workflowHash}:`, reason);
     });
@@ -165,26 +168,57 @@ export class JobQueueProcessor {
 
   private handleFailure(preferredClient: EnhancedClient, nextJob: QueueJob, e: any) {
 
-    // Mark the client as incompatible with this workflow
-    console.log(`Marking client ${preferredClient.nodeName} as incompatible with workflow ${nextJob.workflow.structureHash} due to job failure.`);
-    this.clientRegistry.markClientIncompatibleWithWorkflow(preferredClient.url, nextJob.workflow.structureHash);
+    const { type, message } = classifyFailure(e);
+    this.queueLog(`Job ${nextJob.jobId} failed on ${preferredClient.nodeName}. Failure type: ${type}. Reason: ${message}`);
 
-    // Mark the client as idle again
-    preferredClient.state = "idle";
+    switch (type) {
+      case "connection":
+        preferredClient.state = "offline"; // Mark as offline to be re-checked later
+        this.queueLog(`Re-queuing job ${nextJob.jobId} due to connection error.`);
+        this.jobs.setJobStatus(nextJob.jobId, "pending");
+        this.queue.unshift(nextJob); // Re-queue without incrementing attempts
+        break;
+
+      case "workflow_incompatibility":
+        preferredClient.state = "idle";
+        this.queueLog(`Marking client ${preferredClient.nodeName} as incompatible with workflow ${nextJob.workflow.structureHash}.`);
+        this.clientRegistry.markClientIncompatibleWithWorkflow(preferredClient.url, nextJob.workflow.structureHash);
+        this.retryOrMarkFailed(nextJob, e);
+        break;
+
+      case "transient":
+        preferredClient.state = "idle";
+        this.queueLog(`Job ${nextJob.jobId} failed with a transient error. It will not be retried.`);
+        this.jobs.setJobFailure(nextJob.jobId, { error: message, details: e.bodyJSON });
+        break;
+    }
+
+    // Trigger processing for the next job in the queue
+    this.processQueue().catch(reason => {
+      console.error(`Error processing job queue for workflow hash ${this.workflowHash}:`, reason);
+    });
+  }
+
+  private retryOrMarkFailed(nextJob: QueueJob, originalError: any) {
+    // Check if the job has exceeded its max attempts
+    if (nextJob.attempts >= this.maxAttempts) {
+      this.queueLog(`Job ${nextJob.jobId} has reached max attempts (${this.maxAttempts}). Marking as failed.`);
+      this.jobs.setJobFailure(nextJob.jobId, originalError.bodyJSON);
+      return;
+    }
 
     // Confirm if we should re-queue or fail the job
     const eligibleClients = this.clientRegistry.getAllEligibleClientsForWorkflow(nextJob.workflow);
 
     if (eligibleClients.length > 0) {
-      console.log(`Re-queuing job ${nextJob.jobId} as there are other eligible clients available.`);
+      this.queueLog(`Re-queuing job ${nextJob.jobId} (attempt ${nextJob.attempts + 1}) as there are other eligible clients available.`);
       this.jobs.setJobStatus(nextJob.jobId, "pending");
+      // Increment attempts and re-add to the front of the queue
+      nextJob.attempts++;
       this.queue.unshift(nextJob);
-      return;
     } else {
-      console.log(`No other eligible clients for job ${nextJob.jobId}, marking as failed.`);
+      this.queueLog(`No other eligible clients for job ${nextJob.jobId}, marking as failed.`);
+      this.jobs.setJobFailure(nextJob.jobId, originalError.bodyJSON);
     }
-
-    // No other eligible clients, mark job as failed
-    this.jobs.setJobFailure(nextJob.jobId, e.bodyJSON);
   }
 }

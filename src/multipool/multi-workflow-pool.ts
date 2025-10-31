@@ -27,12 +27,14 @@ export class MultiWorkflowPool {
   // Pool configuration
   private options: Required<MultiWorkflowPoolOptions>;
 
-  monitoringInterval: Timer;
+  monitoringInterval?: Timer;
 
   constructor(options?: MultiWorkflowPoolOptions) {
 
     this.options = {
-      connectionTimeoutMs: options?.connectionTimeoutMs ?? 10000
+      connectionTimeoutMs: options?.connectionTimeoutMs ?? 10000,
+      enableMonitoring: options?.enableMonitoring ?? false,
+      monitoringIntervalMs: options?.monitoringIntervalMs ?? 60000
     };
 
     this.events = new PoolEventManager(this);
@@ -43,10 +45,11 @@ export class MultiWorkflowPool {
     this.queues.set("general", new JobQueueProcessor(this.jobRegistry, this.clientRegistry, "general"));
 
     // Monitoring
-    this.monitoringInterval = setInterval(() => {
-      this.printStatusSummary();
-      // this.runQueueWatcher();
-    }, 10000);
+    if (this.options.enableMonitoring) {
+      this.monitoringInterval = setInterval(() => {
+        this.printStatusSummary();
+      }, this.options.monitoringIntervalMs);
+    }
   }
 
   // PUBLIC API
@@ -92,7 +95,9 @@ export class MultiWorkflowPool {
   }
 
   async shutdown() {
-    clearInterval(this.monitoringInterval);
+    if (this.monitoringInterval) {
+      clearInterval(this.monitoringInterval);
+    }
   }
 
   addClient(clientUrl: string, options?: {
@@ -265,38 +270,6 @@ export class MultiWorkflowPool {
 
     console.log("");
   }
-
-  // Watch queues and trigger processing if there are idle clients, keep the state of clients updated
-  // private async runQueueWatcher() {
-  //   for (const [workflowHash, queue] of this.queues.entries()) {
-  //     if (queue.queue.length === 0) {
-  //       continue;
-  //     }
-  //     let idleCount = 0;
-  //     for (const client of this.clientRegistry.clients.values()) {
-  //       try {
-  //         const queueStatus = await this.clientRegistry.getQueueStatus(client.url);
-  //         if (queueStatus.queue_running.length === 0 && queueStatus.queue_pending.length === 0) {
-  //           client.state = "idle";
-  //           idleCount++;
-  //         } else {
-  //           client.state = "busy";
-  //         }
-  //       } catch (e: any) {
-  //         client.state = "offline";
-  //         console.error(`Error checking queue status for client ${client.url}:`, e);
-  //       }
-  //     }
-  //
-  //     if (idleCount > 0) {
-  //       console.log(`Queue watcher: Detected ${idleCount} idle clients, triggering processing for workflow hash ${workflowHash}.`);
-  //       queue.processQueue().catch(reason => {
-  //         console.error(`Error processing job queue for workflow hash ${workflowHash}:`, reason);
-  //       });
-  //     }
-  //
-  //   }
-  // }
 
   async waitForJobCompletion(jobId: string): Promise<JobResults> {
     return await this.jobRegistry.waitForResults(jobId);

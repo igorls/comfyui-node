@@ -5,4 +5,6 @@ export interface PoolEvent {
 
 export interface MultiWorkflowPoolOptions {
   connectionTimeoutMs?: number;
+  enableMonitoring?: boolean;
+  monitoringIntervalMs?: number;
 }

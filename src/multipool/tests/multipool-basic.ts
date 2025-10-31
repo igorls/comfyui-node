@@ -26,7 +26,7 @@ pool.addClient("http://afterpic-comfy-igor:8188", {
 });
 
 pool.addClient("http://afterpic-comfy-domi:8188", {
-  workflowAffinity: [],
+  workflowAffinity: [w1],
   priority: 1
 });
 
@@ -49,13 +49,13 @@ async function generateImage1(prompt: string): Promise<string[]> {
   }
   console.log(`[T2I-anime-nova-xl.json] Submitted job ${jobId} for prompt: "${prompt.substring(0, 30)}..."`);
 
-  // pool.attachJobProgressListener(jobId, (progress) => {
-  //   console.log(`[T2I-anime-nova-xl.json] Job ${jobId} Progress: ${JSON.stringify(progress)}`);
-  // });
-  //
-  // pool.attachJobPreviewListener(jobId, (preview) => {
-  //   console.log(`[T2I-anime-nova-xl.json] Job ${jobId} Preview Image Available: ${preview.blob.size}`);
-  // });
+  pool.attachJobProgressListener(jobId, (progress) => {
+    console.log(`[T2I-anime-nova-xl.json] Job ${jobId} Progress: ${JSON.stringify(progress)}`);
+  });
+
+  pool.attachJobPreviewListener(jobId, (preview) => {
+    console.log(`[T2I-anime-nova-xl.json] Job ${jobId} Preview Image Available: ${preview.blob.size}`);
+  });
 
   // // 25% chance to simulate a user cancelling the job
   // if (Math.random() < 0.25) {
