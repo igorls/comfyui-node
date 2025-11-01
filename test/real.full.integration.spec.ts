@@ -18,7 +18,9 @@ import txt2img from "./example-txt2img-workflow.json";
 const enabled = process.env.COMFY_REAL === "1" && process.env.COMFY_FULL === "1";
 const host = process.env.COMFY_HOST || "http://localhost:8188";
 
-function skipAll() { it.skip("Set COMFY_REAL=1 COMFY_FULL=1 to enable full integration tests", () => {}); }
+function skipAll() {
+  it.skip("Set COMFY_REAL=1 COMFY_FULL=1 to enable full integration tests", () => {});
+}
 
 if (!enabled) {
   describe("Full ComfyUI integration (skipped)", skipAll);
@@ -64,27 +66,27 @@ if (!enabled) {
     });
 
     it("terminal logs + subscription toggle", async () => {
-      await api.ext.terminal.setTerminalSubscription(true).catch(()=>{});
-      await api.ext.terminal.getTerminalLogs().catch(()=>({entries:[], size:{cols:0, rows:0}}));
-      await api.ext.terminal.setTerminalSubscription(false).catch(()=>{});
+      await api.ext.terminal.setTerminalSubscription(true).catch(() => {});
+      await api.ext.terminal.getTerminalLogs().catch(() => ({ entries: [], size: { cols: 0, rows: 0 } }));
+      await api.ext.terminal.setTerminalSubscription(false).catch(() => {});
     });
 
     it("user config + settings round trip (non-destructive)", async () => {
-      await api.ext.user.getUserConfig().catch(()=>({}));
-      const settings = await api.ext.user.getSettings().catch(()=>({}));
+      await api.ext.user.getUserConfig().catch(() => ({}));
+      const settings = await api.ext.user.getSettings().catch(() => ({}));
       // attempt storeSetting with a benign key if settings supported
-      await api.ext.user.storeSetting("sdk.test.flag", true).catch(()=>{});
-      await api.ext.user.getSetting("sdk.test.flag").catch(()=>undefined);
+      await api.ext.user.storeSetting("sdk.test.flag", true).catch(() => {});
+      await api.ext.user.getSetting("sdk.test.flag").catch(() => undefined);
       // bulk update
-      await api.ext.user.storeSettings({ "sdk.test.multi": 1 }).catch(()=>{});
+      await api.ext.user.storeSettings({ "sdk.test.multi": 1 }).catch(() => {});
     });
 
     it("file userdata lifecycle (create/read/list/delete)", async () => {
       const filename = `sdk_test_${Date.now()}.json`;
-      await api.ext.file.storeUserData(filename, { ok: true }).catch(()=>{});
-      await api.ext.file.getUserData(filename).catch(()=>new Response());
-      await api.ext.file.listUserData("", false, false).catch(()=>[]);
-      await api.ext.file.deleteUserData(filename).catch(()=>{});
+      await api.ext.file.storeUserData(filename, { ok: true }).catch(() => {});
+      await api.ext.file.getUserData(filename).catch(() => new Response());
+      await api.ext.file.listUserData("", false, false).catch(() => []);
+      await api.ext.file.deleteUserData(filename).catch(() => {});
     });
 
     it("model experimental endpoints (if available)", async () => {
@@ -92,7 +94,7 @@ if (!enabled) {
         const folders = await api.ext.model.getModelFolders();
         if (folders.length) {
           const first = folders[0];
-          await api.ext.model.getModelFiles(first.name).catch(()=>[]);
+          await api.ext.model.getModelFiles(first.name).catch(() => []);
         }
       } catch (e) {
         expect(e).toBeInstanceOf(Error);
@@ -102,32 +104,34 @@ if (!enabled) {
     it("queue submission + history retrieval", async () => {
       // Strip upscale branch nodes (10,11,12) for faster minimal run if present
       const wf = { ...(txt2img as any) };
-      delete (wf as any)["10"]; delete (wf as any)["11"]; delete (wf as any)["12"]; // best effort
+      delete (wf as any)["10"];
+      delete (wf as any)["11"];
+      delete (wf as any)["12"]; // best effort
 
-      const builder = new PromptBuilder(wf as any, ["positive","seed"],["images"])
-        .setInputNode("positive","6.inputs.text")
-        .setInputNode("seed","3.inputs.seed")
-        .setOutputNode("images","9")
-        .input("positive","Integration test prompt")
+      const builder = new PromptBuilder(wf as any, ["positive", "seed"], ["images"])
+        .setInputNode("positive", "6.inputs.text")
+        .setInputNode("seed", "3.inputs.seed")
+        .setOutputNode("images", "9")
+        .input("positive", "Integration test prompt")
         .input("seed", seed());
 
       try {
         const job = await api.ext.queue.appendPrompt(builder.workflow);
         promptId = job.prompt_id;
-      } catch (e:any) {
+      } catch (e: any) {
         // If server rejects (e.g., missing models), skip assertions but still exercise history endpoints gracefully
         promptId = undefined;
         return;
       }
 
       expect(promptId).toBeDefined();
-      await api.ext.history.getHistories(10).catch(()=>({}));
+      await api.ext.history.getHistories(10).catch(() => ({}));
       if (promptId) {
-        await api.ext.history.getHistory(promptId).catch(()=>undefined);
+        await api.ext.history.getHistory(promptId).catch(() => undefined);
       }
     });
 
-  it("queue submission with missing model surfaces enriched diagnostics (best effort)", async () => {
+    it("queue submission with missing model surfaces enriched diagnostics (best effort)", async () => {
       // Clone and force an invalid checkpoint reference if workflow has a known checkpoint node id (e.g., '4' in example)
       const wf = { ...(txt2img as any) };
       if (wf["4"]?.inputs?.ckpt_name) {
@@ -141,11 +145,11 @@ if (!enabled) {
         return;
       }
 
-      const builder = new PromptBuilder(wf as any, ["positive","seed"],["images"])
-        .setInputNode("positive","6.inputs.text")
-        .setInputNode("seed","3.inputs.seed")
-        .setOutputNode("images","9")
-        .input("positive","Missing model diagnostic test")
+      const builder = new PromptBuilder(wf as any, ["positive", "seed"], ["images"])
+        .setInputNode("positive", "6.inputs.text")
+        .setInputNode("seed", "3.inputs.seed")
+        .setOutputNode("images", "9")
+        .input("positive", "Missing model diagnostic test")
         .input("seed", seed());
 
       let captured: any = null;
@@ -166,7 +170,6 @@ if (!enabled) {
 
       const MODEL_SENTINEL = "__SDK_DOES_NOT_EXIST__/nonexistent_model_file.safetensors";
 
-
       const bodyJSON = captured.bodyJSON;
       if (bodyJSON) {
         // Assertions on structured shape
@@ -178,18 +181,18 @@ if (!enabled) {
         // node_errors should include checkpoint node id (commonly '4') but we just assert at least one entry
         if (bodyJSON.node_errors) {
           const nodeKeys = Object.keys(bodyJSON.node_errors);
-            expect(nodeKeys.length).toBeGreaterThan(0);
-            const firstNode = bodyJSON.node_errors[nodeKeys[0]];
-            if (firstNode?.errors?.length) {
-              const firstErr = firstNode.errors[0];
-              expect(typeof firstErr.message).toBe("string");
-              // Ensure sentinel model path appears somewhere in details/message
-              const combined = JSON.stringify(firstErr).toLowerCase();
-              expect(combined.includes(MODEL_SENTINEL.toLowerCase())).toBe(true);
-            }
+          expect(nodeKeys.length).toBeGreaterThan(0);
+          const firstNode = bodyJSON.node_errors[nodeKeys[0]];
+          if (firstNode?.errors?.length) {
+            const firstErr = firstNode.errors[0];
+            expect(typeof firstErr.message).toBe("string");
+            // Ensure sentinel model path appears somewhere in details/message
+            const combined = JSON.stringify(firstErr).toLowerCase();
+            expect(combined.includes(MODEL_SENTINEL.toLowerCase())).toBe(true);
+          }
         }
       } else if (captured.bodyTextSnippet) {
-      // (Diagnostics logging removed for clean CI output)
+        // (Diagnostics logging removed for clean CI output)
         expect(captured.bodyTextSnippet.toLowerCase()).toContain("missing");
       } else {
         // If neither JSON nor text snippet exists, diagnostics failed (fail the test)
@@ -210,82 +213,88 @@ if (!enabled) {
 
       await Promise.race([
         (async () => {
-      // Extended timeout window for realistic generation (some checkpoints take >30s cold start)
-      const MAX_WAIT_MS = 60000; // poll window
-      const TEST_DEADLINE_MS = 90000; // hard cap for this test logic (under Bun's default if configured larger)
-      const start = Date.now();
-      // Attempt to locate an available checkpoint name via node feature; fall back gracefully
-      const checkpoints = await api.ext.node.getCheckpoints().catch(() => [] as any[]);
-      if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
-        // eslint-disable-next-line no-console
-        console.warn("[RealGeneration] No checkpoints available on server; skipping generation test.");
-        return;
-      }
-      const ckpt = checkpoints[0];
-
-      const wf = { ...(txt2img as any) };
-      // Remove upscale nodes if present to speed up generation
-      delete (wf as any)["10"]; delete (wf as any)["11"]; delete (wf as any)["12"]; // best effort
-
-      // Build a minimal workflow mapping required inputs
-      const builder = new PromptBuilder(wf as any, ["positive","seed","checkpoint"],["images"])
-        .setInputNode("positive","6.inputs.text")
-        .setInputNode("seed","3.inputs.seed")
-        .setInputNode("checkpoint","4.inputs.ckpt_name")
-        .setOutputNode("images","9")
-        .input("positive","SDK integration real generation test")
-        .input("seed", seed())
-        .input("checkpoint", ckpt, api.osType);
-
-      const images: any[] = [];
-      let promptId: string | undefined;
-      await new CallWrapper(api, builder)
-        .onPending(id => { promptId = id; })
-        .onOutput((key, data) => {
-          if (key === 'images' && data?.images) {
-            images.push(...data.images);
+          // Extended timeout window for realistic generation (some checkpoints take >30s cold start)
+          const MAX_WAIT_MS = 60000; // poll window
+          const TEST_DEADLINE_MS = 90000; // hard cap for this test logic (under Bun's default if configured larger)
+          const start = Date.now();
+          // Attempt to locate an available checkpoint name via node feature; fall back gracefully
+          const checkpoints = await api.ext.node.getCheckpoints().catch(() => [] as any[]);
+          if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
+            // eslint-disable-next-line no-console
+            console.warn("[RealGeneration] No checkpoints available on server; skipping generation test.");
+            return;
           }
-        })
-        .onFailed(err => {
-          // eslint-disable-next-line no-console
-            console.warn("[RealGeneration] Generation failed", err);
-        })
-        .run();
+          const ckpt = checkpoints[0];
 
-      // Poll history for completion if we have a promptId and no images yet
-      const pollInterval = 1500;
-      while (images.length === 0 && promptId && Date.now() - start < MAX_WAIT_MS) {
-        await new Promise(r => setTimeout(r, pollInterval));
-        try {
-          const hist = await api.ext.history.getHistory(promptId);
-          if (hist?.status?.completed) {
-            const outputs = hist.outputs || {};
-            // Look for any node output with an images array
-            for (const nodeKey of Object.keys(outputs)) {
-              const val = (outputs as any)[nodeKey];
-              if (val && typeof val === 'object') {
-                const imgs = (val as any).images || (Array.isArray(val) ? val : undefined);
-                if (Array.isArray(imgs) && imgs.length) {
-                  images.push(...imgs);
-                  break;
+          const wf = { ...(txt2img as any) };
+          // Remove upscale nodes if present to speed up generation
+          delete (wf as any)["10"];
+          delete (wf as any)["11"];
+          delete (wf as any)["12"]; // best effort
+
+          // Build a minimal workflow mapping required inputs
+          const builder = new PromptBuilder(wf as any, ["positive", "seed", "checkpoint"], ["images"])
+            .setInputNode("positive", "6.inputs.text")
+            .setInputNode("seed", "3.inputs.seed")
+            .setInputNode("checkpoint", "4.inputs.ckpt_name")
+            .setOutputNode("images", "9")
+            .input("positive", "SDK integration real generation test")
+            .input("seed", seed())
+            .input("checkpoint", ckpt, api.osType);
+
+          const images: any[] = [];
+          let promptId: string | undefined;
+          await new CallWrapper(api, builder)
+            .onPending((id) => {
+              promptId = id;
+            })
+            .onOutput((key, data) => {
+              if (key === "images" && data?.images) {
+                images.push(...data.images);
+              }
+            })
+            .onFailed((err) => {
+              // eslint-disable-next-line no-console
+              console.warn("[RealGeneration] Generation failed", err);
+            })
+            .run();
+
+          // Poll history for completion if we have a promptId and no images yet
+          const pollInterval = 1500;
+          while (images.length === 0 && promptId && Date.now() - start < MAX_WAIT_MS) {
+            await new Promise((r) => setTimeout(r, pollInterval));
+            try {
+              const hist = await api.ext.history.getHistory(promptId);
+              if (hist?.status?.completed) {
+                const outputs = hist.outputs || {};
+                // Look for any node output with an images array
+                for (const nodeKey of Object.keys(outputs)) {
+                  const val = (outputs as any)[nodeKey];
+                  if (val && typeof val === "object") {
+                    const imgs = (val as any).images || (Array.isArray(val) ? val : undefined);
+                    if (Array.isArray(imgs) && imgs.length) {
+                      images.push(...imgs);
+                      break;
+                    }
+                  }
                 }
               }
-            }
+            } catch {}
           }
-        } catch {}
-      }
 
-      const elapsed = Date.now() - start;
-      if (images.length === 0) {
-        // eslint-disable-next-line no-console
-        console.warn(`\n[RealGeneration] No images after ${(elapsed/1000).toFixed(1)}s (<=${MAX_WAIT_MS/1000}s poll window). Skipping assertion.`);
-        return;
-      }
-  // (Generation success log removed for clean CI output)
-      expect(images.length).toBeGreaterThan(0);
+          const elapsed = Date.now() - start;
+          if (images.length === 0) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `\n[RealGeneration] No images after ${(elapsed / 1000).toFixed(1)}s (<=${MAX_WAIT_MS / 1000}s poll window). Skipping assertion.`
+            );
+            return;
+          }
+          // (Generation success log removed for clean CI output)
+          expect(images.length).toBeGreaterThan(0);
         })(),
         hardCap
-      ]).catch(err => {
+      ]).catch((err) => {
         if (String(err.message || err).startsWith("RealGenerationHardTimeout")) {
           // Log but don't fail entire suite – treat as skipped scenario
           // eslint-disable-next-line no-console
@@ -297,19 +306,21 @@ if (!enabled) {
     });
 
     it("queue interrupt noop", async () => {
-      await api.ext.queue.interrupt().catch(()=>{});
+      await api.ext.queue.interrupt().catch(() => {});
     });
 
-  it("upload image + mask (best effort)", async () => {
+    it("upload image + mask (best effort)", async () => {
       // tiny transparent PNG (1x1) base64
       const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9T4WkAAAAASUVORK5CYII=";
-      const binary = Uint8Array.from(atob(pngBase64), c => c.charCodeAt(0));
+      const binary = Uint8Array.from(atob(pngBase64), (c) => c.charCodeAt(0));
       const imageBlob = new Blob([binary], { type: "image/png" });
-      const up = await api.ext.file.uploadImage(imageBlob, "sdk-test.png", { override: true }).catch(() => false as const);
+      const up = await api.ext.file
+        .uploadImage(imageBlob, "sdk-test.png", { override: true })
+        .catch(() => false as const);
       const uploaded: false | { info: any; url: string } = up === false ? false : up;
       if (uploaded && typeof uploaded === "object") {
-        await api.ext.file.getImage(uploaded.info).catch(()=>new Blob());
-        await api.ext.file.uploadMask(imageBlob, uploaded.info).catch(()=>false);
+        await api.ext.file.getImage(uploaded.info).catch(() => new Blob());
+        await api.ext.file.uploadMask(imageBlob, uploaded.info).catch(() => false);
       } else {
         expect(uploaded).toBe(false); // if unavailable still pass
       }
@@ -334,27 +345,35 @@ if (!enabled) {
 
         const wf = { ...(txt2img as any) };
         // Trim upscale nodes for speed
-        delete (wf as any)["10"]; delete (wf as any)["11"]; delete (wf as any)["12"]; // best effort
+        delete (wf as any)["10"];
+        delete (wf as any)["11"];
+        delete (wf as any)["12"]; // best effort
         // Nudge steps down if present for faster preview
         if (wf["3"]?.inputs) {
           wf["3"].inputs.steps = Math.min(4, wf["3"].inputs.steps ?? 4);
         }
 
-        const builder = new PromptBuilder(wf as any, ["positive","seed","checkpoint"],["images"])
-          .setInputNode("positive","6.inputs.text")
-          .setInputNode("seed","3.inputs.seed")
-          .setInputNode("checkpoint","4.inputs.ckpt_name")
-          .setOutputNode("images","9")
-          .input("positive","Flags enabled preview test")
+        const builder = new PromptBuilder(wf as any, ["positive", "seed", "checkpoint"], ["images"])
+          .setInputNode("positive", "6.inputs.text")
+          .setInputNode("seed", "3.inputs.seed")
+          .setInputNode("checkpoint", "4.inputs.ckpt_name")
+          .setOutputNode("images", "9")
+          .input("positive", "Flags enabled preview test")
           .input("seed", seed())
           .input("checkpoint", ckpt, api2.osType);
 
         let previews = 0;
         let metaPreviews = 0;
         await new CallWrapper(api2, builder)
-          .onPreview(() => { previews++; })
+          .onPreview(() => {
+            previews++;
+          })
           // @ts-ignore: optional in environments without metadata
-          .onPreviewMeta?.(({ blob, metadata }) => { void blob; void metadata; metaPreviews++; })
+          .onPreviewMeta?.(({ blob, metadata }) => {
+            void blob;
+            void metadata;
+            metaPreviews++;
+          })
           .run();
 
         // We can't guarantee server behavior; log but avoid failing CI
@@ -385,32 +404,42 @@ if (!enabled) {
         const ckpt = checkpoints[0];
 
         const wf = { ...(txt2img as any) };
-        delete (wf as any)["10"]; delete (wf as any)["11"]; delete (wf as any)["12"]; // best effort
+        delete (wf as any)["10"];
+        delete (wf as any)["11"];
+        delete (wf as any)["12"]; // best effort
         if (wf["3"]?.inputs) {
           wf["3"].inputs.steps = Math.min(4, wf["3"].inputs.steps ?? 4);
         }
 
-        const builder = new PromptBuilder(wf as any, ["positive","seed","checkpoint"],["images"])
-          .setInputNode("positive","6.inputs.text")
-          .setInputNode("seed","3.inputs.seed")
-          .setInputNode("checkpoint","4.inputs.ckpt_name")
-          .setOutputNode("images","9")
-          .input("positive","Flags disabled preview test")
+        const builder = new PromptBuilder(wf as any, ["positive", "seed", "checkpoint"], ["images"])
+          .setInputNode("positive", "6.inputs.text")
+          .setInputNode("seed", "3.inputs.seed")
+          .setInputNode("checkpoint", "4.inputs.ckpt_name")
+          .setOutputNode("images", "9")
+          .input("positive", "Flags disabled preview test")
           .input("seed", seed())
           .input("checkpoint", ckpt, api3.osType);
 
         let previews = 0;
         let metaPreviews = 0;
         await new CallWrapper(api3, builder)
-          .onPreview(() => { previews++; })
+          .onPreview(() => {
+            previews++;
+          })
           // @ts-ignore: optional chaining for older environments
-          .onPreviewMeta?.(({ blob, metadata }) => { void blob; void metadata; metaPreviews++; })
+          .onPreviewMeta?.(({ blob, metadata }) => {
+            void blob;
+            void metadata;
+            metaPreviews++;
+          })
           .run();
 
         expect(previews + metaPreviews).toBeGreaterThanOrEqual(0);
         if (metaPreviews > 0) {
           // eslint-disable-next-line no-console
-          console.warn("[Flags:false] Received metadata previews despite disable request; server may ignore client flag.");
+          console.warn(
+            "[Flags:false] Received metadata previews despite disable request; server may ignore client flag."
+          );
         }
       } finally {
         api3.destroy();

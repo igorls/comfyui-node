@@ -28,6 +28,11 @@ import { FeatureFlagsFeature } from "./features/feature-flags.js";
 import { runWebSocketReconnect } from "./utils/ws-reconnect.js";
 import { Workflow, WorkflowJob, WorkflowResult } from "./workflow.js";
 
+/**
+ * Connection state of the WebSocket client.
+ */
+export type ConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected" | "failed";
+
 interface FetchOptions extends RequestInit {
   headers?: {
     [key: string]: string;
@@ -74,6 +79,13 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   private wsTimer: NodeJS.Timeout | null = null;
   private _pollingTimer: NodeJS.Timeout | number | null = null;
 
+  /** Current connection state */
+  private _connectionState: ConnectionState = "connecting";
+  /** Auto-reconnect flag (when enabled, reconnection happens automatically on disconnect) */
+  private _autoReconnect: boolean = false;
+  /** Callback invoked when reconnection fails after all attempts */
+  private _onReconnectionFailed?: () => void | Promise<void>;
+
   /** Host sans protocol (used to compose ws:// / wss:// URL) */
   private readonly apiBase: string;
   private clientId: string | null;
@@ -83,7 +95,6 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     options?: AddEventListenerOptions | boolean;
     handler: (event: TComfyAPIEventMap[keyof TComfyAPIEventMap]) => void;
   }> = [];
-
 
   private readonly credentials: BasicCredentials | BearerTokenCredentials | CustomCredentials | null = null;
 
@@ -177,6 +188,13 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   }
 
   /**
+   * Get the current connection state of the client.
+   */
+  get connectionState(): ConnectionState {
+    return this._connectionState;
+  }
+
+  /**
    * Retrieves the available features of the client.
    *
    * @returns An object containing the available features, where each feature is a key-value pair.
@@ -226,6 +244,10 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       comfyOrgApiKey?: string;
       /** Enable verbose debug logging to console (also emits 'log' events). */
       debug?: boolean;
+      /** Enable automatic reconnection on disconnect (default false). When enabled, reconnection happens automatically without manual intervention. */
+      autoReconnect?: boolean;
+      /** Callback invoked when reconnection fails after exhausting all attempts. */
+      onReconnectionFailed?: () => void | Promise<void>;
     }
   ) {
     super();
@@ -261,7 +283,9 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     try {
       const envDebug = typeof process !== "undefined" && (process as any)?.env?.COMFY_DEBUG;
       this._debug = Boolean(opts?.debug ?? (envDebug === "1" || envDebug === "true"));
-    } catch { /* ignore env access in non-node runtimes */ }
+    } catch {
+      /* ignore env access in non-node runtimes */
+    }
 
     // Merge announced feature flags overrides
     if (opts?.announceFeatureFlags) {
@@ -270,6 +294,26 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         ...opts.announceFeatureFlags
       };
     }
+
+    // Auto-reconnect configuration
+    if (opts?.autoReconnect !== undefined) {
+      this._autoReconnect = opts.autoReconnect;
+    }
+    if (opts?.onReconnectionFailed) {
+      this._onReconnectionFailed = opts.onReconnectionFailed;
+    }
+
+    // Listen for reconnection_failed event to invoke callback
+    this.on("reconnection_failed", async () => {
+      this._connectionState = "failed";
+      if (this._onReconnectionFailed) {
+        try {
+          await this._onReconnectionFailed();
+        } catch (error) {
+          this.log("reconnection", "onReconnectionFailed callback error", error);
+        }
+      }
+    });
 
     this.log("constructor", "Initialized", {
       host,
@@ -359,7 +403,9 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         const safeData = data && typeof data === "object" ? sanitizeForLog(data) : data;
         // eslint-disable-next-line no-console
         console.debug(`[ComfyApi ${id}] ${ts} :: ${fnName} -> ${message}`, safeData ?? "");
-      } catch { /* no-op */ }
+      } catch {
+        /* no-op */
+      }
     }
   }
 
@@ -608,8 +654,9 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       // Avoid stacking multiple controllers concurrently
       try {
         (this as any)._reconnectController.abort();
-      } catch { }
+      } catch {}
     }
+    this._connectionState = "reconnecting";
     (this as any)._reconnectController = runWebSocketReconnect(this, () => this.createSocket(true), {
       triggerEvents: !!triggerEvent,
       maxAttempts: (this as any)._reconnect?.maxAttempts,
@@ -625,11 +672,31 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   public abortReconnect() {
     try {
       (this as any)._reconnectController?.abort();
-    } catch { }
+    } catch {}
   }
 
   private resetLastActivity() {
     this.lastActivity = Date.now();
+  }
+
+  /**
+   * Check if WebSocket is currently connected and open.
+   */
+  public isConnected(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Actively validate connection by making a lightweight API call.
+   * @returns true if connection is healthy, false otherwise
+   */
+  public async validateConnection(): Promise<boolean> {
+    try {
+      await this.getQueue();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Convenience: init + waitForReady (idempotent). */
@@ -653,7 +720,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   private _decodePreviewWithMetadata(u8: Uint8Array, payloadOffset: number): { blob: Blob; metadata: any } | null {
     try {
       if (u8.byteLength < payloadOffset + 4) return null;
-    } catch { }
+    } catch {}
     // Re-parse with explicit big-endian
     try {
       const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
@@ -731,7 +798,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         (listeners[evt] || []).forEach((fn) => {
           try {
             fn(...args);
-          } catch { }
+          } catch {}
         });
       // Attempt to tap into resolution
       job.then(
@@ -770,10 +837,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   }
 
   /** Convenience helper: run + wait for completion results in one call. */
-  public async runAndWait(
-    wf: any,
-    opts?: { pool?: any; includeOutputs?: string[] }
-  ): Promise<WorkflowResult> {
+  public async runAndWait(wf: any, opts?: { pool?: any; includeOutputs?: string[] }): Promise<WorkflowResult> {
     const job = await this.run(wf, { pool: opts?.pool, includeOutputs: opts?.includeOutputs });
     return (job as any).done();
   }
@@ -786,6 +850,11 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     let reconnecting = false;
     let usePolling = false;
     let opened = false;
+
+    // Update connection state
+    if (!isReconnect) {
+      this._connectionState = "connecting";
+    }
 
     const stopHeartbeat = () => {
       if (this.wsTimer) {
@@ -846,7 +915,6 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
 
     // Try to create WebSocket connection
     try {
-
       this.socket = new WebSocket(wsUrl, {
         headers: headers
       });
@@ -881,11 +949,17 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         opened = false;
         this.log("socket", "Socket closed", { code, reason, wasClean, shouldEmit, isReconnect });
 
+        // Update connection state
+        this._connectionState = "disconnected";
+
         if (shouldEmit) {
           this.dispatchEvent(new CustomEvent("status", { detail: null }));
         }
 
-        this.reconnectWs(shouldEmit);
+        // Handle reconnection based on autoReconnect flag
+        if (this._autoReconnect || shouldEmit) {
+          this.reconnectWs(shouldEmit);
+        }
 
         if (!opened && !isReconnect && !usePolling) {
           usePolling = true;
@@ -902,6 +976,9 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         this.log("socket", "Socket opened");
         stopHeartbeat();
         startHeartbeat();
+
+        // Update connection state
+        this._connectionState = "connected";
 
         if (isReconnect) {
           this.dispatchEvent(new CustomEvent("reconnected"));
@@ -922,11 +999,11 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
           })
         );
       };
-
     } catch (error) {
       this.log("socket", "WebSocket creation failed, falling back to polling", error);
       this.socket = null;
       usePolling = true;
+      this._connectionState = "failed";
       this.dispatchEvent(new CustomEvent("websocket_unavailable", { detail: error }));
 
       // Set up polling mechanism
@@ -938,7 +1015,6 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       this.socket.onmessage = (event) => {
         this.resetLastActivity();
         try {
-
           // Unified binary handling: Buffer (ws), ArrayBuffer (WHATWG / Node >= 22), or typed array view
           let u8: Uint8Array | null = null;
           if (event.data instanceof Buffer) {
@@ -984,11 +1060,21 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
                   const view2 = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
                   const channel = view2.getUint32(4, false /* big-endian */);
                   const text = new TextDecoder("utf-8").decode(u8.slice(8));
-                  this.log("socket", "b_text (binary) received", { size: u8.byteLength, channel, preview: text.slice(0, 120) });
+                  this.log("socket", "b_text (binary) received", {
+                    size: u8.byteLength,
+                    channel,
+                    preview: text.slice(0, 120)
+                  });
                   this.dispatchEvent(new CustomEvent("b_text", { detail: text }));
                   this.dispatchEvent(new CustomEvent("b_text_meta", { detail: { channel, text } } as any));
                   // Emit normalized node_text_update for consumers
-                  const norm: any = { channel, text, kind: "message", executingNode: lastExecutingNode, promptIdHint: lastPromptId };
+                  const norm: any = {
+                    channel,
+                    text,
+                    kind: "message",
+                    executingNode: lastExecutingNode,
+                    promptIdHint: lastPromptId
+                  };
                   // Simplify: find the first occurrence of a known phrase and drop everything before it (prefix agnostic)
                   // This covers prefixes like "LUMA", numeric IDs ("2"), mixed case, etc.
                   const lower = text.toLowerCase();
@@ -1029,7 +1115,9 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
                   if (decoded) {
                     this.log("socket", "b_preview_meta (binary) received", { size: u8.byteLength });
                     this.dispatchEvent(new CustomEvent("b_preview", { detail: decoded.blob }));
-                    this.dispatchEvent(new CustomEvent("b_preview_meta", { detail: { blob: decoded.blob, metadata: decoded.metadata } }));
+                    this.dispatchEvent(
+                      new CustomEvent("b_preview_meta", { detail: { blob: decoded.blob, metadata: decoded.metadata } })
+                    );
                   }
                 } catch (e) {
                   this.log("socket", "Failed to decode preview with metadata", e);
@@ -1044,10 +1132,14 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
             return; // handled binary branch
           }
 
-            if (typeof event.data === "string") {
+          if (typeof event.data === "string") {
             const msg = JSON.parse(event.data);
             if (!msg.data || !msg.type) return;
-            this.log("socket-msg", `type=${msg.type}`, { prompt_id: msg.data?.prompt_id, node: msg.data?.node, keys: Object.keys(msg.data || {}) });
+            this.log("socket-msg", `type=${msg.type}`, {
+              prompt_id: msg.data?.prompt_id,
+              node: msg.data?.node,
+              keys: Object.keys(msg.data || {})
+            });
             this.dispatchEvent(new CustomEvent("all", { detail: msg }));
             if (msg.type === "logs") {
               this.dispatchEvent(new CustomEvent("terminal", { detail: msg.data.entries?.[0] || null }));
@@ -1057,11 +1149,11 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
             if (msg.data.sid) {
               this.clientId = msg.data.sid;
             }
-              // Correlate execution context for text parsing later
-              if (msg.type === "executing") {
-                lastExecutingNode = msg.data?.node ?? null;
-                lastPromptId = msg.data?.prompt_id ?? null;
-              }
+            // Correlate execution context for text parsing later
+            if (msg.type === "executing") {
+              lastExecutingNode = msg.data?.node ?? null;
+              lastPromptId = msg.data?.prompt_id ?? null;
+            }
           } else {
             this.log("socket", "Unhandled message", { kind: typeof event.data });
           }
@@ -1100,15 +1192,15 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     }
 
     // Poll every 2 seconds
-  const POLLING_INTERVAL = 2000;
+    const POLLING_INTERVAL = 2000;
 
     const pollFn = async () => {
       try {
         // Poll execution status
-  const status = await this.pollStatus();
-  const anyStatus: any = status as any;
-  const queueRem = anyStatus?.status?.exec_info?.queue_remaining ?? anyStatus?.exec_info?.queue_remaining;
-  this.log("polling", "status snapshot", { queue_remaining: queueRem });
+        const status = await this.pollStatus();
+        const anyStatus: any = status as any;
+        const queueRem = anyStatus?.status?.exec_info?.queue_remaining ?? anyStatus?.exec_info?.queue_remaining;
+        this.log("polling", "status snapshot", { queue_remaining: queueRem });
 
         // Simulate an event dispatch similar to WebSocket
         this.dispatchEvent(new CustomEvent("status", { detail: status }));
@@ -1228,7 +1320,6 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       `/experiment/models/preview/${encodeURIComponent(folder)}/${pathIndex}/${encodeURIComponent(filename)}`
     );
   }
-
 }
 
 /**

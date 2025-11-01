@@ -14,6 +14,10 @@ import { TerminalFeature } from "./features/terminal.js";
 import { MiscFeature } from "./features/misc.js";
 import { FeatureFlagsFeature } from "./features/feature-flags.js";
 import { WorkflowJob, WorkflowResult } from "./workflow.js";
+/**
+ * Connection state of the WebSocket client.
+ */
+export type ConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected" | "failed";
 interface FetchOptions extends RequestInit {
     headers?: {
         [key: string]: string;
@@ -56,6 +60,12 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     private readonly wsTimeout;
     private wsTimer;
     private _pollingTimer;
+    /** Current connection state */
+    private _connectionState;
+    /** Auto-reconnect flag (when enabled, reconnection happens automatically on disconnect) */
+    private _autoReconnect;
+    /** Callback invoked when reconnection fails after all attempts */
+    private _onReconnectionFailed?;
     /** Host sans protocol (used to compose ws:// / wss:// URL) */
     private readonly apiBase;
     private clientId;
@@ -103,6 +113,10 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     removeAllListeners(): void;
     get id(): string;
     /**
+     * Get the current connection state of the client.
+     */
+    get connectionState(): ConnectionState;
+    /**
      * Retrieves the available features of the client.
      *
      * @returns An object containing the available features, where each feature is a key-value pair.
@@ -143,6 +157,10 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         comfyOrgApiKey?: string;
         /** Enable verbose debug logging to console (also emits 'log' events). */
         debug?: boolean;
+        /** Enable automatic reconnection on disconnect (default false). When enabled, reconnection happens automatically without manual intervention. */
+        autoReconnect?: boolean;
+        /** Callback invoked when reconnection fails after exhausting all attempts. */
+        onReconnectionFailed?: () => void | Promise<void>;
     });
     /**
      * Destroys the client instance.
@@ -211,6 +229,15 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     /** Abort any in-flight reconnection loop (no-op if none active). */
     abortReconnect(): void;
     private resetLastActivity;
+    /**
+     * Check if WebSocket is currently connected and open.
+     */
+    isConnected(): boolean;
+    /**
+     * Actively validate connection by making a lightweight API call.
+     * @returns true if connection is healthy, false otherwise
+     */
+    validateConnection(): Promise<boolean>;
     /** Convenience: init + waitForReady (idempotent). */
     ready(): Promise<this>;
     /**

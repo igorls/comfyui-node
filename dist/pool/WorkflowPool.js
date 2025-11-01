@@ -100,10 +100,14 @@ export class WorkflowPool extends TypedEventTarget {
         const affinity = this.affinities.get(workflowHash);
         const preferredClientIds = options?.preferredClientIds
             ? [...options.preferredClientIds]
-            : (affinity?.preferredClientIds ? [...affinity.preferredClientIds] : []);
+            : affinity?.preferredClientIds
+                ? [...affinity.preferredClientIds]
+                : [];
         const excludeClientIds = options?.excludeClientIds
             ? [...options.excludeClientIds]
-            : (affinity?.excludeClientIds ? [...affinity.excludeClientIds] : []);
+            : affinity?.excludeClientIds
+                ? [...affinity.excludeClientIds]
+                : [];
         const payload = {
             jobId,
             workflow: workflowJson,
@@ -119,6 +123,10 @@ export class WorkflowPool extends TypedEventTarget {
                 excludeClientIds: excludeClientIds,
                 metadata: options?.metadata ?? {},
                 includeOutputs: options?.includeOutputs ?? []
+            },
+            timeouts: {
+                executionStartTimeoutMs: options?.executionStartTimeoutMs,
+                nodeExecutionTimeoutMs: options?.nodeExecutionTimeoutMs
             }
         };
         const record = {
@@ -297,8 +305,8 @@ export class WorkflowPool extends TypedEventTarget {
             while (true) {
                 iteration++;
                 this.debugLog(`[processQueue] Iteration ${iteration}`);
-                const idleClients = this.clientManager.list().filter(c => this.clientManager.isClientStable(c));
-                this.debugLog(`[processQueue] Idle clients: [${idleClients.map(c => c.id).join(", ")}] (${idleClients.length})`);
+                const idleClients = this.clientManager.list().filter((c) => this.clientManager.isClientStable(c));
+                this.debugLog(`[processQueue] Idle clients: [${idleClients.map((c) => c.id).join(", ")}] (${idleClients.length})`);
                 if (!idleClients.length) {
                     this.debugLog("[processQueue] No idle clients, breaking");
                     break; // No idle clients available
@@ -319,7 +327,7 @@ export class WorkflowPool extends TypedEventTarget {
                         continue;
                     }
                     const compatibleClients = idleClients
-                        .filter(client => {
+                        .filter((client) => {
                         const canRun = this.clientManager.canClientRunJob(client, job);
                         if (!canRun) {
                             this.debugLog(`[processQueue] Job ${job.jobId.substring(0, 8)}... NOT compatible with ${client.id}. Checking why...`);
@@ -329,7 +337,7 @@ export class WorkflowPool extends TypedEventTarget {
                         }
                         return canRun;
                     })
-                        .map(client => client.id);
+                        .map((client) => client.id);
                     this.debugLog(`[processQueue] Job ${job.jobId.substring(0, 8)}... compatible with: [${compatibleClients.join(", ")}] (selectivity=${compatibleClients.length})`);
                     if (compatibleClients.length > 0) {
                         jobMatchInfos.push({
@@ -371,7 +379,7 @@ export class WorkflowPool extends TypedEventTarget {
                     if (reservedJobIds.has(matchInfo.job.jobId))
                         continue;
                     // Find first available compatible client
-                    const availableClient = matchInfo.compatibleClients.find(clientId => !leasedClientIds.has(clientId));
+                    const availableClient = matchInfo.compatibleClients.find((clientId) => !leasedClientIds.has(clientId));
                     if (!availableClient) {
                         this.debugLog(`[processQueue] No available client for job ${matchInfo.job.jobId.substring(0, 8)}...`);
                         continue; // No available clients for this job
@@ -485,7 +493,8 @@ export class WorkflowPool extends TypedEventTarget {
         // Setup profiling if enabled
         const profiler = this.opts.enableProfiling ? new JobProfiler(job.enqueuedAt, workflowPayload) : undefined;
         // Setup node execution timeout tracking
-        const nodeExecutionTimeout = this.opts.nodeExecutionTimeoutMs ?? 300000; // 5 minutes default
+        // Use per-job timeout override if specified, otherwise use pool default
+        const nodeExecutionTimeout = job.timeouts?.nodeExecutionTimeoutMs ?? this.opts.nodeExecutionTimeoutMs ?? 300000; // 5 minutes default
         let nodeTimeoutId;
         let lastNodeStartTime;
         let currentExecutingNode = null;
@@ -739,7 +748,8 @@ export class WorkflowPool extends TypedEventTarget {
             // Start the workflow execution
             const exec = wrapper.run();
             // Add timeout for execution start to prevent jobs getting stuck
-            const executionStartTimeout = this.opts.executionStartTimeoutMs ?? 5000;
+            // Use per-job timeout override if specified, otherwise use pool default
+            const executionStartTimeout = job.timeouts?.executionStartTimeoutMs ?? this.opts.executionStartTimeoutMs ?? 5000;
             let pendingTimeoutId;
             if (executionStartTimeout > 0) {
                 const pendingWithTimeout = Promise.race([

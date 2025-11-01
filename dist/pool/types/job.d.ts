@@ -29,6 +29,16 @@ export interface WorkflowJobOptions {
     includeOutputs?: string[];
     /** File attachments for the workflow. */
     attachments?: WorkflowJobAttachment[];
+    /**
+     * Override timeout in milliseconds for execution to start after job is queued.
+     * If not specified, uses pool's default executionStartTimeoutMs.
+     */
+    executionStartTimeoutMs?: number;
+    /**
+     * Override timeout in milliseconds for individual node execution.
+     * If not specified, uses pool's default nodeExecutionTimeoutMs.
+     */
+    nodeExecutionTimeoutMs?: number;
 }
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export interface WorkflowJobPayload {
@@ -42,6 +52,11 @@ export interface WorkflowJobPayload {
     workflowMeta?: {
         outputNodeIds?: string[];
         outputAliases?: Record<string, string>;
+    };
+    /** Per-job timeout overrides */
+    timeouts?: {
+        executionStartTimeoutMs?: number;
+        nodeExecutionTimeoutMs?: number;
     };
 }
 export interface JobRecord extends WorkflowJobPayload {

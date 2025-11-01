@@ -1,4 +1,5 @@
 export { ComfyApi } from "./client.js";
+export type { ConnectionState } from "./client.js";
 export { CallWrapper } from "./call-wrapper.js";
 export { ComfyPool, EQueueMode } from "./pool.js";
 export { WorkflowPool, MemoryQueueAdapter, SmartFailoverStrategy } from "./pool/index.js";
@@ -8,9 +9,11 @@ export type { AugmentNodes, SamplerName, SchedulerName } from "./node-type-hints
 export type { WorkflowResult, WorkflowResultMeta } from "./workflow.js";
 export type { WorkflowAffinity } from "./pool/types/affinity.js";
 export type { TSamplerName, TSchedulerName } from "./types/sampler.js";
-export type { TComfyAPIEventMap, TComfyPoolEventMap, ComfyApiEventKey, ComfyPoolEventKey } from "./types/event.js";
+export type { TComfyAPIEventMap, TComfyPoolEventMap, ComfyApiEventKey, ComfyPoolEventKey, TEventStatus, TExecution, TExecuting, TProgress, TExecuted, TExecutionCached, TExecutionError, TExecutionInterrupted } from "./types/event.js";
 export type { WorkflowPoolEventMap, WorkflowPoolOpts, JobRecord, JobStatus as PoolJobStatus, WorkflowJobOptions, QueueAdapter, QueueReservation, QueueStats, FailoverStrategy, JobProfileStats, NodeExecutionProfile } from "./pool/index.js";
 export { seed } from "./tools.js";
+export { isModelLoadingNode, workflowContainsModelLoading, getModelLoadingNodes, estimateModelLoadingTime, estimateWorkflowModelLoadingTime, getTimeoutMultiplierForModelLoading, MODEL_LOADING_NODE_TYPES, MODEL_LOADING_TIME_ESTIMATES } from "./utils/model-loading.js";
+export type { StorageType } from "./utils/model-loading.js";
 export { MultiWorkflowPool } from "./multipool/index.js";
 export { Workflow as MultiWorkflow } from "./multipool/workflow.js";
 export type { PoolEvent, ClientEventPayload, MultiWorkflowPoolOptions } from "./multipool/interfaces.js";

@@ -12,7 +12,6 @@ import { Logger, createLogger } from "./logger.js";
  * Zero polling is used; all operations are event driven. Maximizes responsiveness and scalability.
  */
 export class MultiWorkflowPool {
-
   // Event manager for handling pool events
   private events: PoolEventManager;
 
@@ -34,7 +33,6 @@ export class MultiWorkflowPool {
   monitoringInterval?: Timer;
 
   constructor(options?: MultiWorkflowPoolOptions) {
-
     this.options = {
       connectionTimeoutMs: options?.connectionTimeoutMs ?? 10000,
       enableMonitoring: options?.enableMonitoring ?? false,
@@ -100,7 +98,7 @@ export class MultiWorkflowPool {
       );
     }
     const promiseResults = await Promise.allSettled(connectionPromises);
-    const failedConnections = promiseResults.filter(result => result.status === "rejected");
+    const failedConnections = promiseResults.filter((result) => result.status === "rejected");
     if (failedConnections.length > 0) {
       this.logger.warn(`Warning: ${failedConnections.length} client(s) failed to connect.`);
       failedConnections.forEach((result) => {
@@ -115,11 +113,12 @@ export class MultiWorkflowPool {
       throw new Error("All clients failed to connect. Pool initialization failed.");
     }
 
-    this.logger.info(`Initialization complete. ${this.clientRegistry.clients.size - failedConnections.length} client(s) connected successfully.`);
+    this.logger.info(
+      `Initialization complete. ${this.clientRegistry.clients.size - failedConnections.length} client(s) connected successfully.`
+    );
   }
 
   async shutdown() {
-
     this.logger.info("Shutting down MultiWorkflowPool...");
 
     if (this.monitoringInterval) {
@@ -145,10 +144,13 @@ export class MultiWorkflowPool {
     await Promise.allSettled(disconnectPromises);
   }
 
-  addClient(clientUrl: string, options?: {
-    workflowAffinity: Workflow<any>[];
-    priority?: number;
-  }) {
+  addClient(
+    clientUrl: string,
+    options?: {
+      workflowAffinity: Workflow<any>[];
+      priority?: number;
+    }
+  ) {
     this.clientRegistry.addClient(clientUrl, options);
   }
 
@@ -157,7 +159,6 @@ export class MultiWorkflowPool {
   }
 
   async submitJob(workflow: Workflow<any>) {
-
     let workflowHash = workflow.structureHash;
     if (!workflowHash) {
       workflow.updateHash();
@@ -210,9 +211,8 @@ export class MultiWorkflowPool {
   }
 
   private attachHandlersToClient(client: EnhancedClient) {
-
     // Forward all client events through the pool event manager
-    client.api.on("all", event => {
+    client.api.on("all", (event) => {
       const payload: ClientEventPayload = {
         clientUrl: client.url,
         clientName: client.nodeName,
@@ -225,17 +225,28 @@ export class MultiWorkflowPool {
       });
     });
 
-    client.api.on("status", event => {
-      this.logger.client(client.nodeName, event.type, `Queue Remaining: ${event.detail.status.exec_info.queue_remaining}`);
+    client.api.on("status", (event) => {
+      // Defensive null checks for event structure
+      if (!event.detail?.status?.exec_info || event.detail.status.exec_info.queue_remaining === undefined) {
+        this.logger.warn(`[${event.type}@${client.nodeName}] Invalid status event structure.`);
+        return;
+      }
+      this.logger.client(
+        client.nodeName,
+        event.type,
+        `Queue Remaining: ${event.detail.status.exec_info.queue_remaining}`
+      );
       // Update client state based on status
       if (event.detail.status.exec_info.queue_remaining === 0) {
         client.state = "idle";
         // Trigger queue processing
-        client.workflowAffinity?.forEach(value => {
-          this.logger.debug(`Triggering queue processing for workflow hash ${value} due to client ${client.nodeName} becoming idle.`);
+        client.workflowAffinity?.forEach((value) => {
+          this.logger.debug(
+            `Triggering queue processing for workflow hash ${value} due to client ${client.nodeName} becoming idle.`
+          );
           const queue = this.queues.get(value);
           if (queue) {
-            queue.processQueue().catch(reason => {
+            queue.processQueue().catch((reason) => {
               this.logger.error(`Error processing job queue for workflow hash ${value}:`, reason);
             });
           }
@@ -245,46 +256,82 @@ export class MultiWorkflowPool {
       }
     });
 
-    client.api.on("b_preview_meta", event => {
+    client.api.on("b_preview_meta", (event) => {
+      // Defensive null checks for event structure
+      if (!event.detail?.metadata || !event.detail?.blob) {
+        this.logger.warn(`[${event.type}@${client.nodeName}] Invalid preview metadata event structure.`);
+        return;
+      }
+
       const prompt_id = event.detail.metadata.prompt_id;
       if (prompt_id) {
         this.jobRegistry.updateJobPreviewMetadata(prompt_id, event.detail.metadata, event.detail.blob);
-        this.logger.debug(`[${event.type}@${client.nodeName}] Preview metadata for prompt ID: ${prompt_id} | blob size: ${event.detail.blob.size} (${event.detail.metadata.image_type})`);
+        this.logger.debug(
+          `[${event.type}@${client.nodeName}] Preview metadata for prompt ID: ${prompt_id} | blob size: ${event.detail.blob.size} (${event.detail.metadata.image_type ?? "unknown"})`
+        );
       } else {
         this.logger.warn(`[${event.type}@${client.nodeName}] Preview metadata received without prompt ID.`);
       }
     });
 
     // Handle finished nodes, extract image for prompt_id
-    client.api.on("executed", event => {
+    client.api.on("executed", (event) => {
+      // Defensive null check for event detail
+      if (!event.detail) {
+        this.logger.warn(`[${event.type}@${client.nodeName}] Executed event received with no detail.`);
+        return;
+      }
+
       const prompt_id = event.detail.prompt_id;
       if (prompt_id) {
         const output = event.detail.output as any;
         if (output && output.images) {
           this.jobRegistry.addJobImages(prompt_id, output.images);
         }
-        this.logger.debug(`[${event.type}@${client.nodeName}] Node executed for prompt ID: ${prompt_id}`, event.detail.output);
+        this.logger.debug(
+          `[${event.type}@${client.nodeName}] Node executed for prompt ID: ${prompt_id}`,
+          event.detail.output
+        );
       } else {
         this.logger.warn(`[${event.type}@${client.nodeName}] Executed event received without prompt ID.`);
       }
     });
 
-    client.api.on("progress", event => {
+    client.api.on("progress", (event) => {
+      // Defensive null checks for event detail and required fields
+      if (!event.detail || event.detail.value === undefined || event.detail.max === undefined) {
+        this.logger.warn(`[${event.type}@${client.nodeName}] Progress event received with invalid structure.`);
+        return;
+      }
+
       const prompt_id = event.detail.prompt_id;
       if (prompt_id) {
         const nodeId = event.detail.node;
-        this.jobRegistry.updateJobProgress(prompt_id, event.detail.value, event.detail.max, nodeId !== null ? nodeId : undefined);
-        this.logger.debug(`[${event.type}@${client.nodeName}] Progress for prompt ID: ${prompt_id} | ${Math.round(event.detail.value / event.detail.max * 100)}%`);
+        this.jobRegistry.updateJobProgress(
+          prompt_id,
+          event.detail.value,
+          event.detail.max,
+          nodeId !== null ? nodeId : undefined
+        );
+        this.logger.debug(
+          `[${event.type}@${client.nodeName}] Progress for prompt ID: ${prompt_id} | ${Math.round((event.detail.value / event.detail.max) * 100)}%`
+        );
       } else {
         this.logger.warn(`[${event.type}@${client.nodeName}] Progress event received without prompt ID.`);
       }
     });
-    
+
     // Track node execution for profiling
-    client.api.on("executing", event => {
+    client.api.on("executing", (event) => {
+      // Defensive null check for event detail
+      if (!event.detail) {
+        this.logger.warn(`[${event.type}@${client.nodeName}] Executing event received with no detail.`);
+        return;
+      }
+
       const prompt_id = event.detail.prompt_id;
       const nodeId = event.detail.node;
-      
+
       if (prompt_id) {
         if (nodeId === null) {
           // Execution completed (node: null event)
@@ -296,19 +343,33 @@ export class MultiWorkflowPool {
         }
       }
     });
-    
+
     // Track cached nodes for profiling
-    client.api.on("execution_cached", event => {
+    client.api.on("execution_cached", (event) => {
+      // Defensive null check for event detail
+      if (!event.detail) {
+        this.logger.warn(`[${event.type}@${client.nodeName}] Execution cached event received with no detail.`);
+        return;
+      }
+
       const prompt_id = event.detail.prompt_id;
       const nodeIds = event.detail.nodes;
-      
+
       if (prompt_id && nodeIds && Array.isArray(nodeIds)) {
         this.jobRegistry.onCachedNodes(prompt_id, nodeIds.map(String));
-        this.logger.debug(`[${event.type}@${client.nodeName}] ${nodeIds.length} nodes cached for prompt ID: ${prompt_id}`);
+        this.logger.debug(
+          `[${event.type}@${client.nodeName}] ${nodeIds.length} nodes cached for prompt ID: ${prompt_id}`
+        );
       }
     });
 
-    client.api.on("execution_success", event => {
+    client.api.on("execution_success", (event) => {
+      // Defensive null check for event detail
+      if (!event.detail) {
+        this.logger.warn(`[${event.type}@${client.nodeName}] Execution success event received with no detail.`);
+        return;
+      }
+
       const prompt_id = event.detail.prompt_id;
       if (prompt_id) {
         this.logger.client(client.nodeName, event.type, `Execution success for prompt ID: ${prompt_id}`);
@@ -318,7 +379,6 @@ export class MultiWorkflowPool {
         this.jobRegistry.completeJob(prompt_id);
       }
     });
-
   }
 
   private printStatusSummary() {
@@ -329,11 +389,11 @@ export class MultiWorkflowPool {
     // Print client states using console.table
     if (this.clientRegistry.clients.size > 0) {
       console.log("\n📋 CLIENT STATES:");
-      const clientData = Array.from(this.clientRegistry.clients.values()).map(client => ({
-        "URL": client.url,
+      const clientData = Array.from(this.clientRegistry.clients.values()).map((client) => ({
+        URL: client.url,
         "Node Name": client.nodeName,
-        "State": client.state,
-        "Priority": client.priority !== undefined ? client.priority : "N/A"
+        State: client.state,
+        Priority: client.priority !== undefined ? client.priority : "N/A"
       }));
       console.table(clientData);
     } else {
@@ -346,7 +406,7 @@ export class MultiWorkflowPool {
       const queueData = Array.from(this.queues.entries()).map(([workflowHash, queue]) => ({
         "Workflow Hash": workflowHash.length > 50 ? workflowHash.substring(0, 47) + "..." : workflowHash,
         "Jobs Pending": queue.queue.length,
-        "Type": workflowHash === "general" ? "General" : "Specific"
+        Type: workflowHash === "general" ? "General" : "Specific"
       }));
       console.table(queueData);
     } else {
@@ -360,17 +420,11 @@ export class MultiWorkflowPool {
     return await this.jobRegistry.waitForResults(jobId);
   }
 
-  attachJobProgressListener(jobId: string, progressListener: (progress: {
-    value: number;
-    max: number;
-  }) => void) {
+  attachJobProgressListener(jobId: string, progressListener: (progress: { value: number; max: number }) => void) {
     this.jobRegistry.attachJobProgressListener(jobId, progressListener);
   }
 
-  attachJobPreviewListener(jobId: string, previewListener: (preview: {
-    blob: Blob;
-    metadata: any;
-  }) => void) {
+  attachJobPreviewListener(jobId: string, previewListener: (preview: { blob: Blob; metadata: any }) => void) {
     this.jobRegistry.attachJobPreviewListener(jobId, previewListener);
   }
 
@@ -386,14 +440,12 @@ export class MultiWorkflowPool {
     priority?: number;
     workflowAffinityHashes?: string[];
   }> {
-    return Array.from(this.clientRegistry.clients.values()).map(client => ({
+    return Array.from(this.clientRegistry.clients.values()).map((client) => ({
       url: client.url,
       nodeName: client.nodeName,
       state: client.state,
       priority: client.priority,
-      workflowAffinityHashes: client.workflowAffinity 
-        ? Array.from(client.workflowAffinity) 
-        : undefined
+      workflowAffinityHashes: client.workflowAffinity ? Array.from(client.workflowAffinity) : undefined
     }));
   }
 
@@ -418,9 +470,7 @@ export class MultiWorkflowPool {
       nodeName: client.nodeName,
       state: client.state,
       priority: client.priority,
-      workflowAffinityHashes: client.workflowAffinity 
-        ? Array.from(client.workflowAffinity) 
-        : undefined
+      workflowAffinityHashes: client.workflowAffinity ? Array.from(client.workflowAffinity) : undefined
     };
   }
 
@@ -452,8 +502,8 @@ export class MultiWorkflowPool {
     priority?: number;
   }> {
     return Array.from(this.clientRegistry.clients.values())
-      .filter(client => client.state === "idle")
-      .map(client => ({
+      .filter((client) => client.state === "idle")
+      .map((client) => ({
         url: client.url,
         nodeName: client.nodeName,
         priority: client.priority
@@ -496,9 +546,9 @@ export class MultiWorkflowPool {
     const clients = Array.from(this.clientRegistry.clients.values());
     return {
       totalClients: clients.length,
-      idleClients: clients.filter(c => c.state === "idle").length,
-      busyClients: clients.filter(c => c.state === "busy").length,
-      offlineClients: clients.filter(c => c.state === "offline").length,
+      idleClients: clients.filter((c) => c.state === "idle").length,
+      busyClients: clients.filter((c) => c.state === "busy").length,
+      offlineClients: clients.filter((c) => c.state === "offline").length,
       totalQueues: this.queues.size,
       queues: Array.from(this.queues.entries()).map(([hash, queue]) => ({
         workflowHash: hash,

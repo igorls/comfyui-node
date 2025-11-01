@@ -166,10 +166,6 @@ export class CallWrapper {
         const jobDonePromise = new Promise((resolve) => {
             this.jobDoneResolved = false;
             this.jobResolveFn = (value) => {
-                if (this.jobDoneResolved) {
-                    return;
-                }
-                this.jobDoneResolved = true;
                 resolve(value);
             };
             if (this.pendingCompletion !== null) {
@@ -182,7 +178,12 @@ export class CallWrapper {
          * Declare the function to check if the job is executing.
          */
         const checkExecutingFn = (event) => {
-            if (event.detail && event.detail.prompt_id === job.prompt_id) {
+            // Defensive null check for event detail
+            if (!event.detail) {
+                this.emitLog("CallWrapper.run", "executing event received with no detail");
+                return;
+            }
+            if (event.detail.prompt_id === job.prompt_id) {
                 this.emitLog("CallWrapper.run", "executing observed", { node: event.detail.node });
                 this.resolvePromptLoad(false);
             }
@@ -191,6 +192,11 @@ export class CallWrapper {
          * Declare the function to check if the job is cached.
          */
         const checkExecutionCachedFn = (event) => {
+            // Defensive null checks for event detail
+            if (!event.detail || !event.detail.nodes) {
+                this.emitLog("CallWrapper.run", "execution_cached event received with invalid structure");
+                return;
+            }
             const outputNodes = Object.values(this.prompt.mapOutputKeys).filter((n) => !!n);
             if (event.detail.nodes.length > 0 && event.detail.prompt_id === job.prompt_id) {
                 /**
@@ -441,17 +447,14 @@ export class CallWrapper {
         if (CALL_WRAPPER_DEBUG) {
             console.log("[debug] resolveJob", this.promptId, value, Boolean(this.jobResolveFn), this.jobDoneResolved);
         }
-        if (this.jobResolveFn) {
-            if (this.jobDoneResolved) {
-                return;
-            }
+        if (this.jobResolveFn && !this.jobDoneResolved) {
             this.jobDoneResolved = true;
             this.jobResolveFn(value);
             if (CALL_WRAPPER_DEBUG) {
                 console.log("[debug] jobResolveFn invoked", this.promptId);
             }
         }
-        else {
+        else if (!this.jobResolveFn) {
             this.pendingCompletion = value;
         }
     }
@@ -685,7 +688,7 @@ export class CallWrapper {
                 return;
             }
             // Wait briefly for outputs that might be arriving due to prompt ID mismatch
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 100));
             console.log(`[CallWrapper] After wait - remainingOutput=${remainingOutput}, this.output keys:`, Object.keys(this.output));
             // Check if outputs arrived while we were waiting
             if (remainingOutput === 0) {
@@ -697,7 +700,7 @@ export class CallWrapper {
                 return;
             }
             // Check if we have collected all outputs (even if prompt ID mismatch)
-            const hasAllOutputs = Object.keys(reverseOutputMapped).every(nodeId => this.output[reverseOutputMapped[nodeId]] !== undefined);
+            const hasAllOutputs = Object.keys(reverseOutputMapped).every((nodeId) => this.output[reverseOutputMapped[nodeId]] !== undefined);
             if (hasAllOutputs) {
                 console.log(`[CallWrapper] Have all required outputs despite promptId mismatch - marking as complete`);
                 this.isCompletingSuccessfully = true;
@@ -710,14 +713,14 @@ export class CallWrapper {
             let hisData = null;
             for (let retries = 0; retries < 5; retries++) {
                 hisData = await this.client.ext.history.getHistory(promptId);
-                console.log(`[CallWrapper] History query result for ${promptId.substring(0, 8)}... (attempt ${retries + 1}) - status:`, hisData?.status, 'outputs:', Object.keys(hisData?.outputs ?? {}).length);
+                console.log(`[CallWrapper] History query result for ${promptId.substring(0, 8)}... (attempt ${retries + 1}) - status:`, hisData?.status, "outputs:", Object.keys(hisData?.outputs ?? {}).length);
                 if (hisData?.status?.completed && hisData.outputs) {
                     console.log(`[CallWrapper] Found completed job in history with outputs - attempting to populate from history`);
                     break;
                 }
                 if (retries < 4) {
                     console.log(`[CallWrapper] History not ready yet, waiting 100ms before retry...`);
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    await new Promise((resolve) => setTimeout(resolve, 100));
                 }
             }
             if (hisData?.status?.completed && hisData.outputs) {

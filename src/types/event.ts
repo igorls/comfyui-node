@@ -147,6 +147,7 @@ export type ComfyApiEventKey =
   | "execution_cached"
   | "queue_error"
   | "reconnected"
+  | "reconnection_failed"
   | "connected"
   | "log"
   | "terminal"
@@ -156,7 +157,10 @@ export type ComfyApiEventKey =
   | "b_text"
   | "b_text_meta"
   | "b_preview_raw"
-  | "node_text_update";
+  | "node_text_update"
+  | "websocket_unavailable"
+  | "shutdown_started"
+  | "shutdown_complete";
 
 /**
  * Type mapping ComfyUI API event keys to their respective CustomEvent types
@@ -202,6 +206,22 @@ export type TComfyAPIEventMap = {
    * Reconnected event
    */
   reconnected: CustomEvent<null>;
+  /**
+   * Reconnection failed event (after all retry attempts exhausted)
+   */
+  reconnection_failed: CustomEvent<null>;
+  /**
+   * WebSocket unavailable event (when WebSocket creation fails and polling fallback is used)
+   */
+  websocket_unavailable: CustomEvent<Error>;
+  /**
+   * Shutdown started event
+   */
+  shutdown_started: CustomEvent<null>;
+  /**
+   * Shutdown complete event
+   */
+  shutdown_complete: CustomEvent<null>;
   /**
    * Binary preview image event
    */

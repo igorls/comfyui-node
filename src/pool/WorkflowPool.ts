@@ -294,10 +294,14 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
     const preferredClientIds = options?.preferredClientIds
       ? [...options.preferredClientIds]
-      : (affinity?.preferredClientIds ? [...affinity.preferredClientIds] : []);
+      : affinity?.preferredClientIds
+        ? [...affinity.preferredClientIds]
+        : [];
     const excludeClientIds = options?.excludeClientIds
       ? [...options.excludeClientIds]
-      : (affinity?.excludeClientIds ? [...affinity.excludeClientIds] : []);
+      : affinity?.excludeClientIds
+        ? [...affinity.excludeClientIds]
+        : [];
 
     const payload: WorkflowJobPayload = {
       jobId,
@@ -314,6 +318,10 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         excludeClientIds: excludeClientIds,
         metadata: options?.metadata ?? {},
         includeOutputs: options?.includeOutputs ?? []
+      },
+      timeouts: {
+        executionStartTimeoutMs: options?.executionStartTimeoutMs,
+        nodeExecutionTimeoutMs: options?.nodeExecutionTimeoutMs
       }
     };
 
@@ -507,8 +515,10 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
         iteration++;
         this.debugLog(`[processQueue] Iteration ${iteration}`);
 
-        const idleClients = this.clientManager.list().filter(c => this.clientManager.isClientStable(c));
-        this.debugLog(`[processQueue] Idle clients: [${idleClients.map(c => c.id).join(", ")}] (${idleClients.length})`);
+        const idleClients = this.clientManager.list().filter((c) => this.clientManager.isClientStable(c));
+        this.debugLog(
+          `[processQueue] Idle clients: [${idleClients.map((c) => c.id).join(", ")}] (${idleClients.length})`
+        );
         if (!idleClients.length) {
           this.debugLog("[processQueue] No idle clients, breaking");
           break; // No idle clients available
@@ -526,7 +536,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
         // Build compatibility matrix and calculate job selectivity
         interface JobMatchInfo {
-          jobPayload: typeof waitingJobs[0];
+          jobPayload: (typeof waitingJobs)[0];
           job: JobRecord;
           compatibleClients: string[];
           selectivity: number; // Lower is more selective (fewer compatible clients)
@@ -541,19 +551,25 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
           }
 
           const compatibleClients = idleClients
-            .filter(client => {
+            .filter((client) => {
               const canRun = this.clientManager.canClientRunJob(client, job);
               if (!canRun) {
-                this.debugLog(`[processQueue] Job ${job.jobId.substring(0, 8)}... NOT compatible with ${client.id}. Checking why...`);
-                this.debugLog(`[processQueue]   - preferredClientIds: ${JSON.stringify(job.options.preferredClientIds)}`);
+                this.debugLog(
+                  `[processQueue] Job ${job.jobId.substring(0, 8)}... NOT compatible with ${client.id}. Checking why...`
+                );
+                this.debugLog(
+                  `[processQueue]   - preferredClientIds: ${JSON.stringify(job.options.preferredClientIds)}`
+                );
                 this.debugLog(`[processQueue]   - excludeClientIds: ${JSON.stringify(job.options.excludeClientIds)}`);
                 this.debugLog(`[processQueue]   - client.id: ${client.id}`);
               }
               return canRun;
             })
-            .map(client => client.id);
+            .map((client) => client.id);
 
-          this.debugLog(`[processQueue] Job ${job.jobId.substring(0, 8)}... compatible with: [${compatibleClients.join(", ")}] (selectivity=${compatibleClients.length})`);
+          this.debugLog(
+            `[processQueue] Job ${job.jobId.substring(0, 8)}... compatible with: [${compatibleClients.join(", ")}] (selectivity=${compatibleClients.length})`
+          );
 
           if (compatibleClients.length > 0) {
             jobMatchInfos.push({
@@ -598,16 +614,16 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
           if (reservedJobIds.has(matchInfo.job.jobId)) continue;
 
           // Find first available compatible client
-          const availableClient = matchInfo.compatibleClients.find(
-            clientId => !leasedClientIds.has(clientId)
-          );
+          const availableClient = matchInfo.compatibleClients.find((clientId) => !leasedClientIds.has(clientId));
 
           if (!availableClient) {
             this.debugLog(`[processQueue] No available client for job ${matchInfo.job.jobId.substring(0, 8)}...`);
             continue; // No available clients for this job
           }
 
-          this.debugLog(`[processQueue] Reserving job ${matchInfo.job.jobId.substring(0, 8)}... for client ${availableClient}`);
+          this.debugLog(
+            `[processQueue] Reserving job ${matchInfo.job.jobId.substring(0, 8)}... for client ${availableClient}`
+          );
           const reservation = await this.queue.reserveById(matchInfo.job.jobId);
           if (reservation) {
             // Mark as leased/reserved for this cycle
@@ -618,7 +634,9 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
             // Get the lease (which marks the client as busy)
             const lease = this.clientManager.claim(matchInfo.job, availableClient);
             if (lease) {
-              this.debugLog(`[processQueue] Starting job ${matchInfo.job.jobId.substring(0, 8)}... on client ${availableClient}`);
+              this.debugLog(
+                `[processQueue] Starting job ${matchInfo.job.jobId.substring(0, 8)}... on client ${availableClient}`
+              );
               this.runJob({
                 reservation,
                 job: matchInfo.job,
@@ -629,7 +647,9 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
               });
             } else {
               // This should not happen since we checked canClientRunJob, but handle defensively
-              console.error(`[processQueue.processQueue] CRITICAL: Failed to claim client ${availableClient} for job ${matchInfo.job.jobId} after successful check.`);
+              console.error(
+                `[processQueue.processQueue] CRITICAL: Failed to claim client ${availableClient} for job ${matchInfo.job.jobId} after successful check.`
+              );
               await this.queue.retry(reservation.reservationId, { delayMs: matchInfo.job.options.retryDelayMs });
             }
           } else {
@@ -644,7 +664,6 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
           break;
         }
       }
-
     } finally {
       this.debugLog("[processQueue] Exiting, setting processing = false");
       this.processing = false;
@@ -731,7 +750,8 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
     const profiler = this.opts.enableProfiling ? new JobProfiler(job.enqueuedAt, workflowPayload) : undefined;
 
     // Setup node execution timeout tracking
-    const nodeExecutionTimeout = this.opts.nodeExecutionTimeoutMs ?? 300000; // 5 minutes default
+    // Use per-job timeout override if specified, otherwise use pool default
+    const nodeExecutionTimeout = job.timeouts?.nodeExecutionTimeoutMs ?? this.opts.nodeExecutionTimeoutMs ?? 300000; // 5 minutes default
     let nodeTimeoutId: NodeJS.Timeout | undefined;
     let lastNodeStartTime: number | undefined;
     let currentExecutingNode: string | null = null;
@@ -751,7 +771,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
           const nodeInfo = currentExecutingNode ? ` (node: ${currentExecutingNode})` : "";
           completionError = new Error(
             `Node execution timeout: took longer than ${nodeExecutionTimeout}ms${nodeInfo}. ` +
-            `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`
+              `Actual time: ${elapsed}ms. Server may be stuck or node is too slow for configured timeout.`
           );
           resolveCompletion?.();
         }, nodeExecutionTimeout);
@@ -1029,7 +1049,8 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
       const exec = wrapper.run();
 
       // Add timeout for execution start to prevent jobs getting stuck
-      const executionStartTimeout = this.opts.executionStartTimeoutMs ?? 5000;
+      // Use per-job timeout override if specified, otherwise use pool default
+      const executionStartTimeout = job.timeouts?.executionStartTimeoutMs ?? this.opts.executionStartTimeoutMs ?? 5000;
       let pendingTimeoutId: NodeJS.Timeout | undefined;
 
       if (executionStartTimeout > 0) {
@@ -1040,7 +1061,7 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
               reject(
                 new Error(
                   `Execution failed to start within ${executionStartTimeout}ms. ` +
-                  `Server may be stuck or unresponsive.`
+                    `Server may be stuck or unresponsive.`
                 )
               );
             }, executionStartTimeout);
@@ -1090,7 +1111,6 @@ export class WorkflowPool extends TypedEventTarget<WorkflowPoolEventMap> {
 
       await this.queue.commit(reservation.reservationId);
       safeRelease({ success: true });
-
     } catch (error) {
       // Immediately release the client on any failure
       safeRelease({ success: false });

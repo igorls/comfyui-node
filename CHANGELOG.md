@@ -1,5 +1,91 @@
 # Changelog
 
+## 1.6.5
+
+### Added
+
+#### Integration Test Infrastructure
+
+- **Real Process-Based Reconnection Testing** – New comprehensive integration test infrastructure that spawns actual mock server processes to test reconnection behavior
+  - Mock servers run in separate OS processes that can be killed/restarted to simulate real server crashes
+  - 13 integration tests covering manual reconnection, auto-reconnection, connection state transitions, and multiple restart cycles
+  - All tests passing with real WebSocket connections (no mocks)
+
+- **Mock Server** (`test/integration/mock-server.ts`) – Standalone ComfyUI-compatible server
+  - HTTP endpoints: `/queue`, `/prompt`, `/system_stats`, `/history`
+  - WebSocket server at `/ws` with periodic status messages
+  - Graceful shutdown handling via SIGTERM/SIGINT
+  - IPC messaging to signal readiness
+  - Can be run standalone: `bun test/integration/mock-server.ts [port]`
+
+- **Server Manager** (`test/integration/server-manager.ts`) – Process lifecycle management
+  - `startServer(port)` – Spawn server and wait for ready signal
+  - `killServer(port)` – Gracefully terminate server process
+  - `restartServer(port, delay)` – Kill and restart with optional delay
+  - `killAll()` – Cleanup all running servers
+  - Configurable timeouts and automatic error handling
+
+- **Test Helpers** (`test/integration/test-helpers.ts`) – Reusable utilities
+  - `initializeClient(api)` – Initialize ComfyApi and wait for ready
+  - `waitForConnection(api, timeout)` – Poll until client is connected
+  - `waitForDisconnection(api, timeout)` – Poll until client disconnects
+  - `pollUntil(condition, timeout, interval)` – Generic polling utility
+  - `trackEvent(api, eventName)` – Track whether specific events fired
+  - `sleep(ms)` – Simple delay utility
+
+- **Integration Tests** (`test/integration/reconnection.integration.spec.ts`) – 10 comprehensive test cases
+  - Manual reconnection after server restart
+  - Multiple reconnection attempts with abort
+  - Automatic reconnection with `autoReconnect: true`
+  - `reconnected` event emission verification
+  - Connection state transitions (connecting → connected → disconnected → reconnecting → connected)
+  - Connection validation with `validateConnection()` and `isConnected()`
+  - Reconnection failure handling and callbacks
+  - Multiple server restart cycles (3+ consecutive restarts)
+  - WebSocket message handling after reconnection
+
+- **Simple Examples** (`test/integration/reconnection-simple.example.spec.ts`) – 3 well-documented examples
+  - Basic reconnection flow with step-by-step logging
+  - Auto-reconnection example with event tracking
+  - Multiple restart cycles demonstration
+
+- **Validation Script** (`test/integration/validate-mock-server.ts`)
+  - Standalone script to verify entire integration test infrastructure
+  - Tests server startup, HTTP endpoints, WebSocket connection, reconnection, and cleanup
+  - Run with: `bun test/integration/validate-mock-server.ts`
+
+- **Documentation** – Comprehensive guides for integration testing
+  - `test/integration/README.md` – Full documentation (276 lines)
+  - `test/integration/SUMMARY.md` – Architecture overview (253 lines)
+  - `test/integration/QUICKSTART.md` – Developer quick-start guide (405 lines)
+
+- **NPM Scripts** – Easy access to integration tests
+  - `test:integration` – Run all integration tests
+  - `test:integration:simple` – Run simple examples
+  - `test:integration:reconnection` – Run comprehensive reconnection tests
+
+### Benefits
+
+- **Real Process Testing** – Tests actual process spawning, killing, and restarting (not mocked)
+- **True Network Behavior** – Real WebSocket connections and HTTP requests
+- **Timing Accuracy** – Tests actual connection timing and retry logic
+- **Production Confidence** – Simulates real-world server failures and recoveries
+- **CI/CD Ready** – Proper cleanup, timeout handling, and isolated execution
+- **Developer-Friendly** – Helper functions, examples, and 900+ lines of documentation
+
+### Files Added
+
+9 new files (~2,350 lines):
+- `test/integration/mock-server.ts` (262 lines)
+- `test/integration/server-manager.ts` (289 lines)
+- `test/integration/test-helpers.ts` (177 lines)
+- `test/integration/reconnection.integration.spec.ts` (375 lines)
+- `test/integration/reconnection-simple.example.spec.ts` (158 lines)
+- `test/integration/validate-mock-server.ts` (154 lines)
+- `test/integration/README.md` (276 lines)
+- `test/integration/SUMMARY.md` (253 lines)
+- `test/integration/QUICKSTART.md` (405 lines)
+
 ## 1.6.2
 
 **What's New:**

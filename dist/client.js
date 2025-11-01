@@ -46,6 +46,12 @@ export class ComfyApi extends TypedEventTarget {
     wsTimeout = 60000;
     wsTimer = null;
     _pollingTimer = null;
+    /** Current connection state */
+    _connectionState = "connecting";
+    /** Auto-reconnect flag (when enabled, reconnection happens automatically on disconnect) */
+    _autoReconnect = false;
+    /** Callback invoked when reconnection fails after all attempts */
+    _onReconnectionFailed;
     /** Host sans protocol (used to compose ws:// / wss:// URL) */
     apiBase;
     clientId;
@@ -121,6 +127,12 @@ export class ComfyApi extends TypedEventTarget {
         return this.clientId ?? this.apiBase;
     }
     /**
+     * Get the current connection state of the client.
+     */
+    get connectionState() {
+        return this._connectionState;
+    }
+    /**
      * Retrieves the available features of the client.
      *
      * @returns An object containing the available features, where each feature is a key-value pair.
@@ -163,7 +175,9 @@ export class ComfyApi extends TypedEventTarget {
             const envDebug = typeof process !== "undefined" && process?.env?.COMFY_DEBUG;
             this._debug = Boolean(opts?.debug ?? (envDebug === "1" || envDebug === "true"));
         }
-        catch { /* ignore env access in non-node runtimes */ }
+        catch {
+            /* ignore env access in non-node runtimes */
+        }
         // Merge announced feature flags overrides
         if (opts?.announceFeatureFlags) {
             this.announcedFeatureFlags = {
@@ -171,6 +185,25 @@ export class ComfyApi extends TypedEventTarget {
                 ...opts.announceFeatureFlags
             };
         }
+        // Auto-reconnect configuration
+        if (opts?.autoReconnect !== undefined) {
+            this._autoReconnect = opts.autoReconnect;
+        }
+        if (opts?.onReconnectionFailed) {
+            this._onReconnectionFailed = opts.onReconnectionFailed;
+        }
+        // Listen for reconnection_failed event to invoke callback
+        this.on("reconnection_failed", async () => {
+            this._connectionState = "failed";
+            if (this._onReconnectionFailed) {
+                try {
+                    await this._onReconnectionFailed();
+                }
+                catch (error) {
+                    this.log("reconnection", "onReconnectionFailed callback error", error);
+                }
+            }
+        });
         this.log("constructor", "Initialized", {
             host,
             clientId,
@@ -252,7 +285,9 @@ export class ComfyApi extends TypedEventTarget {
                 // eslint-disable-next-line no-console
                 console.debug(`[ComfyApi ${id}] ${ts} :: ${fnName} -> ${message}`, safeData ?? "");
             }
-            catch { /* no-op */ }
+            catch {
+                /* no-op */
+            }
         }
     }
     /**
@@ -492,6 +527,7 @@ export class ComfyApi extends TypedEventTarget {
             }
             catch { }
         }
+        this._connectionState = "reconnecting";
         this._reconnectController = runWebSocketReconnect(this, () => this.createSocket(true), {
             triggerEvents: !!triggerEvent,
             maxAttempts: this._reconnect?.maxAttempts,
@@ -511,6 +547,25 @@ export class ComfyApi extends TypedEventTarget {
     }
     resetLastActivity() {
         this.lastActivity = Date.now();
+    }
+    /**
+     * Check if WebSocket is currently connected and open.
+     */
+    isConnected() {
+        return this.socket?.readyState === WebSocket.OPEN;
+    }
+    /**
+     * Actively validate connection by making a lightweight API call.
+     * @returns true if connection is healthy, false otherwise
+     */
+    async validateConnection() {
+        try {
+            await this.getQueue();
+            return true;
+        }
+        catch {
+            return false;
+        }
     }
     /** Convenience: init + waitForReady (idempotent). */
     async ready() {
@@ -657,6 +712,10 @@ export class ComfyApi extends TypedEventTarget {
         let reconnecting = false;
         let usePolling = false;
         let opened = false;
+        // Update connection state
+        if (!isReconnect) {
+            this._connectionState = "connecting";
+        }
         const stopHeartbeat = () => {
             if (this.wsTimer) {
                 clearInterval(this.wsTimer);
@@ -741,10 +800,15 @@ export class ComfyApi extends TypedEventTarget {
                 const shouldEmit = opened;
                 opened = false;
                 this.log("socket", "Socket closed", { code, reason, wasClean, shouldEmit, isReconnect });
+                // Update connection state
+                this._connectionState = "disconnected";
                 if (shouldEmit) {
                     this.dispatchEvent(new CustomEvent("status", { detail: null }));
                 }
-                this.reconnectWs(shouldEmit);
+                // Handle reconnection based on autoReconnect flag
+                if (this._autoReconnect || shouldEmit) {
+                    this.reconnectWs(shouldEmit);
+                }
                 if (!opened && !isReconnect && !usePolling) {
                     usePolling = true;
                     this.log("socket", "Socket failed to open, enabling polling fallback");
@@ -759,6 +823,8 @@ export class ComfyApi extends TypedEventTarget {
                 this.log("socket", "Socket opened");
                 stopHeartbeat();
                 startHeartbeat();
+                // Update connection state
+                this._connectionState = "connected";
                 if (isReconnect) {
                     this.dispatchEvent(new CustomEvent("reconnected"));
                 }
@@ -780,6 +846,7 @@ export class ComfyApi extends TypedEventTarget {
             this.log("socket", "WebSocket creation failed, falling back to polling", error);
             this.socket = null;
             usePolling = true;
+            this._connectionState = "failed";
             this.dispatchEvent(new CustomEvent("websocket_unavailable", { detail: error }));
             // Set up polling mechanism
             this.setupPollingFallback();
@@ -835,11 +902,21 @@ export class ComfyApi extends TypedEventTarget {
                                     const view2 = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
                                     const channel = view2.getUint32(4, false /* big-endian */);
                                     const text = new TextDecoder("utf-8").decode(u8.slice(8));
-                                    this.log("socket", "b_text (binary) received", { size: u8.byteLength, channel, preview: text.slice(0, 120) });
+                                    this.log("socket", "b_text (binary) received", {
+                                        size: u8.byteLength,
+                                        channel,
+                                        preview: text.slice(0, 120)
+                                    });
                                     this.dispatchEvent(new CustomEvent("b_text", { detail: text }));
                                     this.dispatchEvent(new CustomEvent("b_text_meta", { detail: { channel, text } }));
                                     // Emit normalized node_text_update for consumers
-                                    const norm = { channel, text, kind: "message", executingNode: lastExecutingNode, promptIdHint: lastPromptId };
+                                    const norm = {
+                                        channel,
+                                        text,
+                                        kind: "message",
+                                        executingNode: lastExecutingNode,
+                                        promptIdHint: lastPromptId
+                                    };
                                     // Simplify: find the first occurrence of a known phrase and drop everything before it (prefix agnostic)
                                     // This covers prefixes like "LUMA", numeric IDs ("2"), mixed case, etc.
                                     const lower = text.toLowerCase();
@@ -901,7 +978,11 @@ export class ComfyApi extends TypedEventTarget {
                         const msg = JSON.parse(event.data);
                         if (!msg.data || !msg.type)
                             return;
-                        this.log("socket-msg", `type=${msg.type}`, { prompt_id: msg.data?.prompt_id, node: msg.data?.node, keys: Object.keys(msg.data || {}) });
+                        this.log("socket-msg", `type=${msg.type}`, {
+                            prompt_id: msg.data?.prompt_id,
+                            node: msg.data?.node,
+                            keys: Object.keys(msg.data || {})
+                        });
                         this.dispatchEvent(new CustomEvent("all", { detail: msg }));
                         if (msg.type === "logs") {
                             this.dispatchEvent(new CustomEvent("terminal", { detail: msg.data.entries?.[0] || null }));
