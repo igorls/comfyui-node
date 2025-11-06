@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.6
+
+### Updated
+
+- **ComfyUI v0.3.68 Compatibility** – Updated `SystemStatsResponse` interface to include new template version fields
+  - Added `installed_templates_version` field to system stats
+  - Added `required_templates_version` field to system stats
+  - Tested and verified full compatibility with ComfyUI v0.3.68
+  - All existing functionality remains unchanged
+
 ## 1.6.5
 
 ### Added

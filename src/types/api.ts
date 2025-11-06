@@ -98,6 +98,8 @@ export interface SystemStatsResponse {
     ram_free: number;
     comfyui_version: string;
     required_frontend_version: string;
+    installed_templates_version: string;
+    required_templates_version: string;
     python_version: string;
     pytorch_version: string;
     embedded_python: boolean;
