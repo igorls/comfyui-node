@@ -2,21 +2,22 @@ import { describe, it, expect, beforeEach, jest } from "bun:test";
 import { JobStateRegistry } from "../job-state-registry.js";
 import { ClientRegistry } from "../client-registry.js";
 import { Workflow } from "../workflow.js";
-import { Logger } from "../logger.js";
 describe("JobStateRegistry", () => {
     let jobRegistry;
     let poolMock;
     let clientRegistryMock;
-    let loggerMock;
+    let eventsMock;
     beforeEach(() => {
         // Mock MultiWorkflowPool
         poolMock = {
             options: { enableProfiling: false },
             queues: new Map(),
         };
-        loggerMock = new Logger("test", "silent");
+        eventsMock = {
+            emitEvent: jest.fn(),
+        };
         // Mock ClientRegistry
-        clientRegistryMock = new ClientRegistry(poolMock, loggerMock);
+        clientRegistryMock = new ClientRegistry(poolMock, eventsMock);
         // Initialize JobStateRegistry
         jobRegistry = new JobStateRegistry(poolMock, clientRegistryMock);
     });

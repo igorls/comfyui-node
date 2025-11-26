@@ -11,9 +11,7 @@ import GenerationGraph from "../../../scripts/workflows/T2I-one-obsession.json" 
 const GEN_HOST = "http://localhost:8188";
 
 // Create pool
-const pool = new MultiWorkflowPool({
-  logLevel: "warn"  // Keep logs minimal to see events clearly
-});
+const pool = new MultiWorkflowPool({});
 
 const genWorkflow = Workflow.fromAugmented(GenerationGraph);
 

@@ -46,8 +46,7 @@ const editPrompts = [
 // ============================================================================
 
 const pool = new MultiWorkflowPool({
-  enableMonitoring: true,
-  logLevel: "info"
+  enableMonitoring: true
 });
 
 const genWorkflow = Workflow.fromAugmented(GenerationGraph);

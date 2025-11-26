@@ -3,13 +3,13 @@ import { JobStateRegistry } from "../job-state-registry.js";
 import { MultiWorkflowPool } from "../multi-workflow-pool.js";
 import { ClientRegistry } from "../client-registry.js";
 import { Workflow } from "../workflow.js";
-import { Logger } from "../logger.js";
+import { PoolEventManager } from "../pool-event-manager.js";
 
 describe("JobStateRegistry", () => {
   let jobRegistry: JobStateRegistry;
   let poolMock: MultiWorkflowPool;
   let clientRegistryMock: ClientRegistry;
-  let loggerMock: Logger;
+  let eventsMock: PoolEventManager;
 
   beforeEach(() => {
     // Mock MultiWorkflowPool
@@ -18,10 +18,12 @@ describe("JobStateRegistry", () => {
       queues: new Map(),
     } as any;
 
-    loggerMock = new Logger("test", "silent");
+    eventsMock = {
+      emitEvent: jest.fn(),
+    } as any;
 
     // Mock ClientRegistry
-    clientRegistryMock = new ClientRegistry(poolMock, loggerMock);
+    clientRegistryMock = new ClientRegistry(poolMock, eventsMock);
 
     // Initialize JobStateRegistry
     jobRegistry = new JobStateRegistry(poolMock, clientRegistryMock);
