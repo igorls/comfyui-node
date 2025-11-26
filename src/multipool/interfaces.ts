@@ -1,6 +1,5 @@
 import { ImageInfo } from "../types/api.js";
 import { ComfyApi } from "../client.js";
-import { LogLevel } from "./logger.js";
 import { Workflow } from "./workflow.js";
 import { JobProfiler } from "./job-profiler.js";
 
@@ -31,7 +30,6 @@ export interface MultiWorkflowPoolOptions {
   connectionTimeoutMs?: number;
   enableMonitoring?: boolean;
   monitoringIntervalMs?: number;
-  logLevel?: LogLevel;
   enableProfiling?: boolean;
 }
 
