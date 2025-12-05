@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, jest } from "bun:test";
 import { JobQueueProcessor } from "../job-queue-processor.js";
 import { Workflow } from "../workflow.js";
-import { Logger } from "../logger.js";
 // Mock dependencies
 const createJobStateRegistryMock = () => ({
     getJobStatus: jest.fn().mockReturnValue("pending"),
@@ -17,17 +16,19 @@ const createClientRegistryMock = () => ({
     markClientIncompatibleWithWorkflow: jest.fn(),
     getAllEligibleClientsForWorkflow: jest.fn().mockReturnValue([]),
 });
-const createLoggerMock = () => new Logger("test", "silent");
+const createEventManagerMock = () => ({
+    emitEvent: jest.fn(),
+});
 describe("JobQueueProcessor", () => {
     let jobStateRegistryMock;
     let clientRegistryMock;
-    let loggerMock;
+    let eventsMock;
     beforeEach(() => {
         jobStateRegistryMock = createJobStateRegistryMock();
         clientRegistryMock = createClientRegistryMock();
-        loggerMock = createLoggerMock();
+        eventsMock = createEventManagerMock();
     });
-    const createProcessor = (hash = "test-hash") => new JobQueueProcessor(jobStateRegistryMock, clientRegistryMock, hash, loggerMock);
+    const createProcessor = (hash = "test-hash") => new JobQueueProcessor(jobStateRegistryMock, clientRegistryMock, hash, eventsMock);
     it("should enqueue a job and trigger processing", async () => {
         const processor = createProcessor();
         const processQueueSpy = jest.spyOn(processor, "processQueue").mockImplementation(async () => { });
@@ -39,9 +40,8 @@ describe("JobQueueProcessor", () => {
     it("should not process queue if already processing", async () => {
         const processor = createProcessor();
         processor.isProcessing = true;
-        const loggerSpy = jest.spyOn(loggerMock, 'debug');
         await processor.processQueue();
-        expect(loggerSpy).toHaveBeenCalledWith(`Job queue for workflow hash test-hash is already being processed, skipping.`);
+        expect(eventsMock.emitEvent).toHaveBeenCalledWith({ type: "debug", payload: `Job queue for workflow hash test-hash is already being processed, skipping.` });
     });
     it("should assign a job to an optimal client and run it successfully", async () => {
         const processor = createProcessor();

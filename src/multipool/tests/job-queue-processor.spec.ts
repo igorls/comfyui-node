@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, jest } from "bun:test";
 import { JobQueueProcessor } from "../job-queue-processor.js";
 import { JobStateRegistry } from "../job-state-registry.js";
 import { Workflow } from "../workflow.js";
-import { Logger } from "../logger.js";
+import { PoolEventManager } from "../pool-event-manager.js";
 
 // Mock dependencies
 const createJobStateRegistryMock = () => ({
@@ -21,21 +21,23 @@ const createClientRegistryMock = () => ({
   getAllEligibleClientsForWorkflow: jest.fn().mockReturnValue([]),
 }) as any;
 
-const createLoggerMock = () => new Logger("test", "silent");
+const createEventManagerMock = () => ({
+  emitEvent: jest.fn(),
+}) as any;
 
 describe("JobQueueProcessor", () => {
   let jobStateRegistryMock: JobStateRegistry;
   let clientRegistryMock: any;
-  let loggerMock: Logger;
+  let eventsMock: PoolEventManager;
 
   beforeEach(() => {
     jobStateRegistryMock = createJobStateRegistryMock();
     clientRegistryMock = createClientRegistryMock();
-    loggerMock = createLoggerMock();
+    eventsMock = createEventManagerMock();
   });
 
-  const createProcessor = (hash = "test-hash") => 
-    new JobQueueProcessor(jobStateRegistryMock, clientRegistryMock, hash, loggerMock);
+  const createProcessor = (hash = "test-hash") =>
+    new JobQueueProcessor(jobStateRegistryMock, clientRegistryMock, hash, eventsMock);
 
   it("should enqueue a job and trigger processing", async () => {
     const processor = createProcessor();
@@ -51,11 +53,10 @@ describe("JobQueueProcessor", () => {
   it("should not process queue if already processing", async () => {
     const processor = createProcessor();
     processor.isProcessing = true;
-    const loggerSpy = jest.spyOn(loggerMock, 'debug');
     
     await processor.processQueue();
 
-    expect(loggerSpy).toHaveBeenCalledWith(`Job queue for workflow hash test-hash is already being processed, skipping.`);
+    expect(eventsMock.emitEvent).toHaveBeenCalledWith({ type: "debug", payload: `Job queue for workflow hash test-hash is already being processed, skipping.` });
   });
 
   it("should assign a job to an optimal client and run it successfully", async () => {

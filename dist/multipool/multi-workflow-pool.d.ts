@@ -12,7 +12,6 @@ export declare class MultiWorkflowPool {
     private jobRegistry;
     queues: Map<string, JobQueueProcessor>;
     options: Required<MultiWorkflowPoolOptions>;
-    private logger;
     monitoringInterval?: Timer;
     constructor(options?: MultiWorkflowPoolOptions);
     init(): Promise<void>;

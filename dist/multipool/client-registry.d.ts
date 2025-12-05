@@ -1,13 +1,13 @@
 import { MultiWorkflowPool } from "./multi-workflow-pool.js";
 import { Workflow } from "./workflow.js";
-import { Logger } from "./logger.js";
 import { EnhancedClient } from "./interfaces.js";
+import { PoolEventManager } from "./pool-event-manager.js";
 export declare class ClientRegistry {
     pool: MultiWorkflowPool;
-    private logger;
+    private events;
     clients: Map<string, EnhancedClient>;
     workflowAffinityMap: Map<string, Set<string>>;
-    constructor(pool: MultiWorkflowPool, logger: Logger);
+    constructor(pool: MultiWorkflowPool, events: PoolEventManager);
     addClient(clientUrl: string, options?: {
         workflowAffinity: Workflow[];
         priority?: number;

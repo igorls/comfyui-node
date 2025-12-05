@@ -1,14 +1,13 @@
 import { describe, it, expect, beforeEach, jest } from "bun:test";
 import { ClientRegistry } from "../client-registry.js";
 import { MultiWorkflowPool } from "../multi-workflow-pool.js";
-import { Logger } from "../logger.js";
+import { PoolEventManager } from "../pool-event-manager.js";
 
 // Mock dependencies
 const createPoolMock = () => ({}) as any;
 
-const createLoggerMock = () => ({
-  debug: jest.fn(),
-  error: jest.fn(),
+const createEventManagerMock = () => ({
+  emitEvent: jest.fn(),
 }) as any;
 
 const createWorkflowMock = (hash?: string) => {
@@ -24,13 +23,13 @@ const createWorkflowMock = (hash?: string) => {
 
 describe("ClientRegistry", () => {
   let poolMock: MultiWorkflowPool;
-  let loggerMock: Logger;
+  let eventsMock: PoolEventManager;
   let registry: ClientRegistry;
 
   beforeEach(() => {
     poolMock = createPoolMock();
-    loggerMock = createLoggerMock();
-    registry = new ClientRegistry(poolMock, loggerMock);
+    eventsMock = createEventManagerMock();
+    registry = new ClientRegistry(poolMock, eventsMock);
     jest.clearAllMocks();
   });
 
@@ -132,7 +131,7 @@ describe("ClientRegistry", () => {
 
       const result = registry.getOptimalClient(workflow);
       expect(result).toBeNull();
-      expect(loggerMock.debug).toHaveBeenCalledWith("No suitable clients found for workflow hash1.");
+      expect(eventsMock.emitEvent).toHaveBeenCalledWith({ type: "debug", payload: "No suitable clients found for workflow hash1." });
     });
 
     it("should return the highest priority idle client with affinity", () => {

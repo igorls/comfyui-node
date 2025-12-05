@@ -2,9 +2,8 @@ import { describe, it, expect, beforeEach, jest } from "bun:test";
 import { ClientRegistry } from "../client-registry.js";
 // Mock dependencies
 const createPoolMock = () => ({});
-const createLoggerMock = () => ({
-    debug: jest.fn(),
-    error: jest.fn(),
+const createEventManagerMock = () => ({
+    emitEvent: jest.fn(),
 });
 const createWorkflowMock = (hash) => {
     const mock = {
@@ -18,12 +17,12 @@ const createWorkflowMock = (hash) => {
 };
 describe("ClientRegistry", () => {
     let poolMock;
-    let loggerMock;
+    let eventsMock;
     let registry;
     beforeEach(() => {
         poolMock = createPoolMock();
-        loggerMock = createLoggerMock();
-        registry = new ClientRegistry(poolMock, loggerMock);
+        eventsMock = createEventManagerMock();
+        registry = new ClientRegistry(poolMock, eventsMock);
         jest.clearAllMocks();
     });
     describe("addClient", () => {
@@ -106,7 +105,7 @@ describe("ClientRegistry", () => {
             registry.clients.get("http://client1:8188").state = "busy";
             const result = registry.getOptimalClient(workflow);
             expect(result).toBeNull();
-            expect(loggerMock.debug).toHaveBeenCalledWith("No suitable clients found for workflow hash1.");
+            expect(eventsMock.emitEvent).toHaveBeenCalledWith({ type: "debug", payload: "No suitable clients found for workflow hash1." });
         });
         it("should return the highest priority idle client with affinity", () => {
             const workflow = createWorkflowMock("hash1");

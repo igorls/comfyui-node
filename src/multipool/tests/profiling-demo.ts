@@ -12,8 +12,7 @@ const GEN_HOST = "http://localhost:8188";
 
 // Create pool with profiling enabled
 const pool = new MultiWorkflowPool({
-  enableProfiling: true,
-  logLevel: "info"
+  enableProfiling: true
 });
 
 const genWorkflow = Workflow.fromAugmented(GenerationGraph);

@@ -1,17 +1,17 @@
 import { Workflow } from "./workflow.js";
 import { JobStateRegistry } from "./job-state-registry.js";
 import { ClientRegistry } from "./client-registry.js";
-import { Logger } from "./logger.js";
 import { QueueJob } from "./interfaces.js";
+import { PoolEventManager } from "./pool-event-manager.js";
 export declare class JobQueueProcessor {
     private jobs;
     private clientRegistry;
-    private logger;
+    private events;
     queue: Array<QueueJob>;
     workflowHash: string;
     isProcessing: boolean;
     maxAttempts: number;
-    constructor(stateRegistry: JobStateRegistry, clientRegistry: ClientRegistry, workflowHash: string, logger: Logger);
+    constructor(stateRegistry: JobStateRegistry, clientRegistry: ClientRegistry, workflowHash: string, events: PoolEventManager);
     enqueueJob(newJobId: string, workflow: Workflow): Promise<void>;
     processQueue(): Promise<void>;
     private applyAutoSeed;
