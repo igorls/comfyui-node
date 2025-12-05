@@ -97,8 +97,7 @@ describe("ComfyApi client behavior", () => {
     const listener = (ev: any) => calls.push(ev);
     const off = api.on("log" as any, listener);
     off();
-    api.removeAllListeners();
-    // We expect at most one call (the initial 'on' logs), and no new entries after off/removeAll
+    // We expect at most one call (the initial 'on' logs), and no new entries after off
     expect(calls.length).toBeLessThanOrEqual(1);
   });
 
