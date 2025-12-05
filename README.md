@@ -62,6 +62,7 @@ for (const img of (result.images?.images || [])) {
 ### Multi-Instance Pooling
 
 - **[WorkflowPool Documentation](./docs/workflow-pool.md)** – Production-ready pooling with health checks, profiling, and timeout protection
+- **[Event-Based Logging](./docs/logging.md)** – Guide to the new event-based logging system (v1.6.7+)
 - **[Connection Stability Guide](./docs/websocket-idle-issue.md)** – WebSocket health check implementation details
 - **[Hash-Based Routing Guide](./docs/hash-routing-guide.md)** – Workflow-level failure tracking and intelligent failover
 - **[Profiling Guide](./docs/profiling.md)** – Automatic per-node performance profiling (v1.5.0+)

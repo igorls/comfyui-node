@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.7
+
+### Changed
+
+- **Event-Based Logging System** – Replaced direct console logging with a structured event-based system
+  - Refactored `MultiWorkflowPool`, `JobQueueProcessor`, and `ClientRegistry` to emit log events
+  - Removed internal `Logger` class implementation (`src/multipool/logger.ts`)
+  - Improved integration capability by allowing consumers to handle log events programmatically
+
 ## 1.6.6
 
 ### Updated
