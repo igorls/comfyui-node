@@ -235,11 +235,7 @@ describe("Connection State and Reconnection", () => {
       const event = new CustomEvent("reconnection_failed", { detail: null });
 
       // Should not throw
-      try {
-        api.dispatchEvent(event);
-      } catch (e) {
-        // ignore
-      }
+      expect(() => api.dispatchEvent(event)).not.toThrow();
 
       // Wait for async callback
       await new Promise((resolve) => setTimeout(resolve, 10));
