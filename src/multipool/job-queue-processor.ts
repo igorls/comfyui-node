@@ -24,13 +24,13 @@ export class JobQueueProcessor {
     this.workflowHash = workflowHash;
   }
 
-  async enqueueJob(newJobId: string, workflow: Workflow) {
+  async enqueueJob(newJobId: string, workflow: Workflow, priorityOverrides?: Map<string, number>) {
     // validate job state on registry
     const jobStatus = this.jobs.getJobStatus(newJobId);
     if (jobStatus !== "pending") {
       throw new Error(`Cannot enqueue job ${newJobId} with status ${jobStatus}`);
     }
-    this.queue.push({ jobId: newJobId, workflow, attempts: 1 });
+    this.queue.push({ jobId: newJobId, workflow, attempts: 1, priorityOverrides });
     this.processQueue().catch(reason => {
       this.events.emitEvent({ type: "error", payload: { message: `Error processing job queue for workflow hash ${this.workflowHash}`, error: reason } });
     });
@@ -52,9 +52,9 @@ export class JobQueueProcessor {
       let preferredClient: EnhancedClient | null;
       // If this processor is for the general queue, try to find a preferred client
       if (this.workflowHash === "general") {
-        preferredClient = await this.clientRegistry.getOptimalIdleClient(nextJob.workflow);
+        preferredClient = await this.clientRegistry.getOptimalIdleClient(nextJob.workflow, nextJob.priorityOverrides);
       } else {
-        preferredClient = this.clientRegistry.getOptimalClient(nextJob.workflow);
+        preferredClient = this.clientRegistry.getOptimalClient(nextJob.workflow, nextJob.priorityOverrides);
       }
       if (!preferredClient) {
         this.events.emitEvent({ type: "debug", payload: `No idle clients available for job ${nextJob.jobId}.` });

@@ -16,7 +16,7 @@ export { isModelLoadingNode, workflowContainsModelLoading, getModelLoadingNodes,
 export type { StorageType } from "./utils/model-loading.js";
 export { MultiWorkflowPool } from "./multipool/index.js";
 export { Workflow as MultiWorkflow } from "./multipool/workflow.js";
-export type { PoolEvent, ClientEventPayload, MultiWorkflowPoolOptions } from "./multipool/interfaces.js";
+export type { PoolEvent, ClientEventPayload, MultiWorkflowPoolOptions, SubmitJobOptions } from "./multipool/interfaces.js";
 export type { JobResults, JobState, JobStatus as MultiJobStatus, JobResultStatus } from "./multipool/interfaces.js";
 export type { JobProfileStats as MultiJobProfileStats } from "./multipool/interfaces.js";
 //# sourceMappingURL=index.d.ts.map

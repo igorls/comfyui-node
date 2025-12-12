@@ -3,7 +3,7 @@ import { PoolEventManager } from "./pool-event-manager.js";
 import { JobStateRegistry } from "./job-state-registry.js";
 import { JobQueueProcessor } from "./job-queue-processor.js";
 import { Workflow } from "./workflow.js";
-import { MultiWorkflowPoolOptions, PoolEvent, ClientEventPayload, EnhancedClient, JobResults } from "./interfaces.js";
+import { MultiWorkflowPoolOptions, PoolEvent, ClientEventPayload, EnhancedClient, JobResults, SubmitJobOptions } from "./interfaces.js";
 
 /**
  * MultiWorkflowPool class to manage heterogeneous clusters of ComfyUI workers with different workflow capabilities.
@@ -149,7 +149,7 @@ export class MultiWorkflowPool {
     this.clientRegistry.removeClient(clientUrl);
   }
 
-  async submitJob(workflow: Workflow<any>) {
+  async submitJob(workflow: Workflow<any>, options?: SubmitJobOptions) {
     let workflowHash = workflow.structureHash;
     if (!workflowHash) {
       workflow.updateHash();
@@ -169,8 +169,18 @@ export class MultiWorkflowPool {
       throw new Error("Failed to create or retrieve job queue for workflow.");
     }
 
+    // Normalize priorityOverrides to Map if Record was provided
+    let priorityOverrides: Map<string, number> | undefined;
+    if (options?.priorityOverrides) {
+      if (options.priorityOverrides instanceof Map) {
+        priorityOverrides = options.priorityOverrides;
+      } else {
+        priorityOverrides = new Map(Object.entries(options.priorityOverrides));
+      }
+    }
+
     const newJobId = this.jobRegistry.addJob(workflow);
-    await queue.enqueueJob(newJobId, workflow);
+    await queue.enqueueJob(newJobId, workflow, priorityOverrides);
     return newJobId;
   }
 
@@ -222,11 +232,13 @@ export class MultiWorkflowPool {
         this.events.emitEvent({ type: "warn", payload: `[${event.type}@${client.nodeName}] Invalid status event structure.` });
         return;
       }
-      this.events.emitEvent({ type: "client", payload: {
-        clientName: client.nodeName,
-        event: event.type,
-        message: `Queue Remaining: ${event.detail.status.exec_info.queue_remaining}`
-      } });
+      this.events.emitEvent({
+        type: "client", payload: {
+          clientName: client.nodeName,
+          event: event.type,
+          message: `Queue Remaining: ${event.detail.status.exec_info.queue_remaining}`
+        }
+      });
       // Update client state based on status
       if (event.detail.status.exec_info.queue_remaining === 0) {
         client.state = "idle";

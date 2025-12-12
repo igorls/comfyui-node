@@ -48,7 +48,7 @@ export class ClientRegistry {
         }
         return comfyApi.getQueue();
     }
-    getOptimalClient(workflow) {
+    getOptimalClient(workflow, priorityOverrides) {
         let workflowHash = workflow.structureHash;
         if (!workflowHash) {
             workflow.updateHash();
@@ -72,10 +72,10 @@ export class ClientRegistry {
             return null;
         }
         this.events.emitEvent({ type: "debug", payload: `Suitable clients for workflow ${workflowHash}: ${suitableClients.map(value => value.nodeName).join(",")}` });
-        // sort suitable clients by priority
+        // sort suitable clients by priority (use override if provided, otherwise static priority)
         suitableClients.sort((a, b) => {
-            const priorityA = a.priority ?? 0;
-            const priorityB = b.priority ?? 0;
+            const priorityA = priorityOverrides?.get(a.url) ?? a.priority ?? 0;
+            const priorityB = priorityOverrides?.get(b.url) ?? b.priority ?? 0;
             return priorityB - priorityA; // higher priority first
         });
         return suitableClients.length > 0 ? suitableClients[0] : null;
@@ -85,7 +85,7 @@ export class ClientRegistry {
         return clientSet !== undefined && clientSet.size > 0;
     }
     // Get an optimal idle client for a given workflow (used for general queue)
-    async getOptimalIdleClient(workflow) {
+    async getOptimalIdleClient(workflow, priorityOverrides) {
         this.events.emitEvent({ type: "debug", payload: `Searching for idle clients for workflow ${workflow.structureHash}...` });
         // We can infer model capabilities from workflow and try to get the best idle client, based on other workflow affinities, for now lets pick any idle client
         const idleClients = [];
@@ -100,10 +100,10 @@ export class ClientRegistry {
             }
         }
         this.events.emitEvent({ type: "debug", payload: `Idle clients available: ${idleClients.map(value => value.nodeName).join(",")}` });
-        // sort idle clients by priority
+        // sort idle clients by priority (use override if provided, otherwise static priority)
         idleClients.sort((a, b) => {
-            const priorityA = a.priority ?? 0;
-            const priorityB = b.priority ?? 0;
+            const priorityA = priorityOverrides?.get(a.url) ?? a.priority ?? 0;
+            const priorityB = priorityOverrides?.get(b.url) ?? b.priority ?? 0;
             return priorityB - priorityA; // higher priority first
         });
         return idleClients.length > 0 ? idleClients[0] : null;

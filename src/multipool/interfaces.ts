@@ -110,11 +110,24 @@ export interface JobProfileStats {
   };
 }
 
+/**
+ * Options for submitting a job to the pool
+ */
+export interface SubmitJobOptions {
+  /**
+   * Per-client priority overrides for this job submission.
+   * Key: client URL, Value: priority number (higher = more preferred)
+   * These overrides take precedence over the static priorities set at addClient() time.
+   */
+  priorityOverrides?: Map<string, number> | Record<string, number>;
+}
 
 export interface QueueJob {
   jobId: string;
   workflow: Workflow;
   attempts: number;
+  /** Priority overrides for client selection */
+  priorityOverrides?: Map<string, number>;
 }
 
 export type JobStatus = "pending" | "assigned" | "running" | "completed" | "failed" | "canceled" | "no_clients";

@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.7.0
+
+### Added
+
+- **Per-Job Priority Overrides for MultiWorkflowPool** – Dynamic client selection based on workflow type
+  - `submitJob(workflow, options?)` now accepts optional `SubmitJobOptions` with `priorityOverrides`
+  - Priority overrides are a `Map<string, number>` or `Record<string, number>` mapping client URLs to priorities
+  - Higher priority values = more preferred for job assignment
+  - Overrides take precedence over static priorities set at `addClient()` time
+  - Enables workflow-specific routing (e.g., route `qwen-*` workflows to GPU-rich hosts, `t2i-*` to dedicated inference servers)
+
+**Usage:**
+
+```typescript
+const pool = new MultiWorkflowPool();
+pool.addClient("http://server1:8188", { priority: 50 });
+pool.addClient("http://server2:8188", { priority: 50 });
+
+// Route this specific T2I workflow to server2 with higher priority
+await pool.submitJob(workflow, {
+  priorityOverrides: {
+    "http://server1:8188": 10,  // Lower priority for this job
+    "http://server2:8188": 100  // Preferred for this job
+  }
+});
+```
+
+**New Types:**
+
+- `SubmitJobOptions` – Options interface for `submitJob()`
+  - `priorityOverrides?: Map<string, number> | Record<string, number>`
+
+**Files Changed:**
+
+- `src/multipool/interfaces.ts` – Added `SubmitJobOptions` interface, updated `QueueJob` type
+- `src/multipool/multi-workflow-pool.ts` – Updated `submitJob()` signature
+- `src/multipool/job-queue-processor.ts` – Pass overrides to client selection
+- `src/multipool/client-registry.ts` – Use overrides in sorting logic
+- `src/index.ts` – Export `SubmitJobOptions` type
+
 ## 1.6.7
 
 ### Changed

@@ -41,7 +41,7 @@ describe("JobQueueProcessor", () => {
 
   it("should enqueue a job and trigger processing", async () => {
     const processor = createProcessor();
-    const processQueueSpy = jest.spyOn(processor, "processQueue").mockImplementation(async () => {});
+    const processQueueSpy = jest.spyOn(processor, "processQueue").mockImplementation(async () => { });
 
     await processor.enqueueJob("job-1", new Workflow({}));
 
@@ -53,7 +53,7 @@ describe("JobQueueProcessor", () => {
   it("should not process queue if already processing", async () => {
     const processor = createProcessor();
     processor.isProcessing = true;
-    
+
     await processor.processQueue();
 
     expect(eventsMock.emitEvent).toHaveBeenCalledWith({ type: "debug", payload: `Job queue for workflow hash test-hash is already being processed, skipping.` });
@@ -79,7 +79,7 @@ describe("JobQueueProcessor", () => {
 
     await processor.processQueue();
 
-    expect(clientRegistryMock.getOptimalClient).toHaveBeenCalledWith(workflow);
+    expect(clientRegistryMock.getOptimalClient).toHaveBeenCalledWith(workflow, undefined);
     expect(jobStateRegistryMock.setJobStatus).toHaveBeenCalledWith(jobId, "assigned", clientMock.url);
     expect(workflow.uploadAssets).toHaveBeenCalledWith(clientMock.api);
     expect(clientMock.api.ext.queue.queuePrompt).toHaveBeenCalled();

@@ -14,9 +14,9 @@ export declare class ClientRegistry {
     }): void;
     removeClient(clientUrl: string): void;
     getQueueStatus(clientUrl: string): Promise<import("../types/api.js").QueueResponse>;
-    getOptimalClient(workflow: Workflow): EnhancedClient | null;
+    getOptimalClient(workflow: Workflow, priorityOverrides?: Map<string, number>): EnhancedClient | null;
     hasClientsForWorkflow(workflowHash: string): boolean;
-    getOptimalIdleClient(workflow: Workflow): Promise<EnhancedClient | null>;
+    getOptimalIdleClient(workflow: Workflow, priorityOverrides?: Map<string, number>): Promise<EnhancedClient | null>;
     private checkClientQueueState;
     markClientIncompatibleWithWorkflow(url: string, structureHash: string | undefined): void;
     getAllEligibleClientsForWorkflow(workflow: Workflow): EnhancedClient[];

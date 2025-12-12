@@ -60,7 +60,7 @@ describe("JobQueueProcessor", () => {
         clientRegistryMock.getOptimalClient.mockReturnValue(clientMock);
         processor.queue.push({ jobId, workflow, attempts: 1 });
         await processor.processQueue();
-        expect(clientRegistryMock.getOptimalClient).toHaveBeenCalledWith(workflow);
+        expect(clientRegistryMock.getOptimalClient).toHaveBeenCalledWith(workflow, undefined);
         expect(jobStateRegistryMock.setJobStatus).toHaveBeenCalledWith(jobId, "assigned", clientMock.url);
         expect(workflow.uploadAssets).toHaveBeenCalledWith(clientMock.api);
         expect(clientMock.api.ext.queue.queuePrompt).toHaveBeenCalled();

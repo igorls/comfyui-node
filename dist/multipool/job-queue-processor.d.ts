@@ -12,7 +12,7 @@ export declare class JobQueueProcessor {
     isProcessing: boolean;
     maxAttempts: number;
     constructor(stateRegistry: JobStateRegistry, clientRegistry: ClientRegistry, workflowHash: string, events: PoolEventManager);
-    enqueueJob(newJobId: string, workflow: Workflow): Promise<void>;
+    enqueueJob(newJobId: string, workflow: Workflow, priorityOverrides?: Map<string, number>): Promise<void>;
     processQueue(): Promise<void>;
     private applyAutoSeed;
     private runJobOnClient;

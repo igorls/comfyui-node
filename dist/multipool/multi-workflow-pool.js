@@ -123,7 +123,7 @@ export class MultiWorkflowPool {
     removeClient(clientUrl) {
         this.clientRegistry.removeClient(clientUrl);
     }
-    async submitJob(workflow) {
+    async submitJob(workflow, options) {
         let workflowHash = workflow.structureHash;
         if (!workflowHash) {
             workflow.updateHash();
@@ -141,8 +141,18 @@ export class MultiWorkflowPool {
         if (!queue) {
             throw new Error("Failed to create or retrieve job queue for workflow.");
         }
+        // Normalize priorityOverrides to Map if Record was provided
+        let priorityOverrides;
+        if (options?.priorityOverrides) {
+            if (options.priorityOverrides instanceof Map) {
+                priorityOverrides = options.priorityOverrides;
+            }
+            else {
+                priorityOverrides = new Map(Object.entries(options.priorityOverrides));
+            }
+        }
         const newJobId = this.jobRegistry.addJob(workflow);
-        await queue.enqueueJob(newJobId, workflow);
+        await queue.enqueueJob(newJobId, workflow, priorityOverrides);
         return newJobId;
     }
     getJobStatus(jobId) {
@@ -188,11 +198,13 @@ export class MultiWorkflowPool {
                 this.events.emitEvent({ type: "warn", payload: `[${event.type}@${client.nodeName}] Invalid status event structure.` });
                 return;
             }
-            this.events.emitEvent({ type: "client", payload: {
+            this.events.emitEvent({
+                type: "client", payload: {
                     clientName: client.nodeName,
                     event: event.type,
                     message: `Queue Remaining: ${event.detail.status.exec_info.queue_remaining}`
-                } });
+                }
+            });
             // Update client state based on status
             if (event.detail.status.exec_info.queue_remaining === 0) {
                 client.state = "idle";
