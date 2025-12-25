@@ -60,10 +60,12 @@ export class ClientRegistry {
         // Filter clients based on workflow affinity
         const suitableClients = [];
         for (const client of this.clients.values()) {
+            const hasAffinity = client.workflowAffinity && client.workflowAffinity.has(workflowHash);
+            this.events.emitEvent({ type: "debug", payload: `[getOptimalClient] Client ${client.nodeName}: state=${client.state}, hasAffinity=${hasAffinity}, priority=${client.priority}` });
             if (client.state !== "idle") {
                 continue;
             }
-            if (client.workflowAffinity && client.workflowAffinity.has(workflowHash)) {
+            if (hasAffinity) {
                 suitableClients.push(client);
             }
         }
@@ -76,6 +78,7 @@ export class ClientRegistry {
         suitableClients.sort((a, b) => {
             const priorityA = priorityOverrides?.get(a.url) ?? a.priority ?? 0;
             const priorityB = priorityOverrides?.get(b.url) ?? b.priority ?? 0;
+            this.events.emitEvent({ type: "debug", payload: `[getOptimalClient] Comparing ${a.nodeName}(${priorityA}) vs ${b.nodeName}(${priorityB})` });
             return priorityB - priorityA; // higher priority first
         });
         return suitableClients.length > 0 ? suitableClients[0] : null;
