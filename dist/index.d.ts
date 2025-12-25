@@ -19,4 +19,6 @@ export { Workflow as MultiWorkflow } from "./multipool/workflow.js";
 export type { PoolEvent, ClientEventPayload, MultiWorkflowPoolOptions, SubmitJobOptions } from "./multipool/interfaces.js";
 export type { JobResults, JobState, JobStatus as MultiJobStatus, JobResultStatus } from "./multipool/interfaces.js";
 export type { JobProfileStats as MultiJobProfileStats } from "./multipool/interfaces.js";
+export { JobsFeature } from "./features/jobs.js";
+export { JobStatus, type Job, type JobsListResponse, type JobsListOptions, type JobsPagination, type JobOutputPreview, type JobExecutionError, type JobWorkflow } from "./types/api.js";
 //# sourceMappingURL=index.d.ts.map

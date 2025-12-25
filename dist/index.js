@@ -10,4 +10,7 @@ export { isModelLoadingNode, workflowContainsModelLoading, getModelLoadingNodes,
 // MultiWorkflowPool exports
 export { MultiWorkflowPool } from "./multipool/index.js";
 export { Workflow as MultiWorkflow } from "./multipool/workflow.js";
+// Jobs API exports (ComfyUI v0.6.0+)
+export { JobsFeature } from "./features/jobs.js";
+export { JobStatus } from "./types/api.js";
 //# sourceMappingURL=index.js.map

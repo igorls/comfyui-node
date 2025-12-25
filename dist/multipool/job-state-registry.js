@@ -154,6 +154,10 @@ export class JobStateRegistry {
                         }
                     }
                 }
+                // Include encrypted images captured via WebSocket (avoids slow history fetch)
+                if (jobState.encryptedImages && jobState.encryptedImages.length > 0) {
+                    results.encryptedImages = jobState.encryptedImages;
+                }
                 // Add profiler stats if available
                 if (jobState.profiler) {
                     results.profileStats = jobState.profiler.getStats();
@@ -189,6 +193,24 @@ export class JobStateRegistry {
         if (state.prompt_id === prompt_id) {
             state.images = [...images];
             return;
+        }
+    }
+    /**
+     * Store encrypted images from EncryptedSaveImage nodes captured via WebSocket.
+     * This enables direct delivery without fetching from /history API.
+     */
+    addJobEncryptedImages(prompt_id, encryptedImages) {
+        const state = this.jobs.get(this.promptIdToJobId.get(prompt_id) || "");
+        if (!state) {
+            console.warn(`No job state found for prompt_id ${prompt_id} when adding encrypted images.`);
+            return;
+        }
+        if (state.prompt_id === prompt_id) {
+            // Append to existing encrypted images (multiple nodes may emit)
+            if (!state.encryptedImages) {
+                state.encryptedImages = [];
+            }
+            state.encryptedImages.push(...encryptedImages);
         }
     }
     removeJobFromQueue(jobState) {

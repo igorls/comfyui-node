@@ -1,6 +1,68 @@
 # Changelog
 
+## 1.8.0
+
+### Added
+
+- **ComfyUI v0.6.0 Compatibility** – Full support for the new unified Jobs API
+  - New `JobsFeature` accessible via `api.ext.jobs`
+  - `getJobs(options?)` – List all jobs with filtering, sorting, and pagination
+  - `getJob(jobId)` – Get single job details with full outputs
+  - Convenience methods: `getRunningJobs()`, `getPendingJobs()`, `getCompletedJobs()`, `getFailedJobs()`
+  - `getExecutionDuration(job)` – Calculate job execution time
+
+**New Types:**
+
+- `JobStatus` enum – `PENDING`, `IN_PROGRESS`, `COMPLETED`, `FAILED`
+- `Job` interface – Unified job representation with status, timing, outputs, and workflow data
+- `JobsListResponse` – Paginated job list response
+- `JobsListOptions` – Query options for filtering and pagination
+- `JobOutputPreview` – Preview output metadata for list views
+- `JobExecutionError` – Error details for failed jobs
+- `JobWorkflow` – Workflow data in detailed job responses
+
+**Example Usage:**
+
+```typescript
+import { ComfyApi, JobStatus } from "comfyui-node";
+
+const api = new ComfyApi("http://localhost:8188");
+await api.init();
+
+// Check if Jobs API is supported (requires ComfyUI v0.6.0+)
+const supported = await api.ext.jobs.checkSupported();
+
+if (supported) {
+  // List recent completed jobs
+  const { jobs, pagination } = await api.ext.jobs.getJobs({
+    status: JobStatus.COMPLETED,
+    limit: 10,
+    sort_order: "desc"
+  });
+
+  // Get specific job with full details
+  const job = await api.ext.jobs.getJob("prompt-id-here");
+  if (job && job.status === JobStatus.COMPLETED) {
+    console.log(`Duration: ${api.ext.jobs.getExecutionDuration(job)}ms`);
+  }
+}
+```
+
+**Files Changed:**
+
+- `src/types/api.ts` – Added Jobs API type definitions
+- `src/features/jobs.ts` – New JobsFeature module
+- `src/client.ts` – Registered JobsFeature in ext namespace
+- `src/index.ts` – Exported Jobs API types and feature
+
+**Backward Compatibility:**
+
+- All existing APIs remain unchanged
+- Legacy `/queue` and `/history` endpoints still work
+- Jobs API is optional and gracefully degrades on older ComfyUI versions
+
 ## 1.7.0
+
 
 ### Added
 

@@ -13,6 +13,7 @@ import { ModelFeature } from "./features/model.js";
 import { TerminalFeature } from "./features/terminal.js";
 import { MiscFeature } from "./features/misc.js";
 import { FeatureFlagsFeature } from "./features/feature-flags.js";
+import { JobsFeature } from "./features/jobs.js";
 import { WorkflowJob, WorkflowResult } from "./workflow.js";
 /**
  * Connection state of the WebSocket client.
@@ -104,6 +105,8 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         readonly misc: MiscFeature;
         /** Server advertised feature flags */
         readonly featureFlags: FeatureFlagsFeature;
+        /** Unified Jobs API (ComfyUI v0.6.0+) */
+        readonly jobs: JobsFeature;
     };
     /** Helper type guard shaping expected feature API */
     private asFeature;

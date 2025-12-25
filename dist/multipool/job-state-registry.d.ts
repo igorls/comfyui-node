@@ -19,6 +19,15 @@ export declare class JobStateRegistry {
     private processQueue;
     waitForResults(jobId: string): Promise<JobResults>;
     addJobImages(prompt_id: string, images: ImageInfo[]): void;
+    /**
+     * Store encrypted images from EncryptedSaveImage nodes captured via WebSocket.
+     * This enables direct delivery without fetching from /history API.
+     */
+    addJobEncryptedImages(prompt_id: string, encryptedImages: Array<{
+        encrypted_base64: string;
+        index?: number;
+        saved_path?: string | null;
+    }>): void;
     private removeJobFromQueue;
     attachJobProgressListener(jobId: string, progressListener: (progress: {
         value: number;

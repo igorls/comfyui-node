@@ -130,19 +130,19 @@ export interface NodeDef {
   input: {
     required: {
       [key: string]:
-        | [string[], { tooltip?: string }]
-        | [string, { tooltip?: string }]
-        | TStringInput
-        | TBoolInput
-        | TNumberInput;
+      | [string[], { tooltip?: string }]
+      | [string, { tooltip?: string }]
+      | TStringInput
+      | TBoolInput
+      | TNumberInput;
     };
     optional?: {
       [key: string]:
-        | [string[], { tooltip?: string }]
-        | [string, { tooltip?: string }]
-        | TStringInput
-        | TBoolInput
-        | TNumberInput;
+      | [string[], { tooltip?: string }]
+      | [string, { tooltip?: string }]
+      | TStringInput
+      | TBoolInput
+      | TNumberInput;
     };
     hidden: {
       [key: string]: string;
@@ -232,4 +232,128 @@ export interface ModelFileListResponse {
  */
 export interface ModelFoldersResponse {
   folders: ModelFolder[];
+}
+
+// ============================================================================
+// Jobs API Types (ComfyUI v0.6.0+)
+// ============================================================================
+
+/**
+ * Job status constants matching ComfyUI's JobStatus
+ * @since ComfyUI v0.6.0
+ */
+export enum JobStatus {
+  PENDING = "pending",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed",
+  FAILED = "failed"
+}
+
+/**
+ * Preview output from a job, enriched with node metadata
+ * @since ComfyUI v0.6.0
+ */
+export interface JobOutputPreview {
+  filename: string;
+  subfolder?: string;
+  type?: string;
+  format?: string;
+  /** Node ID that produced this output */
+  nodeId: string;
+  /** Media type: 'images', 'video', 'audio', 'files', etc. */
+  mediaType: string;
+}
+
+/**
+ * Error information for failed jobs
+ * @since ComfyUI v0.6.0
+ */
+export interface JobExecutionError {
+  node_id?: string;
+  node_type?: string;
+  exception_message?: string;
+  exception_type?: string;
+  traceback?: string[];
+  timestamp?: number;
+}
+
+/**
+ * Workflow data included in detailed job responses
+ * @since ComfyUI v0.6.0
+ */
+export interface JobWorkflow {
+  prompt: object;
+  extra_data: object;
+}
+
+/**
+ * Unified job representation from the Jobs API
+ * @since ComfyUI v0.6.0
+ */
+export interface Job {
+  /** Unique job/prompt ID */
+  id: string;
+  /** Current job status */
+  status: JobStatus | string;
+  /** Queue priority (lower = higher priority) */
+  priority?: number;
+  /** Job creation timestamp (milliseconds) */
+  create_time?: number;
+  /** Execution start timestamp (milliseconds) */
+  execution_start_time?: number;
+  /** Execution end timestamp (milliseconds) */
+  execution_end_time?: number;
+  /** Error details if status is 'failed' */
+  execution_error?: JobExecutionError;
+  /** Number of output items */
+  outputs_count?: number;
+  /** Preview output for list views */
+  preview_output?: JobOutputPreview;
+  /** Workflow ID if available */
+  workflow_id?: string;
+  /** Full outputs (only in single job response with include_outputs) */
+  outputs?: OutputData;
+  /** Full execution status (only in single job response) */
+  execution_status?: StatusData;
+  /** Full workflow data (only in single job response) */
+  workflow?: JobWorkflow;
+}
+
+/**
+ * Pagination info in jobs list response
+ * @since ComfyUI v0.6.0
+ */
+export interface JobsPagination {
+  offset: number;
+  limit: number | null;
+  total: number;
+  has_more: boolean;
+}
+
+/**
+ * Response from GET /api/jobs
+ * @since ComfyUI v0.6.0
+ */
+export interface JobsListResponse {
+  jobs: Job[];
+  pagination: JobsPagination;
+}
+
+/**
+ * Query options for listing jobs
+ * @since ComfyUI v0.6.0
+ */
+export interface JobsListOptions {
+  /** Filter by status (can be multiple) */
+  status?: JobStatus | JobStatus[];
+  /** Filter by workflow ID */
+  workflow_id?: string;
+  /** Sort field: 'created_at' (default) or 'execution_duration' */
+  sort_by?: "created_at" | "execution_duration";
+  /** Sort order: 'asc' or 'desc' (default) */
+  sort_order?: "asc" | "desc";
+  /** Maximum number of items to return */
+  limit?: number;
+  /** Number of items to skip */
+  offset?: number;
 }

@@ -284,8 +284,13 @@ export class MultiWorkflowPool {
       const prompt_id = event.detail.prompt_id;
       if (prompt_id) {
         const output = event.detail.output as any;
+        // Standard images (e.g. PreviewImage, SaveImage)
         if (output && output.images) {
           this.jobRegistry.addJobImages(prompt_id, output.images);
+        }
+        // Encrypted images (EncryptedSaveImage node)
+        if (output && output.encrypted_images) {
+          this.jobRegistry.addJobEncryptedImages(prompt_id, output.encrypted_images);
         }
         this.events.emitEvent({ type: "debug", payload: `[${event.type}@${client.nodeName}] Node executed for prompt ID: ${prompt_id}` });
       } else {

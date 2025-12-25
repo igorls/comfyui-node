@@ -13,6 +13,7 @@ import { ModelFeature } from "./features/model.js";
 import { TerminalFeature } from "./features/terminal.js";
 import { MiscFeature } from "./features/misc.js";
 import { FeatureFlagsFeature } from "./features/feature-flags.js";
+import { JobsFeature } from "./features/jobs.js";
 import { runWebSocketReconnect } from "./utils/ws-reconnect.js";
 import { Workflow } from "./workflow.js";
 /**
@@ -92,7 +93,9 @@ export class ComfyApi extends TypedEventTarget {
         /** Misc endpoints (extensions list, embeddings) */
         misc: new MiscFeature(this),
         /** Server advertised feature flags */
-        featureFlags: new FeatureFlagsFeature(this)
+        featureFlags: new FeatureFlagsFeature(this),
+        /** Unified Jobs API (ComfyUI v0.6.0+) */
+        jobs: new JobsFeature(this)
     };
     /** Helper type guard shaping expected feature API */
     asFeature(obj) {

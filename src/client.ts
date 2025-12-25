@@ -25,6 +25,7 @@ import { ModelFeature } from "./features/model.js";
 import { TerminalFeature } from "./features/terminal.js";
 import { MiscFeature } from "./features/misc.js";
 import { FeatureFlagsFeature } from "./features/feature-flags.js";
+import { JobsFeature } from "./features/jobs.js";
 import { runWebSocketReconnect } from "./utils/ws-reconnect.js";
 import { Workflow, WorkflowJob, WorkflowResult } from "./workflow.js";
 
@@ -134,7 +135,9 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     /** Misc endpoints (extensions list, embeddings) */
     misc: new MiscFeature(this),
     /** Server advertised feature flags */
-    featureFlags: new FeatureFlagsFeature(this)
+    featureFlags: new FeatureFlagsFeature(this),
+    /** Unified Jobs API (ComfyUI v0.6.0+) */
+    jobs: new JobsFeature(this)
   } as const;
 
   /** Helper type guard shaping expected feature API */
@@ -654,7 +657,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       // Avoid stacking multiple controllers concurrently
       try {
         (this as any)._reconnectController.abort();
-      } catch {}
+      } catch { }
     }
     this._connectionState = "reconnecting";
     (this as any)._reconnectController = runWebSocketReconnect(this, () => this.createSocket(true), {
@@ -672,7 +675,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   public abortReconnect() {
     try {
       (this as any)._reconnectController?.abort();
-    } catch {}
+    } catch { }
   }
 
   private resetLastActivity() {
@@ -720,7 +723,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   private _decodePreviewWithMetadata(u8: Uint8Array, payloadOffset: number): { blob: Blob; metadata: any } | null {
     try {
       if (u8.byteLength < payloadOffset + 4) return null;
-    } catch {}
+    } catch { }
     // Re-parse with explicit big-endian
     try {
       const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
@@ -798,7 +801,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         (listeners[evt] || []).forEach((fn) => {
           try {
             fn(...args);
-          } catch {}
+          } catch { }
         });
       // Attempt to tap into resolution
       job.then(

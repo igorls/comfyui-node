@@ -143,6 +143,8 @@ export interface JobState {
   resolver: ((results: JobResults) => void) | null;
   resultsPromise?: Promise<JobResults>;
   images?: ImageInfo[];
+  /** Encrypted images captured from EncryptedSaveImage nodes via WebSocket */
+  encryptedImages?: Array<{ encrypted_base64: string; index?: number; saved_path?: string | null }>;
   onProgress?: (progress: any) => void;
   onPreview?: (preview: any) => void;
   profiler?: JobProfiler;
@@ -153,6 +155,8 @@ export interface JobResults {
   jobId: string;
   prompt_id: string;
   images: string[];
+  /** Encrypted images from EncryptedSaveImage nodes (WebSocket delivery) */
+  encryptedImages?: Array<{ encrypted_base64: string; index?: number; saved_path?: string | null }>;
   error?: any;
   profileStats?: JobProfileStats;
 }

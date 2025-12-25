@@ -36,12 +36,12 @@ export class JobStateRegistry {
       resolver,
       resultsPromise
     };
-    
+
     // Initialize profiler if enabled
     if (this.pool.options.enableProfiling) {
       jobState.profiler = new JobProfiler(Date.now(), workflow.toJSON());
     }
-    
+
     this.jobs.set(jobId, jobState);
     return jobId;
   }
@@ -145,7 +145,7 @@ export class JobStateRegistry {
     }
     jobState.prompt_id = prompt_id;
     this.promptIdToJobId.set(prompt_id, jobId);
-    
+
     // Notify profiler of execution start
     if (jobState.profiler) {
       jobState.profiler.onExecutionStart(prompt_id);
@@ -159,12 +159,12 @@ export class JobStateRegistry {
     }
     if (jobState.prompt_id === prompt_id) {
       jobState.status = "completed";
-      
+
       // Notify profiler of completion
       if (jobState.profiler) {
         jobState.profiler.onExecutionComplete();
       }
-      
+
       if (jobState.resolver) {
         const results: JobResults = {
           status: "completed",
@@ -184,7 +184,12 @@ export class JobStateRegistry {
             }
           }
         }
-        
+
+        // Include encrypted images captured via WebSocket (avoids slow history fetch)
+        if (jobState.encryptedImages && jobState.encryptedImages.length > 0) {
+          results.encryptedImages = jobState.encryptedImages;
+        }
+
         // Add profiler stats if available
         if (jobState.profiler) {
           results.profileStats = jobState.profiler.getStats();
@@ -227,6 +232,25 @@ export class JobStateRegistry {
     }
   }
 
+  /**
+   * Store encrypted images from EncryptedSaveImage nodes captured via WebSocket.
+   * This enables direct delivery without fetching from /history API.
+   */
+  addJobEncryptedImages(prompt_id: string, encryptedImages: Array<{ encrypted_base64: string; index?: number; saved_path?: string | null }>) {
+    const state = this.jobs.get(this.promptIdToJobId.get(prompt_id) || "");
+    if (!state) {
+      console.warn(`No job state found for prompt_id ${prompt_id} when adding encrypted images.`);
+      return;
+    }
+    if (state.prompt_id === prompt_id) {
+      // Append to existing encrypted images (multiple nodes may emit)
+      if (!state.encryptedImages) {
+        state.encryptedImages = [];
+      }
+      state.encryptedImages.push(...encryptedImages);
+    }
+  }
+
   private removeJobFromQueue(jobState: JobState) {
     let queue = this.pool.queues.get(jobState.workflow.structureHash || "general");
     if (queue) {
@@ -265,7 +289,7 @@ export class JobStateRegistry {
     if (state.onProgress && state.prompt_id === prompt_id) {
       state.onProgress({ value, max });
     }
-    
+
     // Notify profiler
     if (state.profiler && nodeId !== undefined) {
       state.profiler.onProgress(nodeId, value, max);
@@ -289,12 +313,12 @@ export class JobStateRegistry {
       throw new Error(`Job with ID ${jobId} not found.`);
     }
     jobState.status = "failed";
-    
+
     // Notify profiler of completion (even on failure)
     if (jobState.profiler) {
       jobState.profiler.onExecutionComplete();
     }
-    
+
     if (jobState.resolver) {
       const results: JobResults = {
         status: "failed",
@@ -303,17 +327,17 @@ export class JobStateRegistry {
         images: [],
         error: bodyJSON
       };
-      
+
       // Add profiler stats even on failure
       if (jobState.profiler) {
         results.profileStats = jobState.profiler.getStats();
       }
-      
+
       jobState.resolver(results);
       jobState.resolver = null;
     }
   }
-  
+
   /**
    * Track node execution start for profiling
    */
@@ -323,7 +347,7 @@ export class JobStateRegistry {
       state.profiler.onNodeExecuting(nodeId);
     }
   }
-  
+
   /**
    * Track cached nodes for profiling
    */
