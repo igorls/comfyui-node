@@ -10,7 +10,9 @@ export class ClientRegistry {
         this.events = events;
     }
     addClient(clientUrl, options) {
-        const comfyApi = new ComfyApi(clientUrl);
+        // Use provided clientId or generate from hostname for consistent WebSocket event routing
+        const clientId = options?.clientId ?? new URL(clientUrl).hostname;
+        const comfyApi = new ComfyApi(clientUrl, clientId);
         const enhancedClient = {
             url: clientUrl,
             state: "idle",

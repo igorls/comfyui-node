@@ -11,6 +11,7 @@ export declare class ClientRegistry {
     addClient(clientUrl: string, options?: {
         workflowAffinity: Workflow[];
         priority?: number;
+        clientId?: string;
     }): void;
     removeClient(clientUrl: string): void;
     getQueueStatus(clientUrl: string): Promise<import("../types/api.js").QueueResponse>;

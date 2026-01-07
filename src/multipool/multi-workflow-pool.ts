@@ -140,10 +140,12 @@ export class MultiWorkflowPool {
     options?: {
       workflowAffinity: Workflow<any>[];
       priority?: number;
+      clientId?: string;
     }
   ) {
     this.clientRegistry.addClient(clientUrl, options);
   }
+
 
   removeClient(clientUrl: string) {
     this.clientRegistry.removeClient(clientUrl);

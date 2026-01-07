@@ -19,8 +19,10 @@ export class ClientRegistry {
     this.events = events;
   }
 
-  addClient(clientUrl: string, options?: { workflowAffinity: Workflow[], priority?: number }) {
-    const comfyApi = new ComfyApi(clientUrl);
+  addClient(clientUrl: string, options?: { workflowAffinity: Workflow[], priority?: number, clientId?: string }) {
+    // Use provided clientId or generate from hostname for consistent WebSocket event routing
+    const clientId = options?.clientId ?? new URL(clientUrl).hostname;
+    const comfyApi = new ComfyApi(clientUrl, clientId);
     const enhancedClient: EnhancedClient = {
       url: clientUrl,
       state: "idle",
@@ -29,6 +31,7 @@ export class ClientRegistry {
       api: comfyApi
     };
     if (options?.workflowAffinity) {
+
       enhancedClient.workflowAffinity = new Set<string>();
       for (const workflow of options.workflowAffinity) {
         let hash = workflow.structureHash;

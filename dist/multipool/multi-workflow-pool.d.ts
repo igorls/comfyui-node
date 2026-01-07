@@ -19,6 +19,7 @@ export declare class MultiWorkflowPool {
     addClient(clientUrl: string, options?: {
         workflowAffinity: Workflow<any>[];
         priority?: number;
+        clientId?: string;
     }): void;
     removeClient(clientUrl: string): void;
     submitJob(workflow: Workflow<any>, options?: SubmitJobOptions): Promise<string>;
