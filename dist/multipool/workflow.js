@@ -290,9 +290,9 @@ export class Workflow {
                 // Prefer just the filename; many LoadImage nodes look up by filename (subfolder managed server-side)
                 this.input(it.nodeId, it.inputName, it.fileName);
             }
-            // Clear pending once applied
-            this._pendingFolderFiles = [];
-            this._pendingImageInputs = [];
+            // NOTE: We intentionally do NOT clear pending arrays here.
+            // This allows retries to a different host to still have assets to upload.
+            // The upload API uses override mode, so duplicate uploads are idempotent.
         }
     }
 }

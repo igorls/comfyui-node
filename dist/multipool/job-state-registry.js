@@ -128,7 +128,10 @@ export class JobStateRegistry {
     completeJob(prompt_id) {
         const jobState = this.jobs.get(this.promptIdToJobId.get(prompt_id) || "");
         if (!jobState || !jobState.prompt_id) {
-            throw new Error(`No job state found for prompt_id ${prompt_id} when completing job.`);
+            // Gracefully handle jobs not tracked by this registry (e.g., recovered jobs, external jobs)
+            // This can happen when jobs are recovered via JobRecoveryManager or submitted externally
+            console.warn(`No job state found for prompt_id ${prompt_id} when completing job - job may have been recovered externally or is an external job.`);
+            return;
         }
         if (jobState.prompt_id === prompt_id) {
             jobState.status = "completed";
@@ -188,7 +191,8 @@ export class JobStateRegistry {
     addJobImages(prompt_id, images) {
         const state = this.jobs.get(this.promptIdToJobId.get(prompt_id) || "");
         if (!state) {
-            throw new Error(`No job state found for prompt_id ${prompt_id} when adding images.`);
+            console.warn(`No job state found for prompt_id ${prompt_id} when adding images.`);
+            return;
         }
         if (state.prompt_id === prompt_id) {
             state.images = [...images];
