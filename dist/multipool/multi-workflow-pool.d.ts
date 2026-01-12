@@ -1,3 +1,4 @@
+import { PoolEventManager } from "./pool-event-manager.js";
 import { JobQueueProcessor } from "./job-queue-processor.js";
 import { Workflow } from "./workflow.js";
 import { MultiWorkflowPoolOptions, PoolEvent, JobResults, SubmitJobOptions } from "./interfaces.js";
@@ -7,7 +8,7 @@ import { MultiWorkflowPoolOptions, PoolEvent, JobResults, SubmitJobOptions } fro
  * Zero polling is used; all operations are event driven. Maximizes responsiveness and scalability.
  */
 export declare class MultiWorkflowPool {
-    private events;
+    protected events: PoolEventManager;
     private clientRegistry;
     private jobRegistry;
     queues: Map<string, JobQueueProcessor>;
@@ -26,6 +27,11 @@ export declare class MultiWorkflowPool {
     getJobStatus(jobId: string): import("./interfaces.js").JobStatus;
     cancelJob(jobId: string): Promise<void>;
     attachEventHook(event: string, listener: (e: PoolEvent) => void): void;
+    detachEventHook(event: string, listener: (e: PoolEvent) => void): void;
+    /**
+     * Emit a pool event (for internal components like registries)
+     */
+    emitEvent(event: PoolEvent): void;
     private assertQueue;
     private attachHandlersToClient;
     private printStatusSummary;

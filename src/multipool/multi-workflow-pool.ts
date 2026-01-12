@@ -11,8 +11,8 @@ import { MultiWorkflowPoolOptions, PoolEvent, ClientEventPayload, EnhancedClient
  * Zero polling is used; all operations are event driven. Maximizes responsiveness and scalability.
  */
 export class MultiWorkflowPool {
-  // Event manager for handling pool events
-  private events: PoolEventManager;
+  // Event manager for handling pool events (protected for internal access by registries)
+  protected events: PoolEventManager;
 
   // Registry for managing clients in the pool
   private clientRegistry: ClientRegistry;
@@ -198,6 +198,19 @@ export class MultiWorkflowPool {
     if (event && listener) {
       this.events.attachHook(event, listener);
     }
+  }
+
+  detachEventHook(event: string, listener: (e: PoolEvent) => void) {
+    if (event && listener) {
+      this.events.detachHook(event, listener);
+    }
+  }
+
+  /**
+   * Emit a pool event (for internal components like registries)
+   */
+  emitEvent(event: PoolEvent) {
+    this.events.emitEvent(event);
   }
 
   // PRIVATE METHODS

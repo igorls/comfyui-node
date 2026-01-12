@@ -8,7 +8,7 @@ import { JobQueueProcessor } from "./job-queue-processor.js";
  * Zero polling is used; all operations are event driven. Maximizes responsiveness and scalability.
  */
 export class MultiWorkflowPool {
-    // Event manager for handling pool events
+    // Event manager for handling pool events (protected for internal access by registries)
     events;
     // Registry for managing clients in the pool
     clientRegistry;
@@ -165,6 +165,17 @@ export class MultiWorkflowPool {
         if (event && listener) {
             this.events.attachHook(event, listener);
         }
+    }
+    detachEventHook(event, listener) {
+        if (event && listener) {
+            this.events.detachHook(event, listener);
+        }
+    }
+    /**
+     * Emit a pool event (for internal components like registries)
+     */
+    emitEvent(event) {
+        this.events.emitEvent(event);
     }
     // PRIVATE METHODS
     assertQueue(workflowHash) {

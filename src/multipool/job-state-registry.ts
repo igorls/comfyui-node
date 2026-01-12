@@ -146,6 +146,16 @@ export class JobStateRegistry {
     jobState.prompt_id = prompt_id;
     this.promptIdToJobId.set(prompt_id, jobId);
 
+    // Emit event for external tracking (e.g., Redis-based multi-worker sync)
+    this.pool.emitEvent({
+      type: 'job:prompt_assigned',
+      payload: {
+        jobId,
+        promptId: prompt_id,
+        assignedClientUrl: jobState.assignedClientUrl,
+      },
+    });
+
     // Notify profiler of execution start
     if (jobState.profiler) {
       jobState.profiler.onExecutionStart(prompt_id);
