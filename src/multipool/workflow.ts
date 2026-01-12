@@ -121,15 +121,15 @@ type OutputMap = Record<string, any>;
 // These are intentionally minimal; users can still refine manually.
 type OutputShapeFor<C extends string> =
   C extends "SaveImage" | "SaveImageAdvanced" ? { images?: any[] } :
-    C extends "KSampler" ? { samples?: any } :
-      any;
+  C extends "KSampler" ? { samples?: any } :
+  any;
 
 type NodeOutputFor<T extends WorkflowJSON, K extends keyof T & string> =
   T[K] extends { class_type: infer C }
-    ? C extends string
-      ? OutputShapeFor<C>
-      : any
-    : any;
+  ? C extends string
+  ? OutputShapeFor<C>
+  : any
+  : any;
 
 export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap = {}> {
   private json: T;
@@ -425,9 +425,9 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
         // Prefer just the filename; many LoadImage nodes look up by filename (subfolder managed server-side)
         this.input(it.nodeId as any, it.inputName as any, it.fileName as any);
       }
-      // Clear pending once applied
-      this._pendingFolderFiles = [];
-      this._pendingImageInputs = [];
+      // NOTE: We intentionally do NOT clear pending arrays here.
+      // This allows retries to a different host to still have assets to upload.
+      // The upload API uses override mode, so duplicate uploads are idempotent.
     }
   }
 }
@@ -440,7 +440,7 @@ export interface Workflow<T extends WorkflowJSON = WorkflowJSON, O extends Outpu
   // 2. output('alias:NODE_ID') -> alias key with inferred node output
   output<Spec extends `${string}:${keyof T & string}`>(spec: Spec): Workflow<T, O & (
     Spec extends `${infer Alias}:${infer Node}` ? (Node extends keyof T & string ? Record<Alias, NodeOutputFor<T, Node>> : Record<Alias, any>) : {}
-    )>;
+  )>;
 
   // 3. output('alias','NODE_ID') -> alias key
   output<Alias extends string, NodeId extends keyof T & string>(alias: Alias, nodeId: NodeId): Workflow<T, O & Record<Alias, NodeOutputFor<T, NodeId>>>;
