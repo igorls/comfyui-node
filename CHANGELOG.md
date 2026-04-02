@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.5
+
+### Updated
+
+- **ComfyUI v0.18.2 Compatibility** – Added `JobStatus.CANCELLED` to match ComfyUI's Jobs API
+  - ComfyUI returns `cancelled` status when a job is interrupted rather than `failed`
+  - `JobStatus` enum now includes all five statuses: `PENDING`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `CANCELLED`
+  - No other changes required - all existing APIs remain compatible with latest ComfyUI
+
 ## 1.8.0
 
 ### Added

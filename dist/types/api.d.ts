@@ -225,7 +225,8 @@ export declare enum JobStatus {
     PENDING = "pending",
     IN_PROGRESS = "in_progress",
     COMPLETED = "completed",
-    FAILED = "failed"
+    FAILED = "failed",
+    CANCELLED = "cancelled"
 }
 /**
  * Preview output from a job, enriched with node metadata

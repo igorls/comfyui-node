@@ -26,5 +26,6 @@ export var JobStatus;
     JobStatus["IN_PROGRESS"] = "in_progress";
     JobStatus["COMPLETED"] = "completed";
     JobStatus["FAILED"] = "failed";
+    JobStatus["CANCELLED"] = "cancelled";
 })(JobStatus || (JobStatus = {}));
 //# sourceMappingURL=api.js.map
