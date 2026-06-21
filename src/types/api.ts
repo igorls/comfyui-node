@@ -56,9 +56,18 @@ export interface MetadataData {
 }
 
 export interface ImageInfo {
+  name?: string;
   filename: string;
-  subfolder: string;
+  subfolder?: string;
   type: string;
+  width?: number;
+  height?: number;
+  format?: string;
+  mime_type?: string;
+  asset_id?: string;
+  asset?: AssetReference;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface OutputData {
@@ -67,6 +76,10 @@ export interface OutputData {
     height?: number[];
     ratio?: number[];
     images?: ImageInfo[];
+    video?: ImageInfo[];
+    audio?: ImageInfo[];
+    files?: ImageInfo[];
+    [key: string]: unknown;
   };
 }
 
@@ -126,32 +139,42 @@ export interface NodeDefsResponse {
   [key: string]: NodeDef;
 }
 
+export interface NodeInputConfig {
+  default?: unknown;
+  min?: number;
+  max?: number;
+  step?: number;
+  round?: number;
+  tooltip?: string;
+  multiline?: boolean;
+  dynamicPrompts?: boolean;
+  control_after_generate?: boolean | string;
+  image_upload?: boolean;
+  forceInput?: boolean;
+  rawLink?: boolean;
+  lazy?: boolean;
+  [key: string]: unknown;
+}
+
+export type NodeInputType = string | string[];
+export type NodeInputSpec = NodeInputType | [NodeInputType, NodeInputConfig];
+
 export interface NodeDef {
   input: {
     required: {
-      [key: string]:
-      | [string[], { tooltip?: string }]
-      | [string, { tooltip?: string }]
-      | TStringInput
-      | TBoolInput
-      | TNumberInput;
+      [key: string]: NodeInputSpec;
     };
     optional?: {
-      [key: string]:
-      | [string[], { tooltip?: string }]
-      | [string, { tooltip?: string }]
-      | TStringInput
-      | TBoolInput
-      | TNumberInput;
+      [key: string]: NodeInputSpec;
     };
-    hidden: {
+    hidden?: {
       [key: string]: string;
     };
   };
   input_order: {
     required: string[];
     optional?: string[];
-    hidden: string[];
+    hidden?: string[];
   };
   output: string[];
   output_is_list: boolean[];
@@ -163,6 +186,10 @@ export interface NodeDef {
   python_module: string;
   output_node: boolean;
   output_tooltips: string[];
+  deprecated?: boolean;
+  experimental?: boolean;
+  api_node?: boolean;
+  [key: string]: unknown;
 }
 
 export interface NodeProgress {
@@ -235,6 +262,123 @@ export interface ModelFoldersResponse {
 }
 
 // ============================================================================
+// Assets API Types
+// ============================================================================
+
+export interface AssetReference {
+  id?: string;
+  asset_id?: string;
+  name?: string;
+  asset_hash?: string;
+  mime_type?: string;
+  width?: number;
+  height?: number;
+  preview_url?: string;
+  preview_id?: string | null;
+  [key: string]: unknown;
+}
+
+export interface Asset {
+  id: string;
+  name: string;
+  size: number;
+  created_at: string;
+  updated_at: string;
+  asset_hash?: string;
+  mime_type?: string;
+  tags?: string[];
+  user_metadata?: Record<string, unknown>;
+  preview_url?: string;
+  preview_id?: string | null;
+  prompt_id?: string | null;
+  last_access_time?: string;
+  is_immutable?: boolean;
+  width?: number;
+  height?: number;
+  [key: string]: unknown;
+}
+
+export interface AssetCreated extends Asset {
+  created_new: boolean;
+}
+
+export interface ListAssetsOptions {
+  include_tags?: string[];
+  exclude_tags?: string[];
+  name_contains?: string;
+  metadata_filter?: Record<string, unknown> | string;
+  limit?: number;
+  offset?: number;
+  cursor?: string;
+  sort?: "name" | "created_at" | "updated_at" | "size" | "last_access_time" | string;
+  order?: "asc" | "desc";
+  include_public?: boolean;
+}
+
+export interface ListAssetsResponse {
+  assets: Asset[];
+  total?: number;
+  has_more: boolean;
+  next_cursor?: string | null;
+  cursor?: string | null;
+}
+
+export interface UploadAssetOptions {
+  tags?: string[];
+  id?: string;
+  preview_id?: string;
+  name?: string;
+  mime_type?: string;
+  user_metadata?: Record<string, unknown> | string;
+}
+
+export interface CreateAssetFromHashOptions {
+  hash: string;
+  tags: string[];
+  name?: string;
+  mime_type?: string;
+  user_metadata?: Record<string, unknown>;
+  preview_id?: string;
+}
+
+export interface AssetUpdate {
+  name?: string;
+  tags?: string[];
+  mime_type?: string;
+  preview_id?: string;
+  user_metadata?: Record<string, unknown>;
+}
+
+export interface AssetUpdated {
+  id: string;
+  updated_at: string;
+  name?: string;
+  asset_hash?: string;
+  tags?: string[];
+  mime_type?: string;
+  user_metadata?: Record<string, unknown>;
+}
+
+export interface TagsModificationResponse {
+  added?: string[];
+  removed?: string[];
+  already_present?: string[];
+  not_present?: string[];
+  total_tags: string[];
+}
+
+export interface TagInfo {
+  name: string;
+  count: number;
+}
+
+export interface ListTagsResponse {
+  tags: TagInfo[];
+  total: number;
+  has_more: boolean;
+}
+
+// ============================================================================
 // Jobs API Types (ComfyUI v0.6.0+)
 // ============================================================================
 
@@ -275,6 +419,9 @@ export interface JobExecutionError {
   exception_message?: string;
   exception_type?: string;
   traceback?: string[];
+  executed?: string[];
+  current_inputs?: Record<string, unknown>;
+  current_outputs?: Record<string, unknown>;
   timestamp?: number;
 }
 
@@ -349,12 +496,40 @@ export interface JobsListOptions {
   status?: JobStatus | JobStatus[];
   /** Filter by workflow ID */
   workflow_id?: string;
-  /** Sort field: 'created_at' (default) or 'execution_duration' */
-  sort_by?: "created_at" | "execution_duration";
+  /** Filter by output media type when supported by the server */
+  output_type?: "image" | "video" | "audio" | string;
+  /** Sort field. Newer APIs use create_time/execution_time; older docs used created_at/execution_duration. */
+  sort_by?: "create_time" | "execution_time" | "created_at" | "execution_duration";
   /** Sort order: 'asc' or 'desc' (default) */
   sort_order?: "asc" | "desc";
   /** Maximum number of items to return */
   limit?: number;
   /** Number of items to skip */
   offset?: number;
+}
+
+export type DetailedJobStatus =
+  | "waiting_to_dispatch"
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "error"
+  | "failed"
+  | "cancelled";
+
+export interface JobStatusResponse {
+  id: string;
+  status: DetailedJobStatus | string;
+  created_at?: string;
+  updated_at?: string;
+  last_state_update?: string;
+  assigned_inference?: string | null;
+  error_message?: string | null;
+  [key: string]: unknown;
+}
+
+export interface QueueManageResponse {
+  deleted?: string[];
+  cleared?: boolean;
+  [key: string]: unknown;
 }

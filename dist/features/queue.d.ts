@@ -1,5 +1,5 @@
 import { ComfyApi } from "../client.js";
-import { QueuePromptResponse } from "../types/api.js";
+import { QueueManageResponse, QueuePromptResponse } from "../types/api.js";
 import { FeatureBase } from "./base.js";
 /**
  * Queue & execution control endpoints (enqueue / append / interrupt).
@@ -19,5 +19,17 @@ export declare class QueueFeature extends FeatureBase {
      * Interrupt an in‑flight prompt by id (or all if omitted depending on server semantics).
      */
     interrupt(promptId?: string): Promise<void>;
+    /**
+     * Cancel a pending prompt by id. This does not interrupt a currently running prompt.
+     */
+    cancelPrompt(promptId: string): Promise<QueueManageResponse>;
+    /**
+     * Cancel pending prompts by id. Maps to ComfyUI's queue management endpoint.
+     */
+    cancelPrompts(promptIds: string[]): Promise<QueueManageResponse>;
+    /**
+     * Clear all pending prompts from the queue. Does not interrupt the running prompt.
+     */
+    clearPending(): Promise<QueueManageResponse>;
 }
 //# sourceMappingURL=queue.d.ts.map

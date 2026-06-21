@@ -9,7 +9,7 @@ export type { AugmentNodes, SamplerName, SchedulerName } from "./node-type-hints
 export type { WorkflowResult, WorkflowResultMeta } from "./workflow.js";
 export type { WorkflowAffinity } from "./pool/types/affinity.js";
 export type { TSamplerName, TSchedulerName } from "./types/sampler.js";
-export type { TComfyAPIEventMap, TComfyPoolEventMap, ComfyApiEventKey, ComfyPoolEventKey, TEventStatus, TExecution, TExecuting, TProgress, TExecuted, TExecutionCached, TExecutionError, TExecutionInterrupted } from "./types/event.js";
+export type { TComfyAPIEventMap, TComfyPoolEventMap, ComfyApiEventKey, ComfyPoolEventKey, TEventStatus, TExecution, TExecuting, TProgress, TProgressState, TProgressStateNode, TNotification, TExecuted, TExecutionCached, TExecutionError, TExecutionInterrupted } from "./types/event.js";
 export type { WorkflowPoolEventMap, WorkflowPoolOpts, JobRecord, JobStatus as PoolJobStatus, WorkflowJobOptions, QueueAdapter, QueueReservation, QueueStats, FailoverStrategy, JobProfileStats, NodeExecutionProfile } from "./pool/index.js";
 export { seed } from "./tools.js";
 export { isModelLoadingNode, workflowContainsModelLoading, getModelLoadingNodes, estimateModelLoadingTime, estimateWorkflowModelLoadingTime, getTimeoutMultiplierForModelLoading, MODEL_LOADING_NODE_TYPES, MODEL_LOADING_TIME_ESTIMATES } from "./utils/model-loading.js";
@@ -20,5 +20,6 @@ export type { PoolEvent, ClientEventPayload, MultiWorkflowPoolOptions, SubmitJob
 export type { JobResults, JobState, JobStatus as MultiJobStatus, JobResultStatus } from "./multipool/interfaces.js";
 export type { JobProfileStats as MultiJobProfileStats } from "./multipool/interfaces.js";
 export { JobsFeature } from "./features/jobs.js";
-export { JobStatus, type Job, type JobsListResponse, type JobsListOptions, type JobsPagination, type JobOutputPreview, type JobExecutionError, type JobWorkflow } from "./types/api.js";
+export { AssetsFeature } from "./features/assets.js";
+export { JobStatus, type Job, type JobStatusResponse, type JobsListResponse, type JobsListOptions, type JobsPagination, type QueueManageResponse, type JobOutputPreview, type JobExecutionError, type JobWorkflow, type Asset, type AssetReference, type AssetCreated, type ListAssetsOptions, type ListAssetsResponse, type UploadAssetOptions, type CreateAssetFromHashOptions, type AssetUpdate, type AssetUpdated, type TagsModificationResponse, type TagInfo, type ListTagsResponse } from "./types/api.js";
 //# sourceMappingURL=index.d.ts.map

@@ -68,5 +68,45 @@ export class QueueFeature extends FeatureBase {
             })
         });
     }
+    /**
+     * Cancel a pending prompt by id. This does not interrupt a currently running prompt.
+     */
+    async cancelPrompt(promptId) {
+        return this.cancelPrompts([promptId]);
+    }
+    /**
+     * Cancel pending prompts by id. Maps to ComfyUI's queue management endpoint.
+     */
+    async cancelPrompts(promptIds) {
+        const response = await this.client.fetchApi("/queue", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ delete: promptIds })
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(`Failed to cancel prompts: ${error.error || error.message || response.statusText}`);
+        }
+        return response.json().catch(() => ({ deleted: promptIds }));
+    }
+    /**
+     * Clear all pending prompts from the queue. Does not interrupt the running prompt.
+     */
+    async clearPending() {
+        const response = await this.client.fetchApi("/queue", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ clear: true })
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(`Failed to clear pending prompts: ${error.error || error.message || response.statusText}`);
+        }
+        return response.json().catch(() => ({ cleared: true }));
+    }
 }
 //# sourceMappingURL=queue.js.map

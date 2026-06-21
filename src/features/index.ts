@@ -11,3 +11,4 @@ export * from "./misc.js";
 export * from "./manager.js";
 export * from "./monitoring.js";
 export * from "./feature-flags.js";
+export * from "./assets.js";

@@ -44,6 +44,10 @@ export type TExecuting = TExecution & {
    * The node being executed (null if none)
    */
   node: string | null;
+  /**
+   * Display node id when the server reports grouped/subgraph context
+   */
+  display_node?: string;
 };
 
 /**
@@ -69,9 +73,44 @@ export type TExecuted<T = unknown> = TExecution & {
    */
   node: string;
   /**
+   * Display node id when the server reports grouped/subgraph context
+   */
+  display_node?: string;
+  /**
    * The output from the execution
    */
   output: T;
+};
+
+/**
+ * Type representing a user-facing notification websocket event
+ */
+export type TNotification = Partial<TExecution> & {
+  /**
+   * Human-readable notification text
+   */
+  value: string;
+  [key: string]: unknown;
+};
+
+export interface TProgressStateNode {
+  node_id?: string;
+  display_node_id?: string;
+  real_node_id?: string;
+  prompt_id?: string;
+  class_type?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Type representing extended websocket progress state
+ */
+export type TProgressState = Partial<TExecution> & {
+  /**
+   * Map of node IDs to richer progress metadata
+   */
+  nodes?: Record<string, TProgressStateNode>;
+  [key: string]: unknown;
 };
 
 /**
@@ -108,6 +147,18 @@ export type TExecutionError = TExecution & {
    * The traceback information
    */
   traceback: string[];
+  /**
+   * Nodes that completed before the error, when available
+   */
+  executed?: string[];
+  /**
+   * Inputs captured at the failing node, when available
+   */
+  current_inputs?: Record<string, unknown>;
+  /**
+   * Outputs captured at the failing node, when available
+   */
+  current_outputs?: Record<string, unknown>;
 };
 
 /**
@@ -138,12 +189,15 @@ export type ComfyApiEventKey =
   | "auth_success"
   | "status"
   | "progress"
+  | "progress_state"
+  | "notification"
   | "executing"
   | "executed"
   | "disconnected"
   | "execution_success"
   | "execution_start"
   | "execution_error"
+  | "execution_interrupted"
   | "execution_cached"
   | "queue_error"
   | "reconnected"
@@ -186,6 +240,14 @@ export type TComfyAPIEventMap = {
    * Execution success event
    */
   execution_success: CustomEvent<TExecution>;
+  /**
+   * User-friendly status notification event
+   */
+  notification: CustomEvent<TNotification>;
+  /**
+   * Extended progress state event
+   */
+  progress_state: CustomEvent<TProgressState>;
   /**
    * Status update event
    */
@@ -237,7 +299,7 @@ export type TComfyAPIEventMap = {
   /**
    * Binary text frame event with metadata (protocol 3)
    */
-  b_text_meta: CustomEvent<{ channel: number; text: string }>;
+  b_text_meta: CustomEvent<{ channel: number; text: string; nodeId?: string; nodeIdLength?: number }>;
   /**
    * Raw image bytes (protocol 2). Consumers can interpret according to their needs.
    */
@@ -252,6 +314,7 @@ export type TComfyAPIEventMap = {
     progressSeconds?: number;
     resultUrl?: string;
     nodeHint?: string; // parsed from text prefix if present
+    nodeId?: string; // node id from the binary TEXT frame when available
     executingNode?: string | null; // latest executing node id observed by client
     promptIdHint?: string | null; // latest prompt_id observed in executing
     cleanText?: string; // original text with leading node prefix removed when recognized

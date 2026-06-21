@@ -47,6 +47,7 @@ describe("JobsFeature", () => {
                 status: JobStatus.COMPLETED,
                 limit: 10,
                 offset: 5,
+                output_type: "image",
                 sort_by: "execution_duration",
                 sort_order: "asc"
             });
@@ -55,6 +56,7 @@ describe("JobsFeature", () => {
             expect(calledUrl).toContain("status=completed");
             expect(calledUrl).toContain("limit=10");
             expect(calledUrl).toContain("offset=5");
+            expect(calledUrl).toContain("output_type=image");
             expect(calledUrl).toContain("sort_by=execution_duration");
             expect(calledUrl).toContain("sort_order=asc");
         });
@@ -139,6 +141,42 @@ describe("JobsFeature", () => {
         });
     });
 
+    describe("getJobStatus", () => {
+        it("fetches lightweight job status", async () => {
+            const mockStatus = {
+                id: "prompt-123",
+                status: "in_progress",
+                created_at: "2026-06-20T00:00:00Z",
+                updated_at: "2026-06-20T00:00:01Z"
+            };
+            const mockResponse = {
+                ok: true,
+                status: 200,
+                json: async () => mockStatus
+            };
+            const client = createMockClient(mockResponse);
+            const feature = new JobsFeature(client);
+
+            const result = await feature.getJobStatus("prompt-123");
+
+            expect(client.fetchApi).toHaveBeenCalledWith("/api/job/prompt-123/status");
+            expect(result).toEqual(mockStatus);
+        });
+
+        it("returns null when job status is missing", async () => {
+            const mockResponse = {
+                ok: false,
+                status: 404,
+                json: async () => ({ error: "Job not found" })
+            };
+            const client = createMockClient(mockResponse);
+            const feature = new JobsFeature(client);
+
+            const result = await feature.getJobStatus("missing");
+            expect(result).toBeNull();
+        });
+    });
+
     describe("convenience methods", () => {
         it("getRunningJobs filters by IN_PROGRESS", async () => {
             const mockResponse = {
@@ -196,6 +234,55 @@ describe("JobsFeature", () => {
             expect(feature.getExecutionDuration({ id: "test", status: "pending" })).toBeNull();
             expect(feature.getExecutionDuration({ id: "test", status: "completed", execution_start_time: 1000 })).toBeNull();
             expect(feature.getExecutionDuration({ id: "test", status: "completed", execution_end_time: 1000 })).toBeNull();
+        });
+    });
+
+    describe("queue management helpers", () => {
+        it("cancelJob posts to /api/queue delete", async () => {
+            const mockResponse = {
+                ok: true,
+                json: async () => ({ deleted: ["prompt-123"] })
+            };
+            const client = createMockClient(mockResponse);
+            const feature = new JobsFeature(client);
+
+            const result = await feature.cancelJob("prompt-123");
+            const [url, options] = client.fetchApi.mock.calls[0];
+
+            expect(url).toBe("/api/queue");
+            expect(options.method).toBe("POST");
+            expect(options.body).toBe(JSON.stringify({ delete: ["prompt-123"] }));
+            expect(result.deleted).toEqual(["prompt-123"]);
+        });
+
+        it("clearPendingJobs posts to /api/queue clear", async () => {
+            const mockResponse = {
+                ok: true,
+                json: async () => ({ cleared: true })
+            };
+            const client = createMockClient(mockResponse);
+            const feature = new JobsFeature(client);
+
+            const result = await feature.clearPendingJobs();
+            const [url, options] = client.fetchApi.mock.calls[0];
+
+            expect(url).toBe("/api/queue");
+            expect(options.method).toBe("POST");
+            expect(options.body).toBe(JSON.stringify({ clear: true }));
+            expect(result.cleared).toBe(true);
+        });
+
+        it("interruptRunningJobs posts to /api/interrupt", async () => {
+            const mockResponse = {
+                ok: true,
+                json: async () => ({})
+            };
+            const client = createMockClient(mockResponse);
+            const feature = new JobsFeature(client);
+
+            await feature.interruptRunningJobs();
+
+            expect(client.fetchApi).toHaveBeenCalledWith("/api/interrupt", { method: "POST" });
         });
     });
 

@@ -14,6 +14,7 @@ import { TerminalFeature } from "./features/terminal.js";
 import { MiscFeature } from "./features/misc.js";
 import { FeatureFlagsFeature } from "./features/feature-flags.js";
 import { JobsFeature } from "./features/jobs.js";
+import { AssetsFeature } from "./features/assets.js";
 import { WorkflowJob, WorkflowResult } from "./workflow.js";
 /**
  * Connection state of the WebSocket client.
@@ -107,6 +108,8 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
         readonly featureFlags: FeatureFlagsFeature;
         /** Unified Jobs API (ComfyUI v0.6.0+) */
         readonly jobs: JobsFeature;
+        /** Cloud Assets API */
+        readonly assets: AssetsFeature;
     };
     /** Helper type guard shaping expected feature API */
     private asFeature;
@@ -253,6 +256,18 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
      * Returns null if parsing fails.
      */
     private _decodePreviewWithMetadata;
+    /**
+     * Decode a binary TEXT websocket frame.
+     * Layout:
+     *   [0..3]   event type (3)
+     *   [4..7]   big-endian uint32: node id byte length (N)
+     *   [8..8+N) node id (utf-8)
+     *   [8+N..]  text (utf-8)
+     *
+     * Older internal builds used the second field as a generic channel. If the
+     * official frame shape cannot fit, keep that legacy interpretation.
+     */
+    private _decodeBinaryTextFrame;
     /**
      * High-level sugar: run a Workflow or PromptBuilder directly.
      * Accepts experimental Workflow abstraction or a raw PromptBuilder-like object with setInputNode/output mappings already applied.

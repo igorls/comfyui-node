@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.0
+
+### Added
+
+- **Cloud Assets API helpers** – Added `AssetsFeature` at `api.ext.assets` with helpers for listing, fetching, uploading, updating, deleting, and tagging assets.
+- **Queue and Jobs management helpers** – Added pending prompt/job cancellation, queue clearing, running job interruption, `getJobStatus()`, and `output_type` filtering for Jobs API queries.
+- **Richer ComfyUI protocol typing** – Added asset/output media types, extended node definition fields, progress state and notification events, execution interruption typing, richer error payloads, and binary text frame node metadata.
+
+### Updated
+
+- **File helpers** – Upload and duplicate helpers now preserve server-returned `filename`, `subfolder`, and `type`, support upload `type`, and encode image view URLs with `URLSearchParams`.
+- **Job duration calculation** – `getExecutionDuration()` now supports zero-valued start or end timestamps.
+
 ## 1.8.5
 
 ### Updated

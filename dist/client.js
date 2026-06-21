@@ -14,6 +14,7 @@ import { TerminalFeature } from "./features/terminal.js";
 import { MiscFeature } from "./features/misc.js";
 import { FeatureFlagsFeature } from "./features/feature-flags.js";
 import { JobsFeature } from "./features/jobs.js";
+import { AssetsFeature } from "./features/assets.js";
 import { runWebSocketReconnect } from "./utils/ws-reconnect.js";
 import { Workflow } from "./workflow.js";
 /**
@@ -95,7 +96,9 @@ export class ComfyApi extends TypedEventTarget {
         /** Server advertised feature flags */
         featureFlags: new FeatureFlagsFeature(this),
         /** Unified Jobs API (ComfyUI v0.6.0+) */
-        jobs: new JobsFeature(this)
+        jobs: new JobsFeature(this),
+        /** Cloud Assets API */
+        assets: new AssetsFeature(this)
     };
     /** Helper type guard shaping expected feature API */
     asFeature(obj) {
@@ -621,6 +624,41 @@ export class ComfyApi extends TypedEventTarget {
         }
     }
     /**
+     * Decode a binary TEXT websocket frame.
+     * Layout:
+     *   [0..3]   event type (3)
+     *   [4..7]   big-endian uint32: node id byte length (N)
+     *   [8..8+N) node id (utf-8)
+     *   [8+N..]  text (utf-8)
+     *
+     * Older internal builds used the second field as a generic channel. If the
+     * official frame shape cannot fit, keep that legacy interpretation.
+     */
+    _decodeBinaryTextFrame(u8) {
+        if (u8.byteLength < 8) {
+            return null;
+        }
+        const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+        const nodeIdLength = view.getUint32(4, false /* big-endian */);
+        const textDecoder = new TextDecoder("utf-8");
+        const payloadStart = 8;
+        if (nodeIdLength <= u8.byteLength - payloadStart) {
+            const nodeIdEnd = payloadStart + nodeIdLength;
+            const nodeId = textDecoder.decode(u8.slice(payloadStart, nodeIdEnd));
+            const text = textDecoder.decode(u8.slice(nodeIdEnd));
+            return {
+                channel: nodeIdLength,
+                nodeId,
+                nodeIdLength,
+                text
+            };
+        }
+        return {
+            channel: nodeIdLength,
+            text: textDecoder.decode(u8.slice(payloadStart))
+        };
+    }
+    /**
      * High-level sugar: run a Workflow or PromptBuilder directly.
      * Accepts experimental Workflow abstraction or a raw PromptBuilder-like object with setInputNode/output mappings already applied.
      */
@@ -896,27 +934,29 @@ export class ComfyApi extends TypedEventTarget {
                                 break;
                             }
                             case 3: {
-                                // Text payload (utf-8) with 4-byte channel preceding text
+                                // Text payload (utf-8) with node context metadata
                                 try {
-                                    if (u8.byteLength < 8) {
+                                    const decoded = this._decodeBinaryTextFrame(u8);
+                                    if (!decoded) {
                                         this.log("socket", "b_text frame too small", { size: u8.byteLength });
                                         break;
                                     }
-                                    const view2 = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
-                                    const channel = view2.getUint32(4, false /* big-endian */);
-                                    const text = new TextDecoder("utf-8").decode(u8.slice(8));
+                                    const { channel, nodeId, nodeIdLength, text } = decoded;
                                     this.log("socket", "b_text (binary) received", {
                                         size: u8.byteLength,
                                         channel,
+                                        nodeId,
                                         preview: text.slice(0, 120)
                                     });
                                     this.dispatchEvent(new CustomEvent("b_text", { detail: text }));
-                                    this.dispatchEvent(new CustomEvent("b_text_meta", { detail: { channel, text } }));
+                                    this.dispatchEvent(new CustomEvent("b_text_meta", { detail: { channel, text, nodeId, nodeIdLength } }));
                                     // Emit normalized node_text_update for consumers
                                     const norm = {
                                         channel,
                                         text,
+                                        nodeId,
                                         kind: "message",
+                                        nodeHint: nodeId || undefined,
                                         executingNode: lastExecutingNode,
                                         promptIdHint: lastPromptId
                                     };
@@ -935,13 +975,13 @@ export class ComfyApi extends TypedEventTarget {
                                     const mProg = body.match(/^(?:([A-Z0-9_\-]+))?Task in progress: ([0-9]+(?:\.[0-9]+)?)s/i);
                                     if (mProg) {
                                         norm.kind = "progress";
-                                        norm.nodeHint = mProg[1] || undefined;
+                                        norm.nodeHint = mProg[1] || norm.nodeHint;
                                         norm.progressSeconds = Number(mProg[2]);
                                     }
                                     const mUrl = body.match(/^(?:([A-Z0-9_\-]+))?Result URL:\s*(https?:[^\s]+)\s*$/i);
                                     if (mUrl) {
                                         norm.kind = "result";
-                                        norm.nodeHint = mUrl[1] || undefined;
+                                        norm.nodeHint = mUrl[1] || norm.nodeHint;
                                         norm.resultUrl = mUrl[2];
                                     }
                                     // Fallback: if we couldn't extract a node hint from the text, use the last executing node

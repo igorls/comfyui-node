@@ -3,3 +3,5 @@ analytics
 examples
 test
 scripts
+dist/.tsbuildinfo
+dist/**/tests

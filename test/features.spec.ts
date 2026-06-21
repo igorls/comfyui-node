@@ -71,6 +71,16 @@ describe("Feature modules integration", () => {
     await api.ext.queue.queuePrompt(2, dummyWorkflow);
   });
 
+  it("queueFeature manages pending prompts", async () => {
+    setJson("POST", "/queue", { deleted: ["abc"] });
+    const cancelled = await api.ext.queue.cancelPrompt("abc");
+    expect(cancelled.deleted).toEqual(["abc"]);
+
+    setJson("POST", "/queue", { cleared: true });
+    const cleared = await api.ext.queue.clearPending();
+    expect(cleared.cleared).toBe(true);
+  });
+
   it("historyFeature.getHistories returns parsed object", async () => {
     setJson("GET", "/history?max_items=50", { a: { prompt: { foo: 1 } } });
     const hist = await api.ext.history.getHistories(50);

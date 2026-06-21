@@ -15,6 +15,19 @@ describe('ComfyApi preview binary frames', () => {
     return Buffer.from(u8.buffer);
   }
 
+  function buildTextFrame(nodeId: string, text: string) {
+    const nodeBytes = new TextEncoder().encode(nodeId);
+    const textBytes = new TextEncoder().encode(text);
+    const header = new ArrayBuffer(8 + nodeBytes.length + textBytes.length);
+    const view = new DataView(header);
+    view.setUint32(0, 3);
+    view.setUint32(4, nodeBytes.length);
+    const u8 = new Uint8Array(header);
+    u8.set(nodeBytes, 8);
+    u8.set(textBytes, 8 + nodeBytes.length);
+    return Buffer.from(u8.buffer);
+  }
+
   async function withClient(fn: (api: ComfyApi, inject: (data: any) => void, events: any[]) => Promise<void>) {
     const api = new ComfyApi('http://localhost:0');
     const events: any[] = [];
@@ -60,5 +73,15 @@ describe('ComfyApi preview binary frames', () => {
       expect(previewEv).toBeTruthy();
       expect(previewEv.detail.type).toMatch(/image\/(png|jpeg)/);
     });
+  });
+
+  it('decodes TEXT frames with node id metadata', () => {
+    const api = new ComfyApi('http://localhost:0');
+    const frame = buildTextFrame('42', 'Task in progress: 1.5s');
+    const decoded = (api as any)._decodeBinaryTextFrame(frame);
+
+    expect(decoded.nodeId).toBe('42');
+    expect(decoded.nodeIdLength).toBe(2);
+    expect(decoded.text).toBe('Task in progress: 1.5s');
   });
 });

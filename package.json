@@ -1,6 +1,6 @@
 {
   "name": "comfyui-node",
-  "version": "1.8.5",
+  "version": "1.9.0",
   "description": "ComfyUI Node.js Client",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -33,6 +33,8 @@
   },
   "files": [
     "dist",
+    "!dist/.tsbuildinfo",
+    "!dist/**/tests/**",
     "README.md",
     "LICENSE"
   ],

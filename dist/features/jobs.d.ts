@@ -1,5 +1,5 @@
 import { ComfyApi } from "../client.js";
-import { Job, JobsListOptions, JobsListResponse, JobStatus } from "../types/api.js";
+import { Job, JobsListOptions, JobsListResponse, JobStatus, JobStatusResponse, QueueManageResponse } from "../types/api.js";
 import { FeatureBase } from "./base.js";
 /**
  * Jobs API feature for unified job management (ComfyUI v0.6.0+).
@@ -72,6 +72,13 @@ export declare class JobsFeature extends FeatureBase {
      */
     getJobs(options?: JobsListOptions): Promise<JobsListResponse>;
     /**
+     * Get a lightweight status record for a job.
+     *
+     * This maps to `/api/job/{job_id}/status`, which is useful for polling
+     * without fetching full workflow and output payloads.
+     */
+    getJobStatus(jobId: string): Promise<JobStatusResponse | null>;
+    /**
      * Get a single job by its ID with full details including outputs.
      *
      * @param jobId - The job/prompt ID to retrieve
@@ -121,6 +128,25 @@ export declare class JobsFeature extends FeatureBase {
      * @param limit - Maximum number of jobs to return (default 20)
      */
     getFailedJobs(limit?: number): Promise<Job[]>;
+    /**
+     * Cancel a pending job by ID.
+     *
+     * Comfy Cloud exposes pending cancellation through `/api/queue` with a
+     * `delete` array. Running jobs still require interrupt semantics.
+     */
+    cancelJob(jobId: string): Promise<QueueManageResponse>;
+    /**
+     * Cancel one or more pending jobs by ID.
+     */
+    cancelJobs(jobIds: string[]): Promise<QueueManageResponse>;
+    /**
+     * Clear all pending jobs from the queue.
+     */
+    clearPendingJobs(): Promise<QueueManageResponse>;
+    /**
+     * Interrupt currently running jobs for the authenticated user/session.
+     */
+    interruptRunningJobs(): Promise<void>;
     /**
      * Calculate execution duration for a completed job.
      *

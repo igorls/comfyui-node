@@ -41,6 +41,10 @@ export type TExecuting = TExecution & {
      * The node being executed (null if none)
      */
     node: string | null;
+    /**
+     * Display node id when the server reports grouped/subgraph context
+     */
+    display_node?: string;
 };
 /**
  * Type representing progress event data structure
@@ -64,9 +68,41 @@ export type TExecuted<T = unknown> = TExecution & {
      */
     node: string;
     /**
+     * Display node id when the server reports grouped/subgraph context
+     */
+    display_node?: string;
+    /**
      * The output from the execution
      */
     output: T;
+};
+/**
+ * Type representing a user-facing notification websocket event
+ */
+export type TNotification = Partial<TExecution> & {
+    /**
+     * Human-readable notification text
+     */
+    value: string;
+    [key: string]: unknown;
+};
+export interface TProgressStateNode {
+    node_id?: string;
+    display_node_id?: string;
+    real_node_id?: string;
+    prompt_id?: string;
+    class_type?: string;
+    [key: string]: unknown;
+}
+/**
+ * Type representing extended websocket progress state
+ */
+export type TProgressState = Partial<TExecution> & {
+    /**
+     * Map of node IDs to richer progress metadata
+     */
+    nodes?: Record<string, TProgressStateNode>;
+    [key: string]: unknown;
 };
 /**
  * Type representing execution cached event data structure
@@ -101,6 +137,18 @@ export type TExecutionError = TExecution & {
      * The traceback information
      */
     traceback: string[];
+    /**
+     * Nodes that completed before the error, when available
+     */
+    executed?: string[];
+    /**
+     * Inputs captured at the failing node, when available
+     */
+    current_inputs?: Record<string, unknown>;
+    /**
+     * Outputs captured at the failing node, when available
+     */
+    current_outputs?: Record<string, unknown>;
 };
 /**
  * Type representing execution interrupted event data structure
@@ -122,7 +170,7 @@ export type TExecutionInterrupted = TExecution & {
 /**
  * Union type of all ComfyUI API event keys
  */
-export type ComfyApiEventKey = "all" | "auth_error" | "connection_error" | "auth_success" | "status" | "progress" | "executing" | "executed" | "disconnected" | "execution_success" | "execution_start" | "execution_error" | "execution_cached" | "queue_error" | "reconnected" | "reconnection_failed" | "connected" | "log" | "terminal" | "reconnecting" | "b_preview" | "b_preview_meta" | "b_text" | "b_text_meta" | "b_preview_raw" | "node_text_update" | "websocket_unavailable" | "shutdown_started" | "shutdown_complete";
+export type ComfyApiEventKey = "all" | "auth_error" | "connection_error" | "auth_success" | "status" | "progress" | "progress_state" | "notification" | "executing" | "executed" | "disconnected" | "execution_success" | "execution_start" | "execution_error" | "execution_interrupted" | "execution_cached" | "queue_error" | "reconnected" | "reconnection_failed" | "connected" | "log" | "terminal" | "reconnecting" | "b_preview" | "b_preview_meta" | "b_text" | "b_text_meta" | "b_preview_raw" | "node_text_update" | "websocket_unavailable" | "shutdown_started" | "shutdown_complete";
 /**
  * Type mapping ComfyUI API event keys to their respective CustomEvent types
  */
@@ -150,6 +198,14 @@ export type TComfyAPIEventMap = {
      * Execution success event
      */
     execution_success: CustomEvent<TExecution>;
+    /**
+     * User-friendly status notification event
+     */
+    notification: CustomEvent<TNotification>;
+    /**
+     * Extended progress state event
+     */
+    progress_state: CustomEvent<TProgressState>;
     /**
      * Status update event
      */
@@ -207,6 +263,8 @@ export type TComfyAPIEventMap = {
     b_text_meta: CustomEvent<{
         channel: number;
         text: string;
+        nodeId?: string;
+        nodeIdLength?: number;
     }>;
     /**
      * Raw image bytes (protocol 2). Consumers can interpret according to their needs.
@@ -222,6 +280,7 @@ export type TComfyAPIEventMap = {
         progressSeconds?: number;
         resultUrl?: string;
         nodeHint?: string;
+        nodeId?: string;
         executingNode?: string | null;
         promptIdHint?: string | null;
         cleanText?: string;

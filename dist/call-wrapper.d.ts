@@ -129,6 +129,15 @@ export declare class CallWrapper<I extends string, O extends string, T extends N
     private startDisconnectRecovery;
     private stopDisconnectRecovery;
     private attemptHistoryCompletion;
+    private disconnectUnknownTicks;
+    /**
+     * Runs after each disconnect grace period. Rather than failing a job that may
+     * simply be slow (cold model load) or queued behind other work, confirm whether
+     * it has finished (history) or is still alive in the server queue before giving
+     * up. Only fail when the job is genuinely gone, or after the server queue has
+     * been unreadable for a bounded number of ticks.
+     */
+    private finalizeDisconnectRecovery;
     private failDisconnected;
     private handleCachedOutput;
     private mapOutput;

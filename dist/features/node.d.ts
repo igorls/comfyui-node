@@ -27,16 +27,8 @@ export declare class NodeFeature extends FeatureBase {
         sampler?: undefined;
         scheduler?: undefined;
     } | {
-        sampler: [string[], {
-            tooltip?: string;
-        }] | [string, {
-            tooltip?: string;
-        }] | import("../types/api.js").TStringInput | import("../types/api.js").TBoolInput | import("../types/api.js").TNumberInput;
-        scheduler: [string[], {
-            tooltip?: string;
-        }] | [string, {
-            tooltip?: string;
-        }] | import("../types/api.js").TStringInput | import("../types/api.js").TBoolInput | import("../types/api.js").TNumberInput;
+        sampler: import("../types/api.js").NodeInputSpec;
+        scheduler: import("../types/api.js").NodeInputSpec;
     }>;
 }
 //# sourceMappingURL=node.d.ts.map

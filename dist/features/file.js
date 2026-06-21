@@ -18,13 +18,21 @@ export class FileFeature extends FeatureBase {
         formData.append("image", fileBlob, fileName);
         formData.append("subfolder", config?.subfolder ?? "");
         formData.append("overwrite", config?.override?.toString() ?? "false");
+        if (config?.type) {
+            formData.append("type", config.type);
+        }
         try {
             const response = await this.client.fetchApi("/upload/image", {
                 method: "POST",
                 body: formData
             });
             const imgInfo = await response.json();
-            const mapped = { ...imgInfo, filename: imgInfo.name };
+            const mapped = {
+                ...imgInfo,
+                filename: imgInfo.filename ?? imgInfo.name,
+                subfolder: imgInfo.subfolder ?? config?.subfolder ?? "",
+                type: imgInfo.type ?? config?.type ?? "input"
+            };
             if (!response.ok) {
                 return false;
             }
@@ -58,7 +66,12 @@ export class FileFeature extends FeatureBase {
                 return false;
             }
             const imgInfo = await response.json();
-            const mapped = { ...imgInfo, filename: imgInfo.name };
+            const mapped = {
+                ...imgInfo,
+                filename: imgInfo.filename ?? imgInfo.name,
+                subfolder: imgInfo.subfolder ?? originalRef.subfolder ?? "",
+                type: imgInfo.type ?? originalRef.type ?? "input"
+            };
             return {
                 info: mapped,
                 url: this.getPathImage(mapped)
@@ -74,13 +87,23 @@ export class FileFeature extends FeatureBase {
      * @returns The path to the image.
      */
     getPathImage(imageInfo) {
-        return this.client.apiURL(`/view?filename=${imageInfo.filename}&type=${imageInfo.type}&subfolder=${imageInfo.subfolder ?? ""}`);
+        const params = new URLSearchParams({
+            filename: imageInfo.filename,
+            type: imageInfo.type,
+            subfolder: imageInfo.subfolder ?? ""
+        });
+        return this.client.apiURL(`/view?${params}`);
     }
     /**
      * Get blob of image based on the provided image information. Use when the server have credential.
      */
     async getImage(imageInfo) {
-        return this.client.fetchApi(`/view?filename=${imageInfo.filename}&type=${imageInfo.type}&subfolder=${imageInfo.subfolder ?? ""}`).then((res) => res.blob());
+        const params = new URLSearchParams({
+            filename: imageInfo.filename,
+            type: imageInfo.type,
+            subfolder: imageInfo.subfolder ?? ""
+        });
+        return this.client.fetchApi(`/view?${params}`).then((res) => res.blob());
     }
     /**
      * Retrieves a user data file for the current user.

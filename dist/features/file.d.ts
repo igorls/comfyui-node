@@ -15,6 +15,7 @@ export declare class FileFeature extends FeatureBase {
     uploadImage(file: Buffer | Blob, fileName: string, config?: {
         override?: boolean;
         subfolder?: string;
+        type?: string;
     }): Promise<{
         info: ImageInfo;
         url: string;

@@ -91,6 +91,9 @@ export class JobsFeature extends FeatureBase {
         if (options.workflow_id) {
             params.set("workflow_id", options.workflow_id);
         }
+        if (options.output_type) {
+            params.set("output_type", options.output_type);
+        }
         if (options.sort_by) {
             params.set("sort_by", options.sort_by);
         }
@@ -109,6 +112,23 @@ export class JobsFeature extends FeatureBase {
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: "Unknown error" }));
             throw new Error(`Failed to fetch jobs: ${error.error || response.statusText}`);
+        }
+        return response.json();
+    }
+    /**
+     * Get a lightweight status record for a job.
+     *
+     * This maps to `/api/job/{job_id}/status`, which is useful for polling
+     * without fetching full workflow and output payloads.
+     */
+    async getJobStatus(jobId) {
+        const response = await this.client.fetchApi(`/api/job/${encodeURIComponent(jobId)}/status`);
+        if (response.status === 404) {
+            return null;
+        }
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(`Failed to fetch job status: ${error.error || error.message || response.statusText}`);
         }
         return response.json();
     }
@@ -184,13 +204,68 @@ export class JobsFeature extends FeatureBase {
         return this.getJobsByStatus(JobStatus.FAILED, limit);
     }
     /**
+     * Cancel a pending job by ID.
+     *
+     * Comfy Cloud exposes pending cancellation through `/api/queue` with a
+     * `delete` array. Running jobs still require interrupt semantics.
+     */
+    async cancelJob(jobId) {
+        return this.cancelJobs([jobId]);
+    }
+    /**
+     * Cancel one or more pending jobs by ID.
+     */
+    async cancelJobs(jobIds) {
+        const response = await this.client.fetchApi("/api/queue", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ delete: jobIds })
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(`Failed to cancel jobs: ${error.error || error.message || response.statusText}`);
+        }
+        return response.json().catch(() => ({ deleted: jobIds }));
+    }
+    /**
+     * Clear all pending jobs from the queue.
+     */
+    async clearPendingJobs() {
+        const response = await this.client.fetchApi("/api/queue", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ clear: true })
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(`Failed to clear pending jobs: ${error.error || error.message || response.statusText}`);
+        }
+        return response.json().catch(() => ({ cleared: true }));
+    }
+    /**
+     * Interrupt currently running jobs for the authenticated user/session.
+     */
+    async interruptRunningJobs() {
+        const response = await this.client.fetchApi("/api/interrupt", {
+            method: "POST"
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(`Failed to interrupt running jobs: ${error.error || error.message || response.statusText}`);
+        }
+    }
+    /**
      * Calculate execution duration for a completed job.
      *
      * @param job - The job to calculate duration for
      * @returns Duration in milliseconds, or null if times are not available
      */
     getExecutionDuration(job) {
-        if (job.execution_start_time && job.execution_end_time) {
+        if (job.execution_start_time !== undefined && job.execution_end_time !== undefined) {
             return job.execution_end_time - job.execution_start_time;
         }
         return null;

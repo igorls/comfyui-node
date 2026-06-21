@@ -19,6 +19,9 @@ export type {
   TExecution,
   TExecuting,
   TProgress,
+  TProgressState,
+  TProgressStateNode,
+  TNotification,
   TExecuted,
   TExecutionCached,
   TExecutionError,
@@ -61,13 +64,28 @@ export type { JobProfileStats as MultiJobProfileStats } from "./multipool/interf
 
 // Jobs API exports (ComfyUI v0.6.0+)
 export { JobsFeature } from "./features/jobs.js";
+export { AssetsFeature } from "./features/assets.js";
 export {
   JobStatus,
   type Job,
+  type JobStatusResponse,
   type JobsListResponse,
   type JobsListOptions,
   type JobsPagination,
+  type QueueManageResponse,
   type JobOutputPreview,
   type JobExecutionError,
-  type JobWorkflow
+  type JobWorkflow,
+  type Asset,
+  type AssetReference,
+  type AssetCreated,
+  type ListAssetsOptions,
+  type ListAssetsResponse,
+  type UploadAssetOptions,
+  type CreateAssetFromHashOptions,
+  type AssetUpdate,
+  type AssetUpdated,
+  type TagsModificationResponse,
+  type TagInfo,
+  type ListTagsResponse
 } from "./types/api.js";
