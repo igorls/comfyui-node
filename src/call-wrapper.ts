@@ -15,6 +15,9 @@ import {
 import { buildEnqueueFailedError } from "./utils/response-error.js";
 
 const DISCONNECT_FAILURE_GRACE_MS = 5000;
+// After the grace period, if the server queue can't be read at all (busy/unreachable),
+// re-arm this many times before giving up — tolerating a temporarily blocked server.
+const DISCONNECT_UNKNOWN_MAX_TICKS = 12;
 const CALL_WRAPPER_DEBUG = process.env.WORKFLOW_POOL_DEBUG === "1";
 
 type LogEventDetail = TComfyAPIEventMap["log"] extends CustomEvent<infer D> ? D : never;
@@ -286,7 +289,19 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
     > = Promise.resolve(null);
 
     const statusHandler = async () => {
-      const queue = await this.client.getQueue();
+      let queue;
+      try {
+        queue = await this.client.getQueue();
+      } catch (error) {
+        // Transient HTTP failure (e.g. ComfyUI's single thread is busy executing
+        // another job and briefly not serving HTTP). We can't read the queue, so
+        // skip this status tick rather than letting the rejection escape; websocket
+        // execution events and history recovery still drive completion.
+        this.emitLog("CallWrapper.status", "getQueue failed; skipping status tick", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+        return;
+      }
       const queueItems = [...queue.queue_pending, ...queue.queue_running];
       this.emitLog("CallWrapper.status", "queue snapshot", {
         running: queue.queue_running.length,
@@ -607,10 +622,11 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       return;
     }
     this.disconnectRecoveryActive = true;
+    this.disconnectUnknownTicks = 0;
     if (this.disconnectFailureTimer) {
       clearTimeout(this.disconnectFailureTimer);
     }
-    this.disconnectFailureTimer = setTimeout(() => this.failDisconnected("timeout"), DISCONNECT_FAILURE_GRACE_MS);
+    this.disconnectFailureTimer = setTimeout(() => void this.finalizeDisconnectRecovery(), DISCONNECT_FAILURE_GRACE_MS);
     void this.attemptHistoryCompletion("disconnect_start");
   }
 
@@ -644,6 +660,58 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       this.emitLog("CallWrapper.historyRecovery", "history fetch failed", { reason, error: String(error) });
     }
     return false;
+  }
+
+  private disconnectUnknownTicks = 0;
+
+  /**
+   * Runs after each disconnect grace period. Rather than failing a job that may
+   * simply be slow (cold model load) or queued behind other work, confirm whether
+   * it has finished (history) or is still alive in the server queue before giving
+   * up. Only fail when the job is genuinely gone, or after the server queue has
+   * been unreadable for a bounded number of ticks.
+   */
+  private async finalizeDisconnectRecovery(): Promise<void> {
+    if (!this.disconnectRecoveryActive || this.isCompletingSuccessfully) {
+      return;
+    }
+    // 1) Did it complete while the socket was quiet?
+    if (await this.attemptHistoryCompletion("grace_elapsed")) {
+      return;
+    }
+    if (!this.disconnectRecoveryActive || this.isCompletingSuccessfully) {
+      return;
+    }
+    // 2) Is the job still alive in the server queue? If so the disconnect was
+    //    transient (server just busy / our socket went quiet) and we keep waiting.
+    let stillQueued: boolean | null;
+    try {
+      const queue = await this.client.getQueue();
+      stillQueued = [...queue.queue_pending, ...queue.queue_running].some(
+        (item) => item[1] === this.promptId
+      );
+      this.disconnectUnknownTicks = 0;
+    } catch {
+      stillQueued = null; // couldn't read the queue at all
+    }
+    if (!this.disconnectRecoveryActive || this.isCompletingSuccessfully) {
+      return;
+    }
+    if (stillQueued === true) {
+      this.emitLog("CallWrapper.recovery", "job still in server queue after grace -> keep waiting", {
+        promptId: this.promptId
+      });
+      this.disconnectFailureTimer = setTimeout(() => void this.finalizeDisconnectRecovery(), DISCONNECT_FAILURE_GRACE_MS);
+      return;
+    }
+    if (stillQueued === null && this.disconnectUnknownTicks < DISCONNECT_UNKNOWN_MAX_TICKS) {
+      this.disconnectUnknownTicks += 1;
+      this.disconnectFailureTimer = setTimeout(() => void this.finalizeDisconnectRecovery(), DISCONNECT_FAILURE_GRACE_MS);
+      return;
+    }
+    // Job is finished-but-not-in-history, genuinely missing from the queue, or the
+    // server has been unreadable for too long: give up.
+    this.failDisconnected(stillQueued === false ? "missing" : "timeout");
   }
 
   private failDisconnected(reason: string) {
