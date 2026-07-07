@@ -77,6 +77,8 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     comfyOrgApiKey?: string;
     /** Debug flag to emit verbose console logs for instrumentation */
     private _debug;
+    /** Whether verbose debug logging is enabled for this client. */
+    get isDebug(): boolean;
     private headers;
     /** Feature flags we announce to the server upon socket open */
     private announcedFeatureFlags;

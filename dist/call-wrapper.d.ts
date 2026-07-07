@@ -45,6 +45,8 @@ export declare class CallWrapper<I extends string, O extends string, T extends N
      * @param workflow The workflow object.
      */
     constructor(client: ComfyApi, workflow: PromptBuilder<I, O, T>);
+    /** Verbose instrumentation log, gated behind the client's `debug` flag. */
+    private dbg;
     /**
      * Set the callback function to be called when a preview event occurs.
      *
