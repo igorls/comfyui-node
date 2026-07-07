@@ -68,6 +68,32 @@ describe("JobQueueProcessor", () => {
         expect(jobStateRegistryMock.setJobStatus).toHaveBeenCalledWith(jobId, "running");
         expect(clientMock.state).toBe("busy");
     });
+    it("reserves the selected client so concurrent queues do not double-dispatch (#4)", async () => {
+        // One shared client, two separate workflow-hash queues each holding a job.
+        const clientMock = {
+            url: "http://localhost:8188", nodeName: "shared", state: "idle",
+            api: {
+                getQueue: jest.fn().mockResolvedValue({ queue_running: [], queue_pending: [] }),
+                ext: { queue: { queuePrompt: jest.fn().mockResolvedValue({ prompt_id: "p" }) } },
+            },
+        };
+        // Mirror real selection: only hand out the client while it is idle.
+        clientRegistryMock.getOptimalClient.mockImplementation(() => (clientMock.state === "idle" ? clientMock : null));
+        clientRegistryMock.clients = new Map([[clientMock.url, clientMock]]);
+        const procA = createProcessor("hash-A");
+        const procB = createProcessor("hash-B");
+        const wfA = new Workflow({});
+        wfA.uploadAssets = jest.fn().mockResolvedValue(undefined);
+        const wfB = new Workflow({});
+        wfB.uploadAssets = jest.fn().mockResolvedValue(undefined);
+        procA.queue.push({ jobId: "jobA", workflow: wfA, attempts: 1 });
+        procB.queue.push({ jobId: "jobB", workflow: wfB, attempts: 1 });
+        // Both queues process concurrently (as they would when the shared client idles).
+        await Promise.all([procA.processQueue(), procB.processQueue()]);
+        // Exactly one job reached the shared client; the other stays queued.
+        expect(clientMock.api.ext.queue.queuePrompt).toHaveBeenCalledTimes(1);
+        expect(clientMock.state).toBe("busy");
+    });
     it("should re-queue a job if no idle clients are available", async () => {
         const processor = createProcessor();
         const workflow = new Workflow({});

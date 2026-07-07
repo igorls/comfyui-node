@@ -65,6 +65,12 @@ export class JobQueueProcessor {
         this.isProcessing = false;
         return;
       } else {
+        // Reserve the client synchronously the moment it is selected. Multiple
+        // queues (one per workflow hash) can be poked concurrently when a shared
+        // client goes idle; without reserving here, each would independently
+        // select the same idle client and double-dispatch. If dispatch fails,
+        // runJobOnClient/handleFailure restores the client's state.
+        preferredClient.state = "busy";
         this.events.emitEvent({ type: "info", payload: `Assigning job ${nextJob.jobId} to client ${preferredClient.nodeName}` });
         this.jobs.setJobStatus(nextJob.jobId, "assigned", preferredClient.url);
         await this.runJobOnClient(nextJob, preferredClient);
@@ -148,6 +154,9 @@ export class JobQueueProcessor {
         preferredClient.state = "busy";
         this.events.emitEvent({ type: "debug", payload: Array.from(this.clientRegistry.clients.values()).map((c) => `${c.nodeName}: ${c.state}`).join(", ") });
       } else {
+        // Dispatch produced no prompt_id: the client never took the job, so
+        // release the reservation made at selection time.
+        preferredClient.state = "idle";
         const error = new Error("No prompt_id returned");
         this.events.emitEvent({ type: "error", payload: { message: `Failed to enqueue job ${nextJob.jobId} on client ${preferredClient.nodeName}`, error } });
         this.jobs.setJobStatus(nextJob.jobId, "failed");
