@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.10.0
+
+### Added
+
+- **`MultiWorkflowPool.submitToVariants(variants, options)`** – Submit one logical render that has a distinct workflow variant per host capability (e.g. the same image compiled for different GPUs / model quantizations, where each host can only run its own variant). Routes to the variant whose host is idle now, or enqueues a capable variant to run when a host frees. See the heterogeneous-cluster section of the README.
+- **`SubmitJobOptions.maxAttempts`** – Per-job override of the retry limit (default 3).
+- **`MultiWorkflowPoolOptions.completedJobRetention`** – Bounds how many terminal job states are retained (default 1000; 0 keeps everything).
+
+### Fixed
+
+- **`CallWrapper` debug logging** – ~30 `[CallWrapper]`/`[debug]` lines were logged unconditionally; they are now gated behind the client's debug flag via a new public `ComfyApi.isDebug` getter.
+- **General-queue liveness (`MultiWorkflowPool`)** – When a client went idle the pool only re-triggered that client's affinity queues, never the shared `"general"` queue. General-queue jobs (and any job on a client added without affinity) could stall forever after the initial drain. Idle now re-triggers affinity queues **∪ general**.
+- **Double-dispatch race (`MultiWorkflowPool`)** – A client is now reserved synchronously at selection, so concurrently-processed queues can't dispatch two jobs to the same idle host.
+- **Transient failures** – Now retried up to `maxAttempts` (on another eligible client, or the same one later) instead of being failed on first occurrence. General-queue jobs count any client as eligible for retry.
+- **Unbounded job-state growth** – Terminal job states are now evicted beyond `completedJobRetention`.
+
+### Changed
+
+- **Structural workflow hash (behavioral)** – `hashWorkflow` / `Workflow.structureHash` now honors its documented contract: it hashes topology + node `class_type` + model/resource references (checkpoints, LoRAs, VAEs), and **excludes** prompts, seeds, dimensions, cfg, steps and node `_meta`. Previously it hashed the entire workflow JSON, so affinity only matched byte-identical submissions and per-workflow failover blocked a single prompt rather than a whole workflow. The same graph with a different prompt/seed/size now shares a hash; a different model is a different hash. This changes `structureHash` values — a runtime routing/failover key (not persisted), so only code that hard-codes hash values is affected.
+
 ## 1.9.0
 
 ### Added

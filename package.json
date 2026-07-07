@@ -1,6 +1,6 @@
 {
   "name": "comfyui-node",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "ComfyUI Node.js Client",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -41,8 +41,8 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "build:watch": "tsc --project tsconfig.json --watch",
-    "test": "bun test --bail 10 ./test/*.spec.ts",
-    "test:unit": "bun test ./test/*.spec.ts",
+    "test": "bun test --bail 10 ./test/*.spec.ts ./src/multipool/tests/*.spec.ts",
+    "test:unit": "bun test ./test/*.spec.ts ./src/multipool/tests/*.spec.ts",
     "test:all": "bun test",
     "test:integration": "bun test ./test/integration/",
     "test:integration:simple": "bun test ./test/integration/reconnection-simple.example.spec.ts",
