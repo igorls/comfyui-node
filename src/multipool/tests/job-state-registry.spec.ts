@@ -16,6 +16,9 @@ describe("JobStateRegistry", () => {
     poolMock = {
       options: { enableProfiling: false },
       queues: new Map(),
+      // setPromptId/completeJob/failJob emit lifecycle events for external
+      // trackers (e.g. Redis multi-worker sync); the mock must provide it.
+      emitEvent: jest.fn(),
     } as any;
 
     eventsMock = {
