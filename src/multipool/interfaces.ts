@@ -31,6 +31,12 @@ export interface MultiWorkflowPoolOptions {
   enableMonitoring?: boolean;
   monitoringIntervalMs?: number;
   enableProfiling?: boolean;
+  /**
+   * How many terminal (completed/failed/canceled) job states to retain before
+   * evicting the oldest, so a long-running pool doesn't accumulate job state
+   * without bound. Default 1000. Set to 0 to retain everything.
+   */
+  completedJobRetention?: number;
 }
 
 export type ClientState = "idle" | "busy" | "offline";

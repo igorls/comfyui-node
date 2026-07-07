@@ -7,6 +7,8 @@ export class JobStateRegistry {
     jobs = new Map();
     // Map of prompt_id to jobId
     promptIdToJobId = new Map();
+    // FIFO of jobIds that reached a terminal state, for bounded retention.
+    retired = [];
     constructor(pool, clients) {
         this.pool = pool;
         this.clients = clients;
@@ -56,6 +58,7 @@ export class JobStateRegistry {
                         await client.api.ext.queue.interrupt(jobState.prompt_id);
                         // Mark job as canceled
                         jobState.status = "canceled";
+                        this.retire(jobId);
                         // Mark client as idle
                         client.state = "idle";
                         // Also resolve the promise to avoid hanging
@@ -81,6 +84,7 @@ export class JobStateRegistry {
         else {
             // For pending or no_clients status, just mark as canceled
             jobState.status = "canceled";
+            this.retire(jobId);
             // Also resolve the promise to avoid hanging
             if (jobState.resolver) {
                 const results = {
@@ -144,6 +148,7 @@ export class JobStateRegistry {
         }
         if (jobState.prompt_id === prompt_id) {
             jobState.status = "completed";
+            this.retire(jobState.jobId);
             // Notify profiler of completion
             if (jobState.profiler) {
                 jobState.profiler.onExecutionComplete();
@@ -232,6 +237,26 @@ export class JobStateRegistry {
             queue.dequeueJob(jobState.jobId);
         }
     }
+    /**
+     * Record a job that reached a terminal state (completed/failed/canceled) and,
+     * once the retention cap is exceeded, evict the OLDEST retained terminal jobs
+     * from `jobs`/`promptIdToJobId` so a long-running pool doesn't grow without
+     * bound. The current (newest) job is always retained, so its result stays
+     * readable. A cap of 0 keeps everything (previous behavior).
+     */
+    retire(jobId) {
+        this.retired.push(jobId);
+        const cap = this.pool.options.completedJobRetention;
+        if (!cap || cap <= 0)
+            return;
+        while (this.retired.length > cap) {
+            const old = this.retired.shift();
+            const st = this.jobs.get(old);
+            if (st?.prompt_id)
+                this.promptIdToJobId.delete(st.prompt_id);
+            this.jobs.delete(old);
+        }
+    }
     attachJobProgressListener(jobId, progressListener) {
         const jobState = this.jobs.get(jobId);
         if (!jobState) {
@@ -276,6 +301,7 @@ export class JobStateRegistry {
             throw new Error(`Job with ID ${jobId} not found.`);
         }
         jobState.status = "failed";
+        this.retire(jobId);
         // Notify profiler of completion (even on failure)
         if (jobState.profiler) {
             jobState.profiler.onExecutionComplete();

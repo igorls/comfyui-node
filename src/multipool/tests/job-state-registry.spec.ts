@@ -191,4 +191,24 @@ describe("JobStateRegistry", () => {
       );
     });
   });
+
+  describe("retention", () => {
+    it("evicts the oldest terminal jobs beyond completedJobRetention (#13)", () => {
+      (jobRegistry.pool as any).options.completedJobRetention = 2;
+      const ids = [0, 1, 2].map(() => jobRegistry.addJob(new Workflow({})));
+      for (const id of ids) jobRegistry.setJobFailure(id, {});
+
+      expect(jobRegistry.jobs.has(ids[0])).toBe(false); // oldest evicted
+      expect(jobRegistry.jobs.has(ids[1])).toBe(true);
+      expect(jobRegistry.jobs.has(ids[2])).toBe(true);
+    });
+
+    it("retains everything when completedJobRetention is 0", () => {
+      (jobRegistry.pool as any).options.completedJobRetention = 0;
+      const ids = [0, 1, 2, 3].map(() => jobRegistry.addJob(new Workflow({})));
+      for (const id of ids) jobRegistry.setJobFailure(id, {});
+
+      for (const id of ids) expect(jobRegistry.jobs.has(id)).toBe(true);
+    });
+  });
 });

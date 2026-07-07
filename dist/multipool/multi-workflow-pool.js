@@ -24,7 +24,8 @@ export class MultiWorkflowPool {
             connectionTimeoutMs: options?.connectionTimeoutMs ?? 10000,
             enableMonitoring: options?.enableMonitoring ?? false,
             monitoringIntervalMs: options?.monitoringIntervalMs ?? 60000,
-            enableProfiling: options?.enableProfiling ?? false
+            enableProfiling: options?.enableProfiling ?? false,
+            completedJobRetention: options?.completedJobRetention ?? 1000
         };
         this.events = new PoolEventManager(this);
         this.clientRegistry = new ClientRegistry(this, this.events);

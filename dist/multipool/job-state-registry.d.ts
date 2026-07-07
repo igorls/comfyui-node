@@ -8,6 +8,7 @@ export declare class JobStateRegistry {
     clients: ClientRegistry;
     jobs: Map<string, JobState>;
     promptIdToJobId: Map<string, string>;
+    private retired;
     constructor(pool: MultiWorkflowPool, clients: ClientRegistry);
     addJob(workflow: Workflow): string;
     getJobStatus(jobId: string): JobStatus;
@@ -29,6 +30,14 @@ export declare class JobStateRegistry {
         saved_path?: string | null;
     }>): void;
     private removeJobFromQueue;
+    /**
+     * Record a job that reached a terminal state (completed/failed/canceled) and,
+     * once the retention cap is exceeded, evict the OLDEST retained terminal jobs
+     * from `jobs`/`promptIdToJobId` so a long-running pool doesn't grow without
+     * bound. The current (newest) job is always retained, so its result stays
+     * readable. A cap of 0 keeps everything (previous behavior).
+     */
+    private retire;
     attachJobProgressListener(jobId: string, progressListener: (progress: {
         value: number;
         max: number;
