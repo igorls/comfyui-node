@@ -1,5 +1,6 @@
 import { describe, it, expect, jest } from "bun:test";
 import { MultiWorkflowPool } from "../multi-workflow-pool.js";
+import { Workflow } from "../workflow.js";
 // Regression coverage for the idle re-trigger (general-queue liveness).
 //
 // When a client goes idle the pool must re-poke the queues that client can
@@ -50,6 +51,49 @@ describe("MultiWorkflowPool.triggerQueuesForIdleClient", () => {
         };
         expect(() => pool.triggerQueuesForIdleClient(client)).not.toThrow();
         expect(general.processQueue).toHaveBeenCalledTimes(1);
+    });
+});
+describe("MultiWorkflowPool.submitToVariants", () => {
+    const wf = (ckpt) => Workflow.from({ "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } } });
+    // Replace the pool's client registry + submitJob with stubs/spies.
+    const wire = (pool, registry) => {
+        pool.clientRegistry = registry;
+        return jest.spyOn(pool, "submitJob").mockResolvedValue("job-id");
+    };
+    it("throws when no variants are given", async () => {
+        const pool = new MultiWorkflowPool();
+        await expect(pool.submitToVariants([])).rejects.toThrow(/at least one/);
+    });
+    it("dispatches the variant whose host is idle now", async () => {
+        const pool = new MultiWorkflowPool();
+        const vA = wf("a.safetensors"), vB = wf("b.safetensors");
+        const submit = wire(pool, {
+            getOptimalClient: (v) => (v === vB ? { url: "http://b", priority: 0 } : null),
+            hasClientsForWorkflow: () => true,
+        });
+        await pool.submitToVariants([vA, vB]);
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit.mock.calls[0][0]).toBe(vB);
+    });
+    it("prefers the idle host with the highest priority (order-independent)", async () => {
+        const pool = new MultiWorkflowPool();
+        const vA = wf("a.safetensors"), vB = wf("b.safetensors");
+        const submit = wire(pool, {
+            getOptimalClient: (v) => (v === vA ? { url: "http://a", priority: 5 } : { url: "http://b", priority: 1 }),
+            hasClientsForWorkflow: () => true,
+        });
+        await pool.submitToVariants([vB, vA]);
+        expect(submit.mock.calls[0][0]).toBe(vA);
+    });
+    it("parks on a capable variant when no host is idle", async () => {
+        const pool = new MultiWorkflowPool();
+        const vA = wf("a.safetensors"), vB = wf("b.safetensors");
+        const submit = wire(pool, {
+            getOptimalClient: () => null, // none idle
+            hasClientsForWorkflow: (h) => h === vB.structureHash, // only B has clients
+        });
+        await pool.submitToVariants([vA, vB]);
+        expect(submit.mock.calls[0][0]).toBe(vB);
     });
 });
 //# sourceMappingURL=multi-workflow-pool.spec.js.map

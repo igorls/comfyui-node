@@ -24,6 +24,26 @@ export declare class MultiWorkflowPool {
     }): void;
     removeClient(clientUrl: string): void;
     submitJob(workflow: Workflow<any>, options?: SubmitJobOptions): Promise<string>;
+    /**
+     * Submit a LOGICAL job that has a distinct workflow variant per host
+     * capability — e.g. the same render compiled for different GPUs or model
+     * quantizations, where each host can only run its own variant (different model
+     * filenames give the variants different structure hashes).
+     *
+     * Register each host's variant with `addClient({ workflowAffinity: [variant] })`.
+     * This picks the variant whose registered clients include an idle host right
+     * now (highest effective priority wins); if none are idle, it enqueues the
+     * first variant that has capable clients so the job runs when one of its hosts
+     * frees. Routing then goes through {@link submitJob}, so the usual
+     * queueing / failover / retry / monitoring all apply.
+     *
+     * Note: once enqueued in the no-idle-host case, a job commits to its chosen
+     * variant's hosts; it is NOT re-routed to a different variant if another
+     * variant's host frees first. For batch/backfill workloads (submitting many
+     * logical jobs) each call lands on a currently-idle host, which spreads work
+     * across a heterogeneous pool.
+     */
+    submitToVariants(variants: Workflow<any>[], options?: SubmitJobOptions): Promise<string>;
     getJobStatus(jobId: string): import("./interfaces.js").JobStatus;
     cancelJob(jobId: string): Promise<void>;
     attachEventHook(event: string, listener: (e: PoolEvent) => void): void;

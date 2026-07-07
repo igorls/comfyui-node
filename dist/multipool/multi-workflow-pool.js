@@ -156,6 +156,57 @@ export class MultiWorkflowPool {
         await queue.enqueueJob(newJobId, workflow, priorityOverrides, options?.maxAttempts);
         return newJobId;
     }
+    /**
+     * Submit a LOGICAL job that has a distinct workflow variant per host
+     * capability — e.g. the same render compiled for different GPUs or model
+     * quantizations, where each host can only run its own variant (different model
+     * filenames give the variants different structure hashes).
+     *
+     * Register each host's variant with `addClient({ workflowAffinity: [variant] })`.
+     * This picks the variant whose registered clients include an idle host right
+     * now (highest effective priority wins); if none are idle, it enqueues the
+     * first variant that has capable clients so the job runs when one of its hosts
+     * frees. Routing then goes through {@link submitJob}, so the usual
+     * queueing / failover / retry / monitoring all apply.
+     *
+     * Note: once enqueued in the no-idle-host case, a job commits to its chosen
+     * variant's hosts; it is NOT re-routed to a different variant if another
+     * variant's host frees first. For batch/backfill workloads (submitting many
+     * logical jobs) each call lands on a currently-idle host, which spreads work
+     * across a heterogeneous pool.
+     */
+    async submitToVariants(variants, options) {
+        if (!variants || variants.length === 0) {
+            throw new Error("submitToVariants requires at least one workflow variant.");
+        }
+        let priorityOverrides;
+        if (options?.priorityOverrides) {
+            priorityOverrides = options.priorityOverrides instanceof Map
+                ? options.priorityOverrides
+                : new Map(Object.entries(options.priorityOverrides));
+        }
+        // Prefer the variant with the highest-priority IDLE capable host right now.
+        let chosen;
+        let bestPriority = -Infinity;
+        for (const variant of variants) {
+            if (!variant.structureHash)
+                variant.updateHash();
+            const client = this.clientRegistry.getOptimalClient(variant, priorityOverrides);
+            if (client) {
+                const p = priorityOverrides?.get(client.url) ?? client.priority ?? 0;
+                if (p > bestPriority) {
+                    bestPriority = p;
+                    chosen = variant;
+                }
+            }
+        }
+        // No idle host: enqueue the first variant that at least has capable clients
+        // (so it runs when a host frees); else fall back to the first variant.
+        if (!chosen) {
+            chosen = variants.find((v) => v.structureHash && this.clientRegistry.hasClientsForWorkflow(v.structureHash)) ?? variants[0];
+        }
+        return this.submitJob(chosen, options);
+    }
     getJobStatus(jobId) {
         return this.jobRegistry.getJobStatus(jobId);
     }

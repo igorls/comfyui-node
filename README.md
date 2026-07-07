@@ -187,6 +187,35 @@ const results = await pool.waitForJobCompletion(sdxlJobId);
 console.log("SDXL Job completed!", results.images);
 ```
 
+#### Same render, different model per host (`submitToVariants`)
+
+When one *logical* render needs a different graph per host — e.g. the same image
+compiled for different GPUs or model quantizations (an `nvfp4` build on one card,
+an `int8` build on another) — the variants reference different model files, so
+they have different structure hashes and are, to the pool, different workflows.
+Register each host's variant, then submit them together with `submitToVariants`:
+the pool runs the variant whose host is idle right now, or (if none are idle)
+enqueues one so it runs when a capable host frees. Submitting many logical jobs
+spreads them across the heterogeneous pool.
+
+```ts
+const kreaNvfp4 = Workflow.from(graphNvfp4).updateHash(); // Blackwell filenames
+const kreaInt8  = Workflow.from(graphInt8).updateHash();  // Ampere filenames
+
+pool.addClient("http://blackwell:8188", { workflowAffinity: [kreaNvfp4] });
+pool.addClient("http://ampere:8188",    { workflowAffinity: [kreaInt8] });
+await pool.init();
+
+// Runs on whichever host is free, using that host's own variant.
+const jobId = await pool.submitToVariants([kreaNvfp4, kreaInt8]);
+const results = await pool.waitForJobCompletion(jobId);
+```
+
+> Note: the structure hash covers topology, node types and **model references**
+> (checkpoints, LoRAs, VAEs), but not prompts, seeds or dimensions — so the same
+> graph with a different prompt routes to the same affinity group, while a
+> different model is treated as a different capability.
+
 ## What's New in v1.6.5
 
 - **Integration Test Infrastructure** – Comprehensive reconnection testing with real mock server processes
