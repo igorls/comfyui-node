@@ -178,6 +178,28 @@ export class MultiWorkflowPool {
         this.events.emitEvent(event);
     }
     // PRIVATE METHODS
+    /**
+     * Re-trigger the queues a now-idle client is able to serve: its affinity
+     * queues PLUS the shared "general" queue. Any idle client may pull a general
+     * job — including clients registered without affinity (whose affinity set is
+     * empty/undefined) — so the general queue must always be poked. Without it,
+     * general-queue jobs submitted while every client was busy, and every job on
+     * a no-affinity client, would never be pulled after the initial drain (the
+     * only other re-trigger is a new submission).
+     */
+    triggerQueuesForIdleClient(client) {
+        const queueKeys = new Set(client.workflowAffinity ?? []);
+        queueKeys.add("general");
+        for (const key of queueKeys) {
+            const queue = this.queues.get(key);
+            if (!queue)
+                continue;
+            this.events.emitEvent({ type: "debug", payload: `Triggering queue processing for '${key}' due to client ${client.nodeName} becoming idle.` });
+            queue.processQueue().catch((reason) => {
+                this.events.emitEvent({ type: "error", payload: `Error processing job queue for '${key}': ${reason}` });
+            });
+        }
+    }
     assertQueue(workflowHash) {
         if (!workflowHash) {
             return null;
@@ -219,16 +241,7 @@ export class MultiWorkflowPool {
             // Update client state based on status
             if (event.detail.status.exec_info.queue_remaining === 0) {
                 client.state = "idle";
-                // Trigger queue processing
-                client.workflowAffinity?.forEach((value) => {
-                    this.events.emitEvent({ type: "debug", payload: `Triggering queue processing for workflow hash ${value} due to client ${client.nodeName} becoming idle.` });
-                    const queue = this.queues.get(value);
-                    if (queue) {
-                        queue.processQueue().catch((reason) => {
-                            this.events.emitEvent({ type: "error", payload: `Error processing job queue for workflow hash ${value}: ${reason}` });
-                        });
-                    }
-                });
+                this.triggerQueuesForIdleClient(client);
             }
             else {
                 client.state = "busy";
