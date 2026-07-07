@@ -94,6 +94,30 @@ describe("JobQueueProcessor", () => {
         expect(clientMock.api.ext.queue.queuePrompt).toHaveBeenCalledTimes(1);
         expect(clientMock.state).toBe("busy");
     });
+    it("retries transient failures up to maxAttempts, then fails (#5)", async () => {
+        // bodyJSON present but not a connection/incompatibility error -> transient.
+        const err = new Error("boom");
+        err.bodyJSON = { exception_message: "momentary runtime glitch" };
+        const clientMock = {
+            url: "http://localhost:8188", nodeName: "c", state: "idle",
+            api: {
+                getQueue: jest.fn().mockResolvedValue({ queue_running: [], queue_pending: [] }),
+                ext: { queue: { queuePrompt: jest.fn().mockRejectedValue(err) } },
+            },
+        };
+        clientRegistryMock.getOptimalClient.mockReturnValue(clientMock);
+        clientRegistryMock.getAllEligibleClientsForWorkflow.mockReturnValue([clientMock]);
+        clientRegistryMock.clients = new Map([[clientMock.url, clientMock]]);
+        const processor = createProcessor("hash-A");
+        const wf = new Workflow({});
+        wf.uploadAssets = jest.fn().mockResolvedValue(undefined);
+        processor.queue.push({ jobId: "j", workflow: wf, attempts: 1, maxAttempts: 2 });
+        await processor.processQueue();
+        // Dispatched twice (initial + one retry), then marked failed — not failed on
+        // the first transient error the way the old code did.
+        expect(clientMock.api.ext.queue.queuePrompt).toHaveBeenCalledTimes(2);
+        expect(jobStateRegistryMock.setJobFailure).toHaveBeenCalledTimes(1);
+    });
     it("should re-queue a job if no idle clients are available", async () => {
         const processor = createProcessor();
         const workflow = new Workflow({});

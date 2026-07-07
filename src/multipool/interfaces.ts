@@ -120,6 +120,12 @@ export interface SubmitJobOptions {
    * These overrides take precedence over the static priorities set at addClient() time.
    */
   priorityOverrides?: Map<string, number> | Record<string, number>;
+  /**
+   * Maximum dispatch attempts for this job before it is marked failed.
+   * Applies to retryable failures (transient errors, and incompatibility when
+   * other eligible clients exist). Defaults to the processor's maxAttempts (3).
+   */
+  maxAttempts?: number;
 }
 
 export interface QueueJob {
@@ -128,6 +134,8 @@ export interface QueueJob {
   attempts: number;
   /** Priority overrides for client selection */
   priorityOverrides?: Map<string, number>;
+  /** Per-job override of the processor's maxAttempts. */
+  maxAttempts?: number;
 }
 
 export type JobStatus = "pending" | "assigned" | "running" | "completed" | "failed" | "canceled" | "no_clients";

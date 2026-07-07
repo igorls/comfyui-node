@@ -182,7 +182,7 @@ export class MultiWorkflowPool {
     }
 
     const newJobId = this.jobRegistry.addJob(workflow);
-    await queue.enqueueJob(newJobId, workflow, priorityOverrides);
+    await queue.enqueueJob(newJobId, workflow, priorityOverrides, options?.maxAttempts);
     return newJobId;
   }
 

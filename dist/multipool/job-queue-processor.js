@@ -14,13 +14,13 @@ export class JobQueueProcessor {
         this.jobs = stateRegistry;
         this.workflowHash = workflowHash;
     }
-    async enqueueJob(newJobId, workflow, priorityOverrides) {
+    async enqueueJob(newJobId, workflow, priorityOverrides, maxAttempts) {
         // validate job state on registry
         const jobStatus = this.jobs.getJobStatus(newJobId);
         if (jobStatus !== "pending") {
             throw new Error(`Cannot enqueue job ${newJobId} with status ${jobStatus}`);
         }
-        this.queue.push({ jobId: newJobId, workflow, attempts: 1, priorityOverrides });
+        this.queue.push({ jobId: newJobId, workflow, attempts: 1, priorityOverrides, maxAttempts });
         this.processQueue().catch(reason => {
             this.events.emitEvent({ type: "error", payload: { message: `Error processing job queue for workflow hash ${this.workflowHash}`, error: reason } });
         });
@@ -169,9 +169,12 @@ export class JobQueueProcessor {
                 this.retryOrMarkFailed(nextJob, e);
                 break;
             case "transient":
+                // Transient errors (OOM, momentary server-side faults) are retryable —
+                // on another eligible client, or the same one on a later attempt —
+                // bounded by maxAttempts.
                 preferredClient.state = "idle";
-                this.events.emitEvent({ type: "queue", payload: { workflowHash: this.workflowHash, message: `Job ${nextJob.jobId} failed with a transient error. It will not be retried.` } });
-                this.jobs.setJobFailure(nextJob.jobId, { error: message, details: e.bodyJSON });
+                this.events.emitEvent({ type: "queue", payload: { workflowHash: this.workflowHash, message: `Job ${nextJob.jobId} failed with a transient error: ${message}` } });
+                this.retryOrMarkFailed(nextJob, e);
                 break;
         }
         // Trigger processing for the next job in the queue
@@ -180,14 +183,19 @@ export class JobQueueProcessor {
         });
     }
     retryOrMarkFailed(nextJob, originalError) {
-        // Check if the job has exceeded its max attempts
-        if (nextJob.attempts >= this.maxAttempts) {
-            this.events.emitEvent({ type: "queue", payload: { workflowHash: this.workflowHash, message: `Job ${nextJob.jobId} has reached max attempts (${this.maxAttempts}). Marking as failed.` } });
+        // Check if the job has exceeded its max attempts (per-job override wins)
+        const limit = nextJob.maxAttempts ?? this.maxAttempts;
+        if (nextJob.attempts >= limit) {
+            this.events.emitEvent({ type: "queue", payload: { workflowHash: this.workflowHash, message: `Job ${nextJob.jobId} has reached max attempts (${limit}). Marking as failed.` } });
             this.jobs.setJobFailure(nextJob.jobId, originalError.bodyJSON);
             return;
         }
-        // Confirm if we should re-queue or fail the job
-        const eligibleClients = this.clientRegistry.getAllEligibleClientsForWorkflow(nextJob.workflow);
+        // Confirm if we should re-queue or fail the job. General-queue jobs (no
+        // declared affinity) can run on ANY client, so any client keeps them
+        // retryable; specific-hash jobs only retry while an affinity client exists.
+        const eligibleClients = this.workflowHash === "general"
+            ? Array.from(this.clientRegistry.clients.values())
+            : this.clientRegistry.getAllEligibleClientsForWorkflow(nextJob.workflow);
         if (eligibleClients.length > 0) {
             this.events.emitEvent({ type: "queue", payload: { workflowHash: this.workflowHash, message: `Re-queuing job ${nextJob.jobId} (attempt ${nextJob.attempts + 1}) as there are other eligible clients available.` } });
             this.jobs.setJobStatus(nextJob.jobId, "pending");
