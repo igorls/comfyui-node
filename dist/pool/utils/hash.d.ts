@@ -1,16 +1,23 @@
 /**
- * Deterministically hash a workflow JSON structure (node graph, connections, node types).
- * This hash is computed on workflow initialization and can be used by failover strategies
- * to group related jobs and track client compatibility.
+ * Deterministically hash a workflow's STRUCTURE, for pools/failover strategies
+ * to group related jobs and track which clients can run them.
  *
- * The hash is based on the STRUCTURE of the workflow (nodes, connections, class types),
- * NOT on parameter values. This ensures that running the same workflow with different
- * prompts, seeds, or dimensions produces the same hash.
+ * The hash is derived from the workflow's structure, NOT its volatile
+ * parameters. It includes:
+ *   - each node's id and `class_type`,
+ *   - the connection topology (inputs wired as `[sourceNodeId, slotIndex]`),
+ *   - the set of input keys, and
+ *   - model/resource reference values (checkpoints, LoRAs, VAEs, …) — these are
+ *     capability-relevant, so changing a checkpoint DOES change the hash.
+ * It excludes prompts, seeds, dimensions, cfg, steps, samplers and other
+ * scalar parameters, and node `_meta` (titles). So the same graph run with
+ * different prompts / seeds / dimensions produces the SAME hash, while a
+ * different graph — or the same graph pointed at a different model — produces a
+ * different hash.
  *
- * If you modify the workflow structure AFTER initialization (e.g., changing a checkpoint),
- * call workflow.updateHash() to recalculate the hash.
+ * If you mutate the workflow after construction, call `workflow.updateHash()`.
  *
- * @param workflow - The workflow JSON object
+ * @param workflow - The workflow JSON object (ComfyUI prompt: id → node)
  * @returns SHA256 hash of the normalized workflow structure
  */
 export declare function hashWorkflow(workflow: object): string;

@@ -148,7 +148,7 @@ export class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends OutputMap
   }> = [];
   private _pendingFolderFiles: Array<{ subfolder: string; blob: Blob; fileName: string; override?: boolean }> = [];
 
-  /** Structural hash of the workflow JSON for compatibility tracking in failover scenarios */
+  /** Structural hash — topology + class_types + model refs, but NOT prompts/seeds/dims — for routing + failover grouping. See {@link hashWorkflow}. */
   structureHash?: string;
 
   // Overloads to preserve literal type inference when passing an object

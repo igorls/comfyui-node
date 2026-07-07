@@ -68,7 +68,7 @@ export declare class Workflow<T extends WorkflowJSON = WorkflowJSON, O extends O
     private bypassedNodes;
     private _pendingImageInputs;
     private _pendingFolderFiles;
-    /** Structural hash of the workflow JSON for compatibility tracking in failover scenarios */
+    /** Structural hash — topology + class_types + model refs, but NOT prompts/seeds/dims — for routing + failover grouping. See {@link hashWorkflow}. */
     structureHash?: string;
     static from<TD extends WorkflowJSON>(data: TD, opts?: {
         autoHash?: boolean;
