@@ -1,7 +1,7 @@
 import { NodeData, NodeDef, NodeProgress } from "./types/api.js";
 import { ComfyApi } from "./client.js";
 import { PromptBuilder } from "./prompt-builder.js";
-import { TExecutionCached, TComfyAPIEventMap } from "./types/event.js";
+import { TExecution, TExecutionCached, TComfyAPIEventMap } from "./types/event.js";
 import {
   FailedCacheError,
   WentMissingError,
@@ -898,7 +898,16 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
       }
     };
 
-    const executedEnd = async () => {
+    const executedEnd = async (ev: CustomEvent<TExecution>) => {
+      // Only react to this wrapper's own prompt. With concurrent jobs sharing one
+      // client connection, another job's execution_success would otherwise race in
+      // while our outputs are still pending and mark this job as failed.
+      if (ev?.detail?.prompt_id && ev.detail.prompt_id !== promptId) {
+        this.dbg(
+          `[CallWrapper] execution_success for different prompt ${ev.detail.prompt_id.substring(0, 8)}... - ignoring (waiting for ${promptId.substring(0, 8)}...)`
+        );
+        return;
+      }
       this.dbg(
         `[CallWrapper] execution_success fired for ${promptId.substring(0, 8)}..., remainingOutput=${remainingOutput}, totalOutput=${totalOutput}`
       );
@@ -973,19 +982,17 @@ export class CallWrapper<I extends string, O extends string, T extends NodeData>
         // Try to extract outputs from history data
         let populatedCount = 0;
         for (const [nodeIdStr, nodeOutput] of Object.entries(hisData.outputs)) {
-          const nodeId = parseInt(nodeIdStr, 10);
-          const outputKey = reverseOutputMapped[nodeId];
+          const outputKey =
+            (reverseOutputMapped as any)[nodeIdStr] ??
+            (reverseOutputMapped as any)[String(nodeIdStr)] ??
+            (reverseOutputMapped as any)[parseInt(nodeIdStr, 10)];
 
           if (outputKey && nodeOutput) {
-            // nodeOutput is typically { images: [...] } or similar - take the first property
-            const outputValue = Array.isArray(nodeOutput) ? nodeOutput[0] : Object.values(nodeOutput)[0];
-            if (outputValue !== undefined) {
-              this.output[outputKey as keyof PromptBuilder<I, O, T>["mapOutputKeys"]] = outputValue;
-              this.onOutputFn?.(outputKey, outputValue, this.promptId);
-              populatedCount++;
-              remainingOutput--;
-              this.dbg(`[CallWrapper] Populated ${outputKey} from history`);
-            }
+            this.output[outputKey as keyof PromptBuilder<I, O, T>["mapOutputKeys"]] = nodeOutput as any;
+            this.onOutputFn?.(outputKey, nodeOutput, this.promptId);
+            populatedCount++;
+            remainingOutput--;
+            this.dbg(`[CallWrapper] Populated ${outputKey} from history`);
           }
         }
 

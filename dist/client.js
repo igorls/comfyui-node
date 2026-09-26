@@ -349,9 +349,12 @@ export class ComfyApi extends TypedEventTarget {
         if (!options) {
             options = {};
         }
+        const callerHeaders = options.headers || {};
         options.headers = {
+            Connection: "close",
             ...this.headers,
-            ...this.getCredentialHeaders()
+            ...this.getCredentialHeaders(),
+            ...callerHeaders
         };
         options.mode = "cors";
         // Update last activity timestamp to keep WebSocket alive during HTTP requests

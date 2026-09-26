@@ -20,6 +20,18 @@ export declare class NodeFeature extends FeatureBase {
      */
     getLoras(): Promise<string[]>;
     /**
+     * Retrieves the unets/diffusion models from the server.
+     */
+    getUnets(): Promise<string[]>;
+    /**
+     * Retrieves the CLIP text encoders from the server.
+     */
+    getClips(): Promise<string[]>;
+    /**
+     * Retrieves the VAE models from the server.
+     */
+    getVaes(): Promise<string[]>;
+    /**
      * Retrieves the sampler information.
      * @returns An object containing the sampler and scheduler information.
      */
@@ -27,8 +39,8 @@ export declare class NodeFeature extends FeatureBase {
         sampler?: undefined;
         scheduler?: undefined;
     } | {
-        sampler: import("../types/api.js").NodeInputSpec;
-        scheduler: import("../types/api.js").NodeInputSpec;
+        sampler: string[] | [import("../types/api.js").NodeInputType, import("../types/api.js").NodeInputConfig];
+        scheduler: string[] | [import("../types/api.js").NodeInputType, import("../types/api.js").NodeInputConfig];
     }>;
 }
 //# sourceMappingURL=node.d.ts.map
