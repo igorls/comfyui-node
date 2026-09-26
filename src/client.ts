@@ -76,6 +76,13 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
   /** Monotonic timestamp of last socket activity (used for timeout detection) */
   public lastActivity: number = Date.now();
 
+  /**
+   * Last time the WebSocket itself showed life (open, message, ping or pong). Unlike
+   * {@link lastActivity}, HTTP calls do not touch it, so it can tell a dead socket apart
+   * from a client that is merely busy polling over HTTP.
+   */
+  private lastSocketActivity: number = Date.now();
+
   /** WebSocket inactivity timeout (ms) before attempting reconnection */
   private readonly wsTimeout: number = 60000;
   private wsTimer: NodeJS.Timeout | null = null;
@@ -347,11 +354,8 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     }
     (this as any)._destroyed = true;
 
-    // Clean up WebSocket timer
-    if (this.wsTimer) {
-      clearInterval(this.wsTimer);
-      this.wsTimer = null;
-    }
+    // Stop any reconnect loop so it cannot open a new socket after destroy
+    this.abortReconnect();
 
     // Clean up polling timer if exists
     if (this._pollingTimer) {
@@ -359,26 +363,8 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       this._pollingTimer = null;
     }
 
-    // Clean up socket event handlers and force close WebSocket
-    if (this.socket) {
-      try {
-        // Remove all event handlers
-        this.socket.onclose = null;
-        this.socket.onerror = null;
-        this.socket.onmessage = null;
-        this.socket.onopen = null;
-
-        // Forcefully close the WebSocket
-        if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
-          this.socket.close();
-        }
-
-        // Terminate the WebSocket connection
-        this.socket.terminate();
-      } catch (e) {
-        this.log("destroy", "Error while closing WebSocket", e);
-      }
-    }
+    // Detach handlers, stop the heartbeat, and terminate the WebSocket
+    this.releaseSocket();
 
     // Destroy all extensions
     for (const ext in this.ext) {
@@ -690,6 +676,56 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     this.lastActivity = Date.now();
   }
 
+  /** Record traffic on the WebSocket itself (see {@link lastSocketActivity}). */
+  private markSocketActivity() {
+    this.lastSocketActivity = Date.now();
+    this.resetLastActivity();
+  }
+
+  /**
+   * Detach and close the current socket without running its close handler.
+   *
+   * Discarding a socket (reconnect, failed liveness check, destroy) must not let its
+   * `onclose` fire afterwards: that handler would schedule another reconnect and tear down
+   * the replacement socket. A no-op error listener stays attached because `ws` throws on an
+   * `error` event with no listener, which terminating a CONNECTING socket can emit.
+   *
+   * @internal
+   */
+  releaseSocket() {
+    if (this.wsTimer) {
+      clearInterval(this.wsTimer);
+      this.wsTimer = null;
+    }
+    const socket = this.socket;
+    if (!socket) return;
+    this.socket = null;
+    socket.onclose = null;
+    socket.onmessage = null;
+    socket.onopen = null;
+    socket.onerror = () => {};
+    try {
+      if (typeof (socket as any).terminate === "function") {
+        (socket as any).terminate();
+      } else {
+        socket.close();
+      }
+    } catch (error) {
+      this.log("socket", "Error while releasing WebSocket", error);
+    }
+  }
+
+  /**
+   * Treat an unresponsive socket exactly like a dropped one: discard it, report the
+   * disconnect, and reconnect. Only called for sockets that had opened.
+   */
+  private handleDeadSocket() {
+    this.releaseSocket();
+    this._connectionState = "disconnected";
+    this.dispatchEvent(new CustomEvent("status", { detail: null }));
+    this.reconnectWs(true);
+  }
+
   /**
    * Check if WebSocket is currently connected and open.
    */
@@ -915,6 +951,11 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       }
     };
 
+    // Heartbeat: after `wsTimeout` of silence, ping; if the socket then stays silent for another
+    // `wsTimeout` (no pong, no message), it is dead. A peer that restarted or a dropped NAT/proxy
+    // leaves a socket that is still OPEN locally and never fires `onclose`, so without this check
+    // the client would wait for events forever.
+    let lastPingAt = 0;
     const startHeartbeat = () => {
       stopHeartbeat();
       if (!Number.isFinite(this.wsTimeout) || this.wsTimeout <= 0) {
@@ -922,17 +963,27 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       }
       const interval = Math.max(1000, Math.floor(this.wsTimeout / 2));
       this.wsTimer = setInterval(() => {
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+        const socket = this.socket;
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
           return;
         }
-        const idleFor = Date.now() - this.lastActivity;
+        const now = Date.now();
+        if (lastPingAt > this.lastSocketActivity) {
+          const unansweredFor = now - lastPingAt;
+          if (unansweredFor >= this.wsTimeout) {
+            this.log("socket", "Heartbeat ping unanswered - treating socket as dead", { unansweredMs: unansweredFor });
+            this.handleDeadSocket();
+          }
+          return;
+        }
+        const idleFor = now - this.lastSocketActivity;
         if (idleFor >= this.wsTimeout) {
           this.log("socket", "Heartbeat ping after inactivity", { idleMs: idleFor, wsTimeout: this.wsTimeout });
           try {
-            const wsAny = this.socket as any;
+            const wsAny = socket as any;
             if (typeof wsAny.ping === "function") {
               wsAny.ping();
-              this.resetLastActivity();
+              lastPingAt = now;
             } else {
               this.log("socket", "Heartbeat ping skipped - unsupported by WebSocket implementation");
             }
@@ -948,8 +999,16 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     let lastPromptId: string | null = null;
 
     if (this.socket) {
-      this.log("socket", "Socket already exists, skipping creation.");
-      return;
+      const readyState = this.socket.readyState;
+      const live = readyState === WebSocket.OPEN || readyState === WebSocket.CONNECTING;
+      if (live && !isReconnect) {
+        this.log("socket", "Socket already exists, skipping creation.");
+        return;
+      }
+      // A reconnect always wants a fresh socket, and a CLOSING/CLOSED leftover must never
+      // block one: skipping here is what left clients without events after a server restart.
+      this.log("socket", "Discarding previous socket before creating a new one", { readyState, isReconnect });
+      this.releaseSocket();
     }
 
     const headers = {
@@ -972,11 +1031,11 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       });
       const wsEventSource = this.socket as any;
       if (typeof wsEventSource.on === "function") {
-        wsEventSource.on("pong", () => this.resetLastActivity());
-        wsEventSource.on("ping", () => this.resetLastActivity());
+        wsEventSource.on("pong", () => this.markSocketActivity());
+        wsEventSource.on("ping", () => this.markSocketActivity());
       } else {
-        this.socket.addEventListener?.("pong" as any, () => this.resetLastActivity());
-        this.socket.addEventListener?.("ping" as any, () => this.resetLastActivity());
+        this.socket.addEventListener?.("pong" as any, () => this.markSocketActivity());
+        this.socket.addEventListener?.("ping" as any, () => this.markSocketActivity());
       }
 
       const activeSocket = this.socket;
@@ -992,7 +1051,13 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
           this.socket = null;
         }
 
-        if (reconnecting || isReconnect) {
+        if (reconnecting) {
+          return;
+        }
+        // A reconnect attempt that never opened: the reconnect loop schedules the next attempt.
+        // A reconnected socket that opened and later dropped must reconnect like any other;
+        // returning here for it left the client permanently without events after a second drop.
+        if (isReconnect && !opened) {
           return;
         }
 
@@ -1021,7 +1086,8 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
       };
 
       this.socket.onopen = () => {
-        this.resetLastActivity();
+        this.markSocketActivity();
+        lastPingAt = 0;
         reconnecting = false;
         opened = true;
         usePolling = false; // Reset polling flag if we have an open connection
@@ -1065,7 +1131,7 @@ export class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     // Only continue with WebSocket setup if creation was successful
     if (this.socket) {
       this.socket.onmessage = (event) => {
-        this.resetLastActivity();
+        this.markSocketActivity();
         try {
           // Unified binary handling: Buffer (ws), ArrayBuffer (WHATWG / Node >= 22), or typed array view
           let u8: Uint8Array | null = null;

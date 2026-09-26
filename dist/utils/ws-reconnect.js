@@ -30,17 +30,9 @@ export function runWebSocketReconnect(api, factory, opts = {}) {
             return;
         attempt++;
         api.dispatchEvent(new CustomEvent("log", { detail: { fnName: "ws-reconnect", message: `Attempt #${attempt}` } }));
-        // Clean up existing socket if present
-        const socket = api.socket;
-        if (socket) {
-            try {
-                if (typeof socket.terminate === "function")
-                    socket.terminate();
-                socket.close?.();
-            }
-            catch { /* ignore */ }
-            api.socket = null;
-        }
+        // Discard any existing socket without running its close handler, which would otherwise
+        // start a second reconnect loop and tear down the socket this attempt is about to create.
+        api.releaseSocket();
         try {
             factory();
         }

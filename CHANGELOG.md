@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.10.1
+
+### Fixed
+
+- **Event socket never recovered after a second server restart** – A socket created by a reconnect returned early from its `close` handler even after it had opened, so once the reconnect loop had finished, the next drop left the client without execution events for good (HTTP calls kept working, which hid it). Only a reconnect attempt that never opened now defers to the reconnect loop; a reconnected socket that drops reconnects like any other.
+- **Dead sockets were never detected** – The heartbeat marked the socket active as soon as it *sent* a ping, and HTTP requests also refreshed the same timestamp, so a socket whose peer vanished without a close frame (server restart behind a proxy or NAT, half-open TCP) stayed `OPEN` and `connected` forever. Liveness now tracks socket traffic only (open, message, ping, pong): after `wsTimeout` of silence the client pings, and if nothing comes back within another `wsTimeout` it discards the socket, emits `status`/`disconnected`, and reconnects.
+- **A leftover socket blocked reconnection** – `createSocket` skipped creation whenever any socket was still referenced, including a closed or dead one. A `CLOSING`/`CLOSED` leftover is now discarded, and reconnect attempts always start from a fresh socket.
+- **Discarded sockets could start a second reconnect loop** – The reconnect loop terminated the previous socket without detaching its handlers, so its late `close` event could tear down the replacement. Sockets are now released through `ComfyApi.releaseSocket()`, which detaches handlers first (keeping a no-op `error` listener, since `ws` throws on an unhandled `error`). `destroy()` also aborts any in-flight reconnect loop.
+
 ## 1.10.0
 
 ### Added

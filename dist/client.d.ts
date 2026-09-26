@@ -58,6 +58,12 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     listenTerminal: boolean;
     /** Monotonic timestamp of last socket activity (used for timeout detection) */
     lastActivity: number;
+    /**
+     * Last time the WebSocket itself showed life (open, message, ping or pong). Unlike
+     * {@link lastActivity}, HTTP calls do not touch it, so it can tell a dead socket apart
+     * from a client that is merely busy polling over HTTP.
+     */
+    private lastSocketActivity;
     /** WebSocket inactivity timeout (ms) before attempting reconnection */
     private readonly wsTimeout;
     private wsTimer;
@@ -237,6 +243,24 @@ export declare class ComfyApi extends TypedEventTarget<TComfyAPIEventMap> {
     /** Abort any in-flight reconnection loop (no-op if none active). */
     abortReconnect(): void;
     private resetLastActivity;
+    /** Record traffic on the WebSocket itself (see {@link lastSocketActivity}). */
+    private markSocketActivity;
+    /**
+     * Detach and close the current socket without running its close handler.
+     *
+     * Discarding a socket (reconnect, failed liveness check, destroy) must not let its
+     * `onclose` fire afterwards: that handler would schedule another reconnect and tear down
+     * the replacement socket. A no-op error listener stays attached because `ws` throws on an
+     * `error` event with no listener, which terminating a CONNECTING socket can emit.
+     *
+     * @internal
+     */
+    releaseSocket(): void;
+    /**
+     * Treat an unresponsive socket exactly like a dropped one: discard it, report the
+     * disconnect, and reconnect. Only called for sockets that had opened.
+     */
+    private handleDeadSocket;
     /**
      * Check if WebSocket is currently connected and open.
      */
