@@ -35,6 +35,8 @@ Welcome to the ComfyUI Node client library documentation.
 ## Additional Resources
 
 - [Demo Package](./demo-package.md) - Example package for testing
+- [Agent-First MCP Research](./comfy-mcp-research.md) - Primary-source research and repository gap analysis
+- [MCP Server Plan](./mcp-server-plan.md) - Proposed architecture, tool surface, delivery phases, and acceptance gates
 - [Main README](../README.md) - Project overview
 - [Changelog](../CHANGELOG.md) - Version history
 

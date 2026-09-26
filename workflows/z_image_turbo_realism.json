@@ -1,0 +1,102 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "z_image_turbo_nvfp4.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "type": "lumina2"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "ZImageTextEncoder",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "user_prompt": "award-winning macro photograph of an elderly master watchmaker with weathered hands and expressive focused eyes, repairing a luxury exposed tourbillon watch mechanism with precision tweezers under warm studio spotlighting. Incredibly crisp micro-textures on skin, natural pores, fine wrinkles, metallic sheen on miniature brass gears, sapphire crystal reflections, dust motes dancing in light beam, shallow depth of field, 85mm f/1.4 lens, 8k resolution, raw photo",
+      "template_preset": "photorealistic"
+    }
+  },
+  "5": {
+    "class_type": "ZImageTextEncoderSimple",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "user_prompt": "blurry, illustration, 3d render, painting, cartoon, plastic skin, oversaturated, deformed hands, extra fingers, watermark, low quality",
+      "template_preset": "none"
+    }
+  },
+  "6": {
+    "class_type": "ZImageEmptyLatent",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "7": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "4",
+        0
+      ],
+      "negative": [
+        "5",
+        0
+      ],
+      "latent_image": [
+        "6",
+        0
+      ],
+      "seed": 9942077,
+      "steps": 8,
+      "cfg": 1.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "7",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "ZImageTurbo_Masterpiece",
+      "images": [
+        "8",
+        0
+      ]
+    }
+  }
+}

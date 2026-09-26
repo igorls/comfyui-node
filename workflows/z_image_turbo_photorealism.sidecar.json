@@ -1,0 +1,10 @@
+{
+  "workflow": "z_image_turbo_photorealism.json",
+  "slots": {
+    "prompt": "5.inputs.text",
+    "negative_prompt": "6.inputs.text",
+    "seed": "8.inputs.seed",
+    "steps": "8.inputs.steps",
+    "cfg": "8.inputs.cfg"
+  }
+}

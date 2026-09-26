@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Bundled MCP server** – `npx -y comfyui-node` / `bunx comfyui-node` starts a local stdio [Model Context Protocol](https://modelcontextprotocol.io) server so coding agents can discover, build, validate, run and review ComfyUI workflows. Nine tools: `comfy_info`, `comfy_nodes`, `comfy_recipes`, `comfy_validate`, `comfy_workflows`, `comfy_generate`, `comfy_inspect`, `comfy_revise` and `comfy_job`. Generation uses the existing WebSocket connection, `comfy_inspect` returns bounded contact sheets, crops and comparisons, and `comfy_revise` records parent/child lineage with a seed policy. Workflows are read from `--workflow-dir` folders, with optional `.sidecar.json` metadata. See [docs/agent-workflow-guide.md](./docs/agent-workflow-guide.md).
+- **`comfyui-node/mcp` export** – Embed the MCP server programmatically. The main `comfyui-node` entry point stays side-effect free.
+- **`NodeFeature.getUnets()`, `getClips()`, `getVaes()`** – List installed diffusion models, text encoders and VAEs.
+
+### Fixed
+
+- **`CallWrapper` reacted to other prompts' completion** – With concurrent jobs sharing one client, another prompt's `execution_success` could mark a job as finished while its outputs were still pending. The wrapper now only reacts to its own `prompt_id`.
+- **History-recovered outputs had a different shape** – When outputs were recovered from `/history`, each node stored only its first value (for example the bare image array) instead of the full node output that the WebSocket path stores. Both paths now store the same object.
+- **`getNodeDefs()` on very large `/object_info` responses** – If `fetch` fails to read the payload (seen with Bun on Windows), it retries over streaming `node:http`/`node:https`.
+- **`getSamplerInfo()`** – Tolerates both nested and flat sampler/scheduler option lists.
+
+### Changed
+
+- **`fetchApi()` sends `Connection: close`** and lets per-call `options.headers` override the client defaults.
 ## 1.10.1
 
 ### Fixed

@@ -73,6 +73,11 @@ for (const img of (result.images?.images || [])) {
 - **[Advanced Usage](./docs/advanced-usage.md)** – Authentication, events, preview metadata, API nodes, image attachments
 - **[API Features](./docs/api-features.md)** – Modular `api.ext.*` namespaces (queue, file, system, etc.)
 
+### Model Context Protocol (MCP) Server
+
+- **[AI Agent Guide](./docs/agent-workflow-guide.md)** – Complete guide for AI coding agents to discover, build, validate, manage, and execute ComfyUI workflows over stdio MCP
+- **[MCP Server Plan & Spec](./docs/mcp-server-plan.md)** – Design document and architecture for the bundled MCP server
+
 ### Help & Migration
 
 - **[Troubleshooting](./docs/troubleshooting.md)** – Common issues, error types, testing, diagnostics

@@ -1,0 +1,8 @@
+{
+  "workflow": "z_image_turbo_realism.json",
+  "slots": {
+    "prompt": "4.inputs.user_prompt",
+    "negative_prompt": "5.inputs.user_prompt",
+    "seed": "7.inputs.seed"
+  }
+}

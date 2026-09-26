@@ -1,0 +1,9 @@
+{
+  "workflow": "z_image_turbo_correct.json",
+  "slots": {
+    "prompt": "5.inputs.text",
+    "seed": "8.inputs.seed",
+    "steps": "8.inputs.steps",
+    "cfg": "8.inputs.cfg"
+  }
+}

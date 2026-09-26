@@ -1,0 +1,9 @@
+{
+  "workflow": "krea2_turbo.json",
+  "slots": {
+    "prompt": "54.inputs.text",
+    "seed": "56.inputs.seed",
+    "steps": "56.inputs.steps",
+    "cfg": "56.inputs.cfg"
+  }
+}

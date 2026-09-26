@@ -24,11 +24,19 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "comfyui-node": "./dist/bin/comfyui-node.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./mcp": {
+      "import": "./dist/mcp/index.js",
+      "types": "./dist/mcp/index.d.ts",
+      "default": "./dist/mcp/index.js"
     }
   },
   "files": [
@@ -41,16 +49,16 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "build:watch": "tsc --project tsconfig.json --watch",
-    "test": "bun test --bail 10 ./test/*.spec.ts ./src/multipool/tests/*.spec.ts",
-    "test:unit": "bun test ./test/*.spec.ts ./src/multipool/tests/*.spec.ts",
+    "test": "bun test --bail 10 ./test/*.spec.ts ./test/mcp/*.spec.ts ./src/multipool/tests/*.spec.ts",
+    "test:unit": "bun test ./test/*.spec.ts ./test/mcp/*.spec.ts ./src/multipool/tests/*.spec.ts",
     "test:all": "bun test",
     "test:integration": "bun test ./test/integration/",
     "test:integration:simple": "bun test ./test/integration/reconnection-simple.example.spec.ts",
     "test:integration:reconnection": "bun test ./test/integration/reconnection.integration.spec.ts",
     "test:real": "cross-env COMFY_REAL=1 bun test ./test/real.integration.spec.ts",
     "test:full": "cross-env COMFY_REAL=1 COMFY_FULL=1 bun test ./test/real.full.integration.spec.ts",
-    "coverage": "bun test --coverage ./test/*.spec.ts",
-    "coverage:lcov": "bun test --coverage --coverage-reporter=lcov ./test/*.spec.ts",
+    "coverage": "bun test --coverage ./test/*.spec.ts ./test/mcp/*.spec.ts",
+    "coverage:lcov": "bun test --coverage --coverage-reporter=lcov ./test/*.spec.ts ./test/mcp/*.spec.ts",
     "coverage:enforce": "bun run coverage:lcov && bun run coverage:check",
     "coverage:check": "bun scripts/coverage-check.ts",
     "typecov": "type-coverage --detail --ignore-catch --at-least 0",
@@ -63,8 +71,10 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "sharp": "^0.34.5",
-    "ws": "8.19.0"
+    "ws": "8.19.0",
+    "zod": "4"
   },
   "devDependencies": {
     "@types/bun": "^1.3.5",
