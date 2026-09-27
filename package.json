@@ -1,6 +1,6 @@
 {
   "name": "comfyui-node",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "description": "ComfyUI Node.js Client",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -48,6 +48,7 @@
   ],
   "scripts": {
     "build": "tsc --project tsconfig.json",
+    "build:clean": "tsc --build tsconfig.json --force",
     "build:watch": "tsc --project tsconfig.json --watch",
     "test": "bun test --bail 10 ./test/*.spec.ts ./test/mcp/*.spec.ts ./src/multipool/tests/*.spec.ts",
     "test:unit": "bun test ./test/*.spec.ts ./test/mcp/*.spec.ts ./src/multipool/tests/*.spec.ts",
@@ -63,7 +64,7 @@
     "coverage:check": "bun scripts/coverage-check.ts",
     "typecov": "type-coverage --detail --ignore-catch --at-least 0",
     "typecov:strict": "type-coverage --detail --ignore-catch --at-least 90",
-    "dist:fresh": "bun run build && bun run dist:fresh:check",
+    "dist:fresh": "bun run build:clean && bun run dist:fresh:check",
     "dist:fresh:check": "bun scripts/dist-fresh-check.mjs",
     "update-samplers": "bun scripts/update-sampler-types.ts",
     "check:all": "bun run build && bun run test && bun run typecov:strict && bun run dist:fresh",

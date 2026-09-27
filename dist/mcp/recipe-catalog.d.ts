@@ -73,7 +73,7 @@ export declare class RecipeCatalog {
             id: string;
             name: string;
             description: string;
-            category: "image" | "audio" | "video" | "3d";
+            category: "video" | "audio" | "image" | "3d";
             distilled: boolean;
             isRunnable: boolean;
             resolvedModels: {

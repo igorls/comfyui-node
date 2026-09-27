@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.11.1
+
+### Fixed
+
+- **MCP server lingered after its host exited** – When an MCP host (Claude Code, Codex, Cursor, …) closed the server's stdin, the open ComfyUI WebSocket kept the process alive, so every host restart left an orphaned `comfyui-node` process behind. `startComfyMcpStdioServer` now closes the server and destroys the ComfyUI client it created when stdin ends (a client passed in via `options.client` is left to its owner), and the CLI exits shortly after as a safety net. The shutdown wiring is exported as `closeWhenInputEnds()` for embedders.
+- **Wrong version in the MCP handshake and `--version`** – Both reported `1.10.0`; they now read the installed package version.
+- **Release builds depended on the local build cache** – Incremental builds could order union members in generated `.d.ts` files differently from a clean build, so `dist:fresh` failed on fresh clones. `dist:fresh` (and so `prepublishOnly`) now does a forced clean build (`build:clean`).
 ## 1.11.0
 
 ### Added

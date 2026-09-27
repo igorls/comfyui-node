@@ -28,10 +28,10 @@ export declare const ComfyRecipesInputSchema: z.ZodObject<{
     }>>>;
     recipe: z.ZodOptional<z.ZodString>;
     category: z.ZodDefault<z.ZodOptional<z.ZodEnum<{
-        all: "all";
-        image: "image";
-        audio: "audio";
         video: "video";
+        audio: "audio";
+        image: "image";
+        all: "all";
         "3d": "3d";
     }>>>;
     installedOnly: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
@@ -76,8 +76,8 @@ export declare const ComfyGenerateInputSchema: z.ZodObject<{
     count: z.ZodDefault<z.ZodOptional<z.ZodNumber>>;
     seed: z.ZodOptional<z.ZodNumber>;
     seedPolicy: z.ZodDefault<z.ZodOptional<z.ZodEnum<{
-        random: "random";
         fixed: "fixed";
+        random: "random";
         sequential: "sequential";
     }>>>;
     images: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
