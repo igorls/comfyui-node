@@ -6,7 +6,7 @@
 ![Type Coverage](https://img.shields.io/badge/type--coverage-95%25-brightgreen?style=flat-square)
 ![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=flat-square)
 
-TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonymous/ComfyUI) API – focused on workflow construction, prompt execution orchestration, multi-instance scheduling and extension integration.
+TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonymous/ComfyUI) API – focused on workflow construction, prompt execution orchestration, multi-instance scheduling and extension integration. It also ships a local [MCP](https://modelcontextprotocol.io) server, so coding agents such as Claude Code, Codex and Cursor can build, run and review ComfyUI workflows.
 
 ## Features
 
@@ -21,6 +21,7 @@ TypeScript SDK for interacting with the [ComfyUI](https://github.com/comfyanonym
 - Preview metadata – rich preview frames with metadata support
 - Auto seed substitution – `seed: -1` randomized automatically
 - API node support – compatible with custom/paid API nodes (Comfy.org)
+- Bundled MCP server – `npx -y comfyui-node` gives coding agents nine tools to discover nodes, build and validate workflows, generate, and review results (v1.11+)
 
 ## Installation
 
@@ -50,6 +51,63 @@ for (const img of (result.images?.images || [])) {
   console.log(api.ext.file.getPathImage(img));
 }
 ```
+
+## MCP Server for Coding Agents
+
+The package includes a [Model Context Protocol](https://modelcontextprotocol.io) server that runs over stdio next to your local ComfyUI. Agents can inspect your installed nodes and models, scaffold or validate a workflow, run it with prompt/seed/size overrides, look at the results (contact sheets, crops, before/after comparisons) and iterate, all without hand-editing graph JSON. It talks only to the ComfyUI URL you give it.
+
+**Claude Code**
+
+```bash
+claude mcp add comfyui -- npx -y comfyui-node --url http://127.0.0.1:8188 --workflow-dir /path/to/workflows
+```
+
+On native Windows, wrap the command: `claude mcp add comfyui -- cmd /c npx -y comfyui-node …`.
+
+**Codex** (`~/.codex/config.toml`)
+
+```toml
+[mcp_servers.comfyui]
+command = "npx"
+args = ["-y", "comfyui-node", "--url", "http://127.0.0.1:8188", "--workflow-dir", "/path/to/workflows"]
+```
+
+**Cursor** (`.cursor/mcp.json`) and **Claude Desktop** (`claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "comfyui": {
+      "command": "npx",
+      "args": ["-y", "comfyui-node", "--url", "http://127.0.0.1:8188", "--workflow-dir", "/path/to/workflows"]
+    }
+  }
+}
+```
+
+`bunx comfyui-node` works in place of `npx -y comfyui-node`. Options:
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `--url <url>` | `COMFYUI_URL` or `http://127.0.0.1:8188` | ComfyUI server to drive |
+| `--workflow-dir <dir>` | `COMFYUI_WORKFLOW_DIR`, else `./workflows` and `./test` | Folder of API-format workflows (repeatable); optional `<name>.sidecar.json` files name editable slots |
+| `--debug` | off | Diagnostic logs on stderr |
+
+The server exits when the agent closes it. Tools:
+
+| Tool | What it does |
+| --- | --- |
+| `comfy_info` | Server reachability, GPU/RAM, queue, installed models, and runnable recipes |
+| `comfy_nodes` | Search installed nodes and read exact input/output pin schemas |
+| `comfy_recipes` | List known model recipes and scaffold a ready-to-run graph for installed models |
+| `comfy_validate` | Check a graph's wiring and types against the live node definitions |
+| `comfy_workflows` | List, save, and delete stored workflows with their editable slots |
+| `comfy_generate` | Run a stored or raw workflow with overrides, candidate count, seed policy, and attachments |
+| `comfy_inspect` | Review results as a contact sheet, a single image, a crop, or a parent/child comparison |
+| `comfy_revise` | Branch a new run from a previous one with targeted changes, keeping lineage |
+| `comfy_job` | Check, wait on, or cancel a run |
+
+See the **[AI Agent Guide](./docs/agent-workflow-guide.md)** for the full tool reference and workflow tips. To embed the server in your own process, import from `comfyui-node/mcp` (`createComfyMcpServer`, `startComfyMcpStdioServer`).
 
 ## Documentation
 
@@ -221,14 +279,11 @@ const results = await pool.waitForJobCompletion(jobId);
 > graph with a different prompt routes to the same affinity group, while a
 > different model is treated as a different capability.
 
-## What's New in v1.6.5
+## What's New
 
-- **Integration Test Infrastructure** – Comprehensive reconnection testing with real mock server processes
-  - Mock servers spawn in separate OS processes that can be killed/restarted
-  - 13 integration tests covering manual/auto-reconnection, state transitions, and multiple restart cycles
-  - Test helpers and utilities for easy test development
-  - 900+ lines of documentation with quick-start guide and examples
-  - Run with: `bun test test/integration/` or `bun run test:integration`
+- **v1.11** – Bundled MCP server for coding agents (see [above](#mcp-server-for-coding-agents)). 1.11.1 makes the server exit when its host closes it and report its real version.
+- **v1.10.1** – The event WebSocket now recovers from every ComfyUI restart, not just the first, and detects connections that silently died (unanswered heartbeat pings).
+- **v1.10** – `MultiWorkflowPool.submitToVariants()` for heterogeneous clusters, per-job `maxAttempts`, bounded job-state retention, and a structural workflow hash.
 
 See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 
