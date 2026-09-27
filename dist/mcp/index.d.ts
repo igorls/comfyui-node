@@ -1,4 +1,4 @@
-export { createComfyMcpServer, startComfyMcpStdioServer } from "./server.js";
+export { closeWhenInputEnds, createComfyMcpServer, startComfyMcpStdioServer } from "./server.js";
 export type { ComfyMcpServerOptions } from "./server.js";
 export { McpGenerationSession } from "./generation-session.js";
 export { WorkflowCatalog } from "./workflow-catalog.js";

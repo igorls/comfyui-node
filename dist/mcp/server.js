@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ComfyApi } from "../client.js";
 import { WorkflowCatalog } from "./workflow-catalog.js";
 import { McpGenerationSession } from "./generation-session.js";
+import { packageVersion } from "./package-version.js";
 import { ComfyGenerateInputSchema, ComfyInfoInputSchema, ComfyInspectInputSchema, ComfyJobInputSchema, ComfyNodesInputSchema, ComfyRecipesInputSchema, ComfyReviseInputSchema, ComfyValidateInputSchema, ComfyWorkflowsInputSchema } from "./schemas.js";
 /**
  * Factory creating the ComfyUI MCP Server instance with authoring, validation, and execution tools
@@ -15,7 +16,7 @@ export function createComfyMcpServer(options = {}) {
     const session = options.session || new McpGenerationSession(client, catalog);
     const server = new McpServer({
         name: options.name || "comfyui-node",
-        version: options.version || "1.10.0"
+        version: options.version || packageVersion()
     }, {
         capabilities: {
             tools: {}
@@ -384,11 +385,42 @@ export function createComfyMcpServer(options = {}) {
     return server;
 }
 /**
- * Start stdio MCP server transport
+ * Close the server when its input ends, and destroy the ComfyUI client if the server owns it.
+ *
+ * An MCP host signals that it is done by closing the server's stdin (it exited, restarted, or
+ * dropped the server). The ComfyUI WebSocket would otherwise keep the process alive, leaving an
+ * orphaned server behind after every host restart.
+ *
+ * @returns a function that runs the same shutdown on demand (idempotent)
+ */
+export function closeWhenInputEnds(input, server, ownedClient) {
+    let closed = false;
+    const shutdown = async () => {
+        if (closed)
+            return;
+        closed = true;
+        try {
+            await server.close();
+        }
+        catch {
+            // The transport may already be gone; destroying the client is what frees the process.
+        }
+        ownedClient?.destroy();
+    };
+    input.once("end", () => void shutdown());
+    input.once("close", () => void shutdown());
+    return shutdown;
+}
+/**
+ * Start stdio MCP server transport. The server shuts down, and releases the ComfyUI client it
+ * created, when stdin ends; a client passed in through `options.client` is left to its owner.
  */
 export async function startComfyMcpStdioServer(options = {}) {
-    const server = createComfyMcpServer(options);
+    const comfyUrl = options.comfyUrl || process.env.COMFYUI_URL || "http://127.0.0.1:8188";
+    const ownedClient = options.client ? undefined : new ComfyApi(comfyUrl, undefined, { debug: options.debug });
+    const server = createComfyMcpServer({ ...options, client: options.client ?? ownedClient });
     const transport = new StdioServerTransport();
+    closeWhenInputEnds(process.stdin, server, ownedClient);
     await server.connect(transport);
     return server;
 }

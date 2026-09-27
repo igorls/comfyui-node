@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import { startComfyMcpStdioServer } from "../mcp/server.js";
+import { packageVersion } from "../mcp/package-version.js";
+
+/** How long a closed-input server may take to release its handles before the CLI exits anyway. */
+const EXIT_GRACE_MS = 2000;
 
 function parseArgs(): {
   comfyUrl: string;
@@ -45,7 +49,7 @@ MCP Transport:
 `);
       process.exit(0);
     } else if (arg === "--version" || arg === "-v") {
-      process.stderr.write("comfyui-node v1.10.0\n");
+      process.stderr.write(`comfyui-node v${packageVersion()}\n`);
       process.exit(0);
     }
   }
@@ -75,6 +79,11 @@ async function main() {
     if (debug) {
       process.stderr.write("[comfyui-node MCP] Server connected to stdio transport.\n");
     }
+    // The server releases its ComfyUI client when stdin ends; if anything else still holds the
+    // event loop after that, exit anyway rather than linger as an orphan of a departed host.
+    process.stdin.once("end", () => {
+      setTimeout(() => process.exit(0), EXIT_GRACE_MS).unref();
+    });
   } catch (err: any) {
     process.stderr.write(`[comfyui-node MCP] Fatal error starting server: ${err.message || String(err)}\n`);
     process.exit(1);

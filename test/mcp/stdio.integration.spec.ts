@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { spawn } from "child_process";
 import path from "path";
+import pkg from "../../package.json" with { type: "json" };
 
 describe("stdio CLI executable integration", () => {
   const binPath = path.resolve("./dist/bin/comfyui-node.js");
@@ -46,7 +47,7 @@ describe("stdio CLI executable integration", () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(stderr).toContain("comfyui-node v");
+    expect(stderr).toContain(`comfyui-node v${pkg.version}`);
     expect(stdout).toBe(""); // stdout strictly empty
   });
 
@@ -105,6 +106,7 @@ describe("stdio CLI executable integration", () => {
     expect(initResp).toBeDefined();
     expect(initResp.result).toBeDefined();
     expect(initResp.result.serverInfo.name).toBe("comfyui-node");
+    expect(initResp.result.serverInfo.version).toBe(pkg.version);
     expect(initResp.result.capabilities.tools).toBeDefined();
 
     // Send initialized notification
